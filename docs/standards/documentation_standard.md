@@ -4,11 +4,11 @@ ID: DOC-STD-0001
 Status: STABLE  
 Depends on: NONE
 
-## 1. Purpose
+## Purpose
 - Define requirements for token-efficient, logically dense, AND structurally consistent documentation.
 - Ensure documents are machine-readable by LLMs while remaining human-traceable.
 
-## 2. Syntax & Naming Conventions
+## Syntax & Naming Conventions
 | Category | Casing | Example |
 | --- | --- | --- |
 | Normative Verbs | ALL CAPS | MUST, SHALL, REQUIRED, PROHIBITED, PERMITTED |
@@ -31,7 +31,7 @@ Depends on: NONE
 - Identifier parity: Documentation MUST use exact source code naming for all types, variables, AND constants.
 - Markdown tokens: Syntax characters [---, |, >, #] are exempt from casing rules.
 
-## 3. Structural Geometry
+## Structural Geometry
 - NO emphasis: NO bold, NO italics. Casing is the ONLY emphasis.
 - Fenced blocks: Use backticks for all technical snippets, variables, types, AND file paths.
 - Bracketing: Use square brackets [] for meta-information [Units, Examples, Tags, Narrative].
@@ -41,7 +41,7 @@ Depends on: NONE
 - Indentation: Use exactly TWO spaces per level for sub-items AND list continuations.
 - Vertical spacing: Exactly ONE newline between logical blocks. A sequence of single-spaced key/value lines is treated as ONE logical block.
 
-## 4. English Reduction [Dense Logic Prose]
+## English Reduction [Dense Logic Prose]
 - STE usage: Use Simplified Technical English. Narrative fluff is PROHIBITED.
 - Active voice: Subject-Verb-Object REQUIRED.
 - Atomic logic: EACH line MUST convey exactly ONE fact OR constraint. This applies to `IF/THEN` actions AND key-value assignments.
@@ -52,19 +52,93 @@ Depends on: NONE
   - Compound conditions using `AND` are PERMITTED within a single `IF` segment. Conditions using `OR` MUST be split into multiple lines.
 - Contract syntax: Preconditions AND postconditions MUST be written as boolean predicates using System Entities, System States, OR Variables.
 
-## 5. Metadata & Traceability
+## Metadata & Traceability
 - Placement: Metadata MUST be placed at the top of the document immediately following the H1 header.
 - Required fields: ID, Status, Depends on.
 - Metadata key-names: MUST follow the Section 2 Casing hierarchy.
 - Document changes: Reference specific Section numbers OR Logic Identifiers.
 - Circularity: Circular dependencies are PROHIBITED.
 
-## 6. Tables & Lists
+## Tables & Lists
 - Data mapping: Use single-spaced key/value lines WITHOUT bullets for metadata OR static system properties [Example: `Mode: read-only`].
 - Instructional lists: Use hyphen [-] markers ONLY for constraints, requirements, OR rationale.
 - Tables: Maintain column consistency. Use exactly ONE space between pipes AND content `| Content |`.
 
-## 7. Notes / Explanatory
+## Document ID System
+- Document IDs MUST follow format: `LAYER-DOMAIN-SUBDOMAIN-SEQUENCE`
+- Each segment MUST be uppercase.
+- Each segment MUST be separated by hyphen (-).
+- Sequence MUST be a 4-digit zero-padded integer.
+
+### Layer Tokens
+- META = documentation structure and interpretation rules
+- INT = intent and assumptions
+- CON = contracts and executable constraints
+- EXP = experiments and raw outputs
+- DEC = decisions and validated conclusions
+
+### Domain Tokens
+- SYS = system-level documentation
+- WORK = workflow and lifecycle logic
+- INT = interpretation rules (META layer only allowed to use INT domain pairing)
+- ARCH = architecture representation
+- DATA = data modeling
+- PIPE = pipeline definition
+- RULE = rule sets and constraints
+- STD = standards and specifications
+
+### Subdomain Tokens
+- OVER = overview
+- MOD = model
+- FLOW = flow definitions
+- RULES = rule definitions
+- BASE = base specification
+
+### Construction Rules
+- IDs MUST use only defined Layer, Domain, and Subdomain tokens.
+- No free-form words are permitted in IDs.
+- Tokens MUST NOT be abbreviated outside this registry.
+- New tokens MUST be added explicitly to this standard before use.
+- Duplicate meaning tokens are PROHIBITED.
+
+### Uniqueness Rule
+- Each document ID MUST be globally unique.
+- Sequence numbers MUST NOT repeat within same Layer-Domain-SUBDOMAIN group.
+
+### Stability Rule
+- Once assigned, a Document ID MUST NOT be modified.
+- Renaming requires creation of a new ID and deprecation of old document.
+
+### Anchor System
+- Anchors SHOULD NOT be defined for all sections.
+- Anchors MUST be defined ONLY for concepts requiring external reference or cross-document linkage.
+- Anchor format MUST be: `[ANCHOR: <ANCHOR_ID>]`
+- Anchor IDs MUST be unique within a single document.
+- Anchor IDs MUST NOT include document IDs.
+- Anchor IDs MUST be stable within the document.
+- Anchor IDs MUST be immutable once defined.
+- Anchor creation MUST be minimized and used ONLY when a concept is referenced outside the current document.
+- Anchors SHOULD NOT be created for purely structural or descriptive sections.
+- Excessive anchor creation is PROHIBITED when no cross-reference requirement exists.
+
+### Reference System
+- Cross-document references MUST use format: `[REF: DOC-ID::ANCHOR_ID]`
+- References MUST include full document ID.
+- References MUST include anchor ID.
+- Partial references without DOC-ID are PROHIBITED for cross-document linking.
+- References MUST NOT depend on section numbers.
+
+### Scope Rule
+- Anchor scope is limited to a single document.
+- Anchor names MUST NOT assume global uniqueness.
+- Global uniqueness is enforced ONLY through DOC-ID + ANCHOR combination.
+
+### Header Independence Rule
+- Section headers MAY change without affecting anchors.
+- Section numbering MUST NOT be used as a reference system.
+- Headers are presentation-only and MUST NOT be referenced externally.
+
+## Notes / Explanatory
 - `[EXPLANATORY]` tags denote rationale OR non-binding meta-information.
 - Prescriptive assumption: IF the H1 header is tagged `[NORMATIVE]`, THEN ALL statements in the document are prescriptive EXCEPT those tagged `[EXPLANATORY]`.
 - Prototyping relaxation: STE simplification may allow short explanatory sentences ONLY within this Notes section.
