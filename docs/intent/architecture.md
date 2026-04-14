@@ -1,7 +1,7 @@
 # Architecture
-ID: ARC-0001  
+ID: ARC  
 Status: PRELIMINARY  
-Depends on: DOC-STD-0001
+Depends on: DOC-STD
 
 ## System Overview
 SystemType: streaming ML-augmented renderer  

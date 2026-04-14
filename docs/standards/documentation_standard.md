@@ -1,6 +1,6 @@
 # Documentation Standard [NORMATIVE]
 Project: MLFilteredBrowser (MLFB)  
-ID: DOC-STD-0001  
+ID: DOC-STD  
 Status: STABLE  
 Depends on: NONE
 
