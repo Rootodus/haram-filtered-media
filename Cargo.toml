@@ -1,0 +1,10 @@
+[package]
+name = "ml_filtered_browser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+reqwest     # HTTP fetching
+crossbeam   # channels (simpler than std)
+image       # basic image processing
+anyhow      # error handling
