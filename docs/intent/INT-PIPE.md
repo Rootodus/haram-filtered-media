@@ -1,7 +1,7 @@
 # Pipeline
-ID: PIPE  
+ID: INT-PIPE  
 Status: PRELIMINARY  
-Depends on: DOC-STD, DAT-MOD, ARC
+Depends on: DOC-STD, INT-DATA-MOD, INT-ARCH
 
 ## Pipeline Overview
 PipelineType: streaming  

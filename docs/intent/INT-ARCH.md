@@ -1,5 +1,5 @@
 # Architecture
-ID: ARC  
+ID: INT-ARCH  
 Status: PRELIMINARY  
 Depends on: DOC-STD
 

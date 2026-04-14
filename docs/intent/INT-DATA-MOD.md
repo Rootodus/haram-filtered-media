@@ -1,5 +1,5 @@
 # Data Model
-ID: DAT-MOD  
+ID: INT-DATA-MOD  
 Status: PRELIMINARY  
 Depends on: DOC-STD
 

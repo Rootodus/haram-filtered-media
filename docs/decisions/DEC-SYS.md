@@ -1,7 +1,7 @@
-# Decisions
-ID: DEC  
+# System Decisions
+ID: DEC-SYS  
 Status: PRELIMINARY  
-Depends on: DOC-STD, ARC, DAT-MOD, PIPE
+Depends on: DOC-STD, INT-ARCH, INT-DATA-MOD, INT-PIPE
 
 ## Decision: Read-only GET mode
 Design: system uses GET requests ONLY  
