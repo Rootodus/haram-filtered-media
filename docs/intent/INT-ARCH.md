@@ -5,74 +5,39 @@ Depends on: STD-DOC
 
 ## System Overview
 SystemType: streaming ML-augmented renderer  
-Goal: ML-based filtering of web content with high throughput
+Goal: evaluate approaches for filtering web content using ML with high throughput
 
-Hypothesis: read-only model reduces output variance under identical inputs  
-Hypothesis: GET-only requests reduce side effects  
-Hypothesis: JS disablement reduces DOM mutation
+## Hypotheses
+- A read-only interaction model may reduce variability in outputs for identical inputs
+- Restricting request types to GET may reduce side effects from external state changes
+- Disabling JS execution may reduce variability caused by DOM mutation and client-side logic
+- Separating dynamic content retrieval from static retrieval may improve stability under mixed content sources
+- Staged processing may improve throughput compared to single-stage processing
 
-## System Configuration
-Mode: read-only  
-RequestType: GET-only  
-JSExecution: disabled  
-DynamicContent: Loader-managed  
-Pipeline: Fetcher -> MLProcessor -> Renderer
-
-## Components
+## Component Intent (non-binding)
 
 ### Fetcher
-Role: fetch static web content  
-Input: URL  
-Output: ContentBuffer
-
-Hypothesis: HTTP GET reduces input-dependent variability  
-Hypothesis: JS avoidance improves input consistency
-
-Protocol: HTTP GET  
-Async: true
+Role: retrieve web content  
+Hypothesis: simpler retrieval mechanisms may improve input consistency for downstream processing
 
 ### Loader
-Role: fetch dynamic content from external sources  
-Input: endpoint or site identifier  
-Output: ContentBuffer
-
-Hypothesis: isolating dynamic content preserves pipeline output stability under external variability
-
-Async: true  
-Optional: true  
-Execution: separate process permitted
+Role: retrieve dynamic or non-static content  
+Hypothesis: isolating dynamic sources may reduce interference with static content evaluation
 
 ### MLProcessor
 Role: transform content using ML models  
-Input: ContentBuffer  
-Output: ContentBuffer
-
-Hypothesis: stateless processing improves parallelism
-
-Execution: multi-threaded  
-Acceleration: GPU optional  
-State: none
+Hypothesis: removing internal state may improve repeatability and parallel processing efficiency
 
 ### Renderer
-Role: present processed content  
-Input: ContentBuffer  
-Output: screen or audio device
+Role: present processed output  
+Hypothesis: separating rendering may reduce coupling between processing and output timing
 
-Hypothesis: separation improves modularity
+## Data Flow Hypothesis
+- A staged flow may improve throughput under load
+- Separation of retrieval, processing, and rendering may reduce interference between subsystems
+- Async processing may improve responsiveness under variable workloads
 
-Async: true
-
-## Data Flow
-Hypothesis: staged pipeline improves throughput and separation of concerns
-
-PrimaryFlow: Fetcher -> MLProcessor -> Renderer  
-OptionalFlow: Loader -> MLProcessor -> Renderer
-
-QueueModel: async channels  
-QueueBound: configurable  
-Backpressure: required
-
-## Tradeoffs
-Hypothesis: JS disablement reduces flexibility but increases execution path stability and reduces runtime-induced variance  
-Hypothesis: frame dropping may be required under load  
-Hypothesis: Loader increases complexity but isolates instability
+## Tradeoff Hypotheses
+- Restricting execution capabilities may reduce flexibility but improve consistency of input processing
+- Introducing a Loader may increase system complexity but isolate unstable external behavior
+- Strong pipeline separation may improve throughput but increase coordination overhead
