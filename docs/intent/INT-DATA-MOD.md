@@ -1,7 +1,7 @@
 # Data Model
 ID: INT-DATA-MOD  
 Status: PRELIMINARY  
-Depends on: DOC-STD
+Depends on: STD-DOC
 
 ## Core Type
 Type: `ContentBuffer`  
@@ -57,8 +57,8 @@ Fields:
 - `value`: string OR number
 
 ## Ownership Rules
-Rule: `ContentBuffer` payload SHOULD use shared reference where possible  
-Rule: copying large buffers is PROHIBITED unless REQUIRED  
+Rule: ContentBuffer uses shared references where possible  
+Rule: Large buffer copying prohibited unless required  
 Rule: GPU buffers MUST be released after processing  
 Rule: MLProcessor MAY modify payload in-place
 

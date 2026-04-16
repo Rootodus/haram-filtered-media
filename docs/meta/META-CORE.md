@@ -2,16 +2,15 @@
 Project: MLFilteredBrowser (MLFB)  
 ID: META-CORE  
 Status: PRELIMINARY  
-Depends on: DOC-STD
+Depends on: STD-DOC
 
 ## Purpose
-Define documentation ontology, classification rules, and lifecycle constraints.
+Define documentation schema, classification rules, and lifecycle constraints.
 
-This document defines governance rules ONLY.  
-This document MUST NOT define runtime system behavior.
+This document defines documentation governance rules only.
 
-## Documentation Layer Ontology
-The system defines five layers:
+## Documentation Layer Schema
+The documentation system uses five layers:
 
 ### META
 - Defines documentation structure and governance rules
@@ -21,44 +20,33 @@ The system defines five layers:
 - MUST NOT define runtime system behavior
 
 ### INTENT
-- Contains unverified assumptions and hypotheses
-- Represents speculative design state
-- Has no enforcement authority
+- Unverified assumptions
+- No enforcement role
 
 ### CONTRACT
-- Defines executable constraints
-- Defines testable requirements
-- Defines required system behavior conditions
+- Testable constraints
+- Defines required system behavior
 
-### EXPERIMENTS
-- Stores raw execution outputs only
-- Stores measurements, logs, and trace data only
-- MUST NOT contain interpretation, validation, conclusions, or inference
+### EXPERIMENT
+- Execution outputs only
+- No interpretation allowed
 
-### DECISIONS
-- Stores validated conclusions derived strictly from EXPERIMENTS
-- Represents accepted system knowledge state
-- Requires traceability to EXPERIMENTS
+### DECISION
+- Validated conclusions from EXPERIMENT
 
 ## Layer Isolation Rules
-Each document MUST belong to exactly ONE layer.
+Each document MUST belong to exactly one layer.
 
-Each layer MUST remain semantically isolated.
-
-- INTENT MUST NOT contain executable constraints
-- CONTRACT MUST NOT contain assumptions or hypotheses
-- EXPERIMENTS MUST NOT contain interpretation or conclusions
-- DECISIONS MUST NOT introduce unvalidated assumptions
-- META MUST NOT define runtime system behavior
+Layers are semantically independent.
 
 Mixed-layer documents are INVALID.
 
 ## Classification Rules
-A document MUST be assigned deterministically using rule order.
+A document MUST be assigned using rule order with fully defined evaluation precedence and a single unambiguous resolution path.
 
 IF document contains executable constraints THEN classify as CONTRACT  
-ELSE IF document contains raw outputs, logs, or measurements THEN classify as EXPERIMENTS  
-ELSE IF document contains validated conclusions THEN classify as DECISIONS  
+ELSE IF document contains raw outputs, logs, or measurements THEN classify as EXPERIMENT  
+ELSE IF document contains validated conclusions THEN classify as DECISION  
 ELSE IF document contains assumptions or hypotheses THEN classify as INTENT  
 ELSE IF document contains structural or governance rules about this documentation system THEN classify as META  
 ELSE document is INVALID
@@ -75,22 +63,23 @@ Cross-layer interpretation is INVALID.
 
 ### Strict Boundary Rule
 - CONTRACT defines pre-execution constraints
-- EXPERIMENTS record post-execution outputs only
-- DECISIONS are derived summaries of EXPERIMENTS only
+- EXPERIMENT records post-execution outputs only
+- DECISION is derived summaries of EXPERIMENT only
 - INTENT contains unvalidated assumptions only
 
-### Non-Authority Rule
-No layer can modify, override, or redefine another layer.
+## Non-Authority Rule
+No layer MAY modify or override another layer.
 
-Specifically:
-- EXPERIMENTS MUST NOT affect CONTRACT semantics
-- DECISIONS MUST NOT affect CONTRACT semantics
-- INTENT cannot invalidate CONTRACT or EXPERIMENTS
+Cross-layer semantic control is prohibited.
+
+- EXPERIMENT MUST NOT affect CONTRACT semantics
+- DECISION MUST NOT affect CONTRACT semantics
+- INTENT MUST NOT invalidate CONTRACT or EXPERIMENT
 
 ### Invariance Rule
 - CONTRACT is immutable after definition
-- EXPERIMENTS are immutable after recording
-- DECISIONS are immutable after creation
+- EXPERIMENT is immutable after recording
+- DECISION is immutable after creation
 
 META does not participate in interpretation.
 
@@ -105,31 +94,33 @@ Information moves through four lifecycle stages:
 - Testable executable constraints
 - Defines required behavior conditions
 
-### EXPERIMENTS
+### EXPERIMENT
 - Recorded execution outputs only
 - No interpretation or evaluation applied
 
-### DECISIONS
-- Validated conclusions derived strictly from EXPERIMENTS
+### DECISION
+- Validated conclusions derived strictly from EXPERIMENT
 
 ### Valid Flow
-INTENT -> CONTRACT -> EXPERIMENTS -> DECISIONS
+INTENT -> CONTRACT -> EXPERIMENT -> DECISION
 
 ### Invalid Flows
-- INTENT -> DECISIONS (without EXPERIMENTS)
+- INTENT -> DECISION is allowed ONLY for explicit design commitments
+- Such DECISION MUST NOT claim experimental validation
 - CONTRACT -> INTENT
-- EXPERIMENTS -> CONTRACT
-- DECISIONS -> INTENT
+- EXPERIMENT -> CONTRACT
+- DECISION -> INTENT
 
 ### Transition Rules
 IF information becomes testable THEN it MAY move INTENT -> CONTRACT  
-IF CONTRACT is executed THEN outputs MUST be stored in EXPERIMENTS  
-IF EXPERIMENTS exist THEN they remain raw records only
+IF CONTRACT is executed THEN outputs MUST be stored in EXPERIMENT  
+IF EXPERIMENT exists THEN they remain raw records only
 
 ## Traceability Requirements
 - Each EXPERIMENT MUST reference at least one CONTRACT
 - Each DECISION MUST reference at least one EXPERIMENT
 - Each CONTRACT SHOULD reference originating INTENT
+- DECISION MUST NOT be derived without referenced EXPERIMENT evidence
 
 Failure of traceability INVALIDATES the document.
 
@@ -138,11 +129,11 @@ System is stable ONLY IF:
 - Each document belongs to exactly one layer
 - All transitions follow workflow rules
 - No cross-layer mixing exists
-- Classification rules are deterministic and non-ambiguous
+- Classification rules are reproducible under identical inputs and rule ordering
 - No layer has semantic authority over another layer
 
 ## System Representation Constraint
-The documentation system is a static ontology.
+The documentation system is a static schema.
 
 It defines categorization and lifecycle rules ONLY.  
 It does NOT represent runtime architecture or execution behavior.

@@ -1,7 +1,7 @@
 # Pipeline
 ID: INT-PIPE  
 Status: PRELIMINARY  
-Depends on: DOC-STD, INT-DATA-MOD, INT-ARCH
+Depends on: STD-DOC, INT-DATA-MOD, INT-ARCH
 
 ## Pipeline Overview
 PipelineType: streaming  
@@ -62,8 +62,8 @@ Capacity: configurable
 Policy: drop frame OR block
 
 ## Scheduling Rules
-Rule: Fetcher MAY run independently of MLProcessor  
-Rule: Loader MAY run independently of Fetcher  
+Rule: Fetcher independent execution allowed  
+Rule: Loader independent execution allowed  
 Rule: MLProcessor SHOULD batch inputs for GPU efficiency  
 Rule: Renderer MUST consume at device rate  
 Rule: Pipeline MUST NOT block entire system due to single stage
@@ -81,7 +81,7 @@ MLProcessor: skip invalid payload
 Renderer: skip failed frame
 
 ## Constraints
-Determinism: REQUIRED for Fetcher input  
+Input-output stability under identical Fetcher inputs: REQUIRED  
 State: MUST NOT persist across pipeline stages  
 Latency: SHOULD remain bounded under load  
 Throughput: MUST prioritize MLProcessor efficiency

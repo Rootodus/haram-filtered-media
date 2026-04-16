@@ -1,6 +1,6 @@
 # Documentation Standard [NORMATIVE]
 Project: MLFilteredBrowser (MLFB)  
-ID: DOC-STD  
+ID: STD-DOC  
 Status: STABLE  
 Depends on: NONE
 
@@ -65,49 +65,32 @@ Depends on: NONE
 - Tables: Maintain column consistency. Use exactly ONE space between pipes AND content `| Content |`.
 
 ## Document ID System
-- Document IDs MUST follow format: `LAYER-DOMAIN-SUBDOMAIN-SEQUENCE`
-- Each segment MUST be uppercase.
-- Each segment MUST be separated by hyphen (-).
-- Sequence MUST be a 4-digit zero-padded integer.
+- Document IDs MUST follow format: `LAYER-NAME`
+- Each ID MUST start with a valid Layer token.
+- No hierarchical segmentation (DOMAIN / SUBDOMAIN / SEQUENCE) is permitted.
+- IDs MUST be stable and globally unique within the system.
 
 ### Layer Tokens
-- META = documentation structure and interpretation rules
-- INT = intent and assumptions
-- CON = contracts and executable constraints
-- EXP = experiments and raw outputs
-- DEC = decisions and validated conclusions
-
-### Domain Tokens
-- SYS = system-level documentation
-- WORK = workflow and lifecycle logic
-- INT = interpretation rules (META layer only allowed to use INT domain pairing)
-- ARCH = architecture representation
-- DATA = data modeling
-- PIPE = pipeline definition
-- RULE = rule sets and constraints
-- STD = standards and specifications
-
-### Subdomain Tokens
-- OVER = overview
-- MOD = model
-- FLOW = flow definitions
-- RULES = rule definitions
-- BASE = base specification
+- META = documentation structure and governance rules
+- INTENT = intent and assumptions
+- CONTRACT = executable constraints
+- EXPERIMENT = raw outputs and measurements
+- DECISION = validated conclusions
 
 ### Construction Rules
-- IDs MUST use only defined Layer, Domain, and Subdomain tokens.
-- No free-form words are permitted in IDs.
-- Tokens MUST NOT be abbreviated outside this registry.
-- New tokens MUST be added explicitly to this standard before use.
-- Duplicate meaning tokens are PROHIBITED.
+- IDs MUST use only the LAYER-NAME format.
+- No additional segmentation, hierarchy, or token expansion is permitted.
+- Tokens MUST NOT be extended beyond the Layer level.
+- New Layers MUST be explicitly added before use.
 
 ### Uniqueness Rule
 - Each document ID MUST be globally unique.
-- Sequence numbers MUST NOT repeat within same Layer-Domain-SUBDOMAIN group.
+- Uniqueness is enforced at full string level of `LAYER-NAME`.
+- No structural uniqueness constraints apply.
 
 ### Stability Rule
 - Once assigned, a Document ID MUST NOT be modified.
-- Renaming requires creation of a new ID and deprecation of old document.
+- Renaming requires creation of a new ID and deprecation of the old document.
 
 ### Anchor System
 - Anchors SHOULD NOT be defined for all sections.

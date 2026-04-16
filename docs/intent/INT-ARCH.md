@@ -1,77 +1,78 @@
-# Architecture
+# Architecture Intent
 ID: INT-ARCH  
 Status: PRELIMINARY  
-Depends on: DOC-STD
+Depends on: STD-DOC
 
 ## System Overview
 SystemType: streaming ML-augmented renderer  
-Goal: filter web content using ML with high throughput  
-Mode: read-only browser  
-RequestType: GET only  
-JSExecution: PROHIBITED  
-DynamicContent: handled by Loader  
+Goal: ML-based filtering of web content with high throughput
+
+Hypothesis: read-only model reduces output variance under identical inputs  
+Hypothesis: GET-only requests reduce side effects  
+Hypothesis: JS disablement reduces DOM mutation
+
+## System Configuration
+Mode: read-only  
+RequestType: GET-only  
+JSExecution: disabled  
+DynamicContent: Loader-managed  
 Pipeline: Fetcher -> MLProcessor -> Renderer
 
 ## Components
-Component: Fetcher  
+
+### Fetcher
 Role: fetch static web content  
 Input: URL  
-Output: `ContentBuffer`  
-Protocol: HTTP GET  
-Async: true  
-Optional: false  
-Notes:
-- Fetcher does NOT execute JS
-- Fetcher produces deterministic input for pipeline
+Output: ContentBuffer
 
-Component: Loader  
-Role: fetch dynamic content from APIs or JS-required sources  
+Hypothesis: HTTP GET reduces input-dependent variability  
+Hypothesis: JS avoidance improves input consistency
+
+Protocol: HTTP GET  
+Async: true
+
+### Loader
+Role: fetch dynamic content from external sources  
 Input: endpoint or site identifier  
-Output: `ContentBuffer`  
+Output: ContentBuffer
+
+Hypothesis: isolating dynamic content preserves pipeline output stability under external variability
+
 Async: true  
 Optional: true  
-Notes:
-- Loader isolates non-deterministic sources
-- Loader MAY run in separate process
+Execution: separate process permitted
 
-Component: MLProcessor  
+### MLProcessor
 Role: transform content using ML models  
-Input: `ContentBuffer`  
-Output: `ContentBuffer`  
+Input: ContentBuffer  
+Output: ContentBuffer
+
+Hypothesis: stateless processing improves parallelism
+
 Execution: multi-threaded  
 Acceleration: GPU optional  
-State: stateless  
-Optional: false  
-Notes:
-- MLProcessor MUST NOT fetch data
-- MLProcessor applies transformations:
-  - image/video: blur animate beings
-  - audio: modify pitch
-  - text: filter profanity
+State: none
 
-Component: Renderer  
-Role: display processed content  
-Input: `ContentBuffer`  
-Output: screen or audio device  
-Async: true  
-Optional: false  
-Notes:
-- Renderer MUST NOT modify content
-- Renderer consumes pipeline output only
+### Renderer
+Role: present processed content  
+Input: ContentBuffer  
+Output: screen or audio device
+
+Hypothesis: separation improves modularity
+
+Async: true
 
 ## Data Flow
+Hypothesis: staged pipeline improves throughput and separation of concerns
+
 PrimaryFlow: Fetcher -> MLProcessor -> Renderer  
-OptionalFlow: Loader -> MLProcessor -> Renderer  
+OptionalFlow: Loader -> MLProcessor -> Renderer
+
 QueueModel: async channels  
 QueueBound: configurable  
-Backpressure: REQUIRED
+Backpressure: required
 
-## Constraints
-JSExecution: NONE  
-StateMutation: restricted to MLProcessor output  
-SideEffects: PROHIBITED in Fetcher and MLProcessor  
-Determinism: REQUIRED for pipeline input
-
-## Notes / Explanatory
-- [EXPLANATORY] Deterministic input ensures stable ML throughput and predictable latency.
-- [EXPLANATORY] Loader separation prevents dynamic content from breaking pipeline guarantees.
+## Tradeoffs
+Hypothesis: JS disablement reduces flexibility but increases execution path stability and reduces runtime-induced variance  
+Hypothesis: frame dropping may be required under load  
+Hypothesis: Loader increases complexity but isolates instability
