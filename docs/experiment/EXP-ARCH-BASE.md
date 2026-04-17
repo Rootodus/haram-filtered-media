@@ -1,129 +1,52 @@
 # Architecture Baseline Experiment
 ID: EXP-ARCH-BASE  
 Status: RAW  
-Depends on: CONTR-ARCH, INT-ARCH
+Depends on: CONTR-ARCH, INT-ARCH, CONTR-EXEC-BASE, CONTR-BENCH
 
 ## Purpose
-Compare runtime performance of two execution models:
-- Config A: staged pipeline
-- Config B: single-stage pipeline
+Compare two execution configurations under identical inputs and shared execution contracts.
 
-Comparison is based on identical inputs and identical measurement rules.
-
-## Execution Unit Definition
+## Unit Definition
 UnitOfWork:
-- one input item processed from start to completion
+- single input processed from ingestion to completion
 
-StartTime:
-- timestamp when input enters system boundary
+Execution semantics:
+- MUST follow CONTR-EXEC-BASE
 
-EndTime:
-- timestamp when output is fully produced and written to output log
-
-Latency:
-- EndTime - StartTime (ms)
-
-Throughput:
-- total completed units / total runtime seconds
-
-## Input Dataset
-DatasetType: synthetic deterministic set
+## Dataset
+Type: synthetic deterministic set
 
 Structure:
 - input_id: string
 - payload_type: enum(Text, ImageStub)
-- payload_size: integer (bytes or characters)
+- payload_size: integer
 
 Rules:
-- dataset MUST be identical for both configs
-- dataset MUST be preloaded before execution starts
-- dataset MUST NOT be modified during execution
+- dataset MUST be identical across Config A and Config B
+- dataset MUST be pre-generated before execution begins
+- dataset MUST remain immutable during execution (as defined in CONTR-BENCH)
 
 Repetitions:
-- each input MUST be processed exactly 1000 times per config
+- each input MUST be processed 1000 times per configuration
 
 ## Config A — Staged Pipeline
-PipelineStages (strict order):
+Stages:
 1. FetchStage
 2. ProcessStage (MLProcessor)
 3. RenderStage
 
 Communication:
-- stages MUST communicate via in-memory queue
-
-QueueProperties:
-- bounded buffer REQUIRED
-- capacity fixed before run starts
-
-Timing Rules:
-- StartTime recorded at FetchStage entry
-- EndTime recorded after RenderStage completion
-
-Backpressure:
-- queue blocks when full (no dropping allowed in Config A unless explicitly logged)
+- bounded queue between stages (defined in CONTR-EXEC-BASE)
 
 ## Config B — Single-Stage Pipeline
-PipelineDefinition:
-- single function execution: Fetch + Process + Render in same thread or call chain
+Definition:
+- Fetch + Process + Render executed in a single call chain
 
-Queueing:
-- NOT used
-
-Timing Rules:
-- StartTime recorded at function entry
-- EndTime recorded at function exit
-
-## Metrics (must be collected per unit)
-Required per input:
-- input_id
-- config_id (A or B)
-- start_time_ms
-- end_time_ms
-- latency_ms
-- status (SUCCESS / FAIL)
-
-System metrics (per run):
-- throughput_items_per_sec
-- total_runtime_ms
-- total_processed_items
-- total_failed_items
-
-Optional (Config A only):
-- queue_depth_samples (timestamped)
-- queue_wait_time_ms
-
-## Execution Procedure
-For each config:
-1. Initialize system
-2. Load dataset into memory
-3. Disable external network variability sources
-4. Reset all timers and logs
-5. Process dataset for 1000 repetitions per input
-6. Append results only (no overwrite)
-7. Terminate execution
-
-No configuration changes allowed during run.
-
-## Logging Format (strict)
-Each line MUST be:
-
-config_id,input_id,iteration,start_time_ms,end_time_ms,latency_ms,status
-
-Rules:
-- CSV only
-- no headers in run logs
-- append-only file
-- no aggregation during execution
-
-## Output Artifacts
-Each run produces:
+## Outputs
+Artifacts:
 - EXP-ARCH-BASE-RUN-A.log
 - EXP-ARCH-BASE-RUN-B.log
 
-Each file is immutable after completion.
-
-## Constraints
-- No interpretation during execution
-- No runtime optimization changes during run
-- No modification of dataset between configs
-- Identical hardware and thread allocation required for both runs
+## Notes
+- Execution behavior, timing rules, logging format, and hardware constraints are defined in CONTR-EXEC-BASE and CONTR-BENCH.
+- This document does not redefine execution semantics.

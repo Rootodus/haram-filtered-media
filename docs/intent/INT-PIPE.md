@@ -3,90 +3,56 @@ ID: INT-PIPE
 Status: PRELIMINARY  
 Depends on: STD-DOC, INT-DATA-MOD, INT-ARCH
 
-## Pipeline Overview
-PipelineType: streaming  
-ExecutionModel: asynchronous  
-FlowType: push-based  
-Stages: Fetcher -> MLProcessor -> Renderer  
-OptionalStages: Loader -> MLProcessor -> Renderer
+## Purpose Boundary
+This document defines pipeline structure as a conceptual system description only.
 
-## Stage: Fetcher
-Input: `URL`  
-Output: `ContentBuffer`  
-Execution: async, multi-threaded  
-QueueOut: FetcherToML  
-QueueType: bounded  
-Backpressure: block OR drop oldest
+It does NOT define execution semantics.  
+It does NOT define benchmark behavior.  
+It does NOT define runtime policies.
 
-## Stage: Loader
-Input: endpoint OR site identifier  
-Output: `ContentBuffer`  
-Execution: async  
-QueueOut: LoaderToML  
-QueueType: bounded  
-Backpressure: block  
-Optional: true
+## Shared Pipeline Structure (conceptual only)
+Stages:
+- Fetcher -> MLProcessor -> Renderer
+- Optional: Loader -> MLProcessor -> Renderer
 
-## Stage: MLProcessor
-Input: `ContentBuffer`  
-Output: `ContentBuffer`  
-Execution: multi-threaded  
-Acceleration: GPU optional  
-QueueIn: FetcherToML, LoaderToML  
-QueueOut: MLToRenderer  
-QueueType: bounded OR unbounded  
-Backpressure: drop oldest frame if overloaded
+This structure describes data flow topology only.
 
-## Stage: Renderer
-Input: `ContentBuffer`  
-Output: display OR audio device  
-Execution: async  
-QueueIn: MLToRenderer  
-QueueType: bounded  
-Backpressure: drop frame if rendering lag
+## Stage Roles (non-binding)
 
-## Queues
-Queue: FetcherToML  
-Type: async channel  
-Capacity: configurable  
-Policy: block OR drop oldest
+### Fetcher
+Role:
+- Retrieve external or static content
+- Produce ContentBuffer
 
-Queue: LoaderToML  
-Type: async channel  
-Capacity: configurable  
-Policy: block
+### Loader
+Role:
+- Retrieve dynamic or API-driven content
+- Produce ContentBuffer
 
-Queue: MLToRenderer  
-Type: async channel  
-Capacity: configurable  
-Policy: drop frame OR block
+### MLProcessor
+Role:
+- Transform ContentBuffer payload
+- Apply stateless processing logic (as defined in CONTRACT layer)
 
-## Scheduling Rules
-Rule: Fetcher independent execution allowed  
-Rule: Loader independent execution allowed  
-Rule: MLProcessor SHOULD batch inputs for GPU efficiency  
-Rule: Renderer MUST consume at device rate  
-Rule: Pipeline MUST NOT block entire system due to single stage
+### Renderer
+Role:
+- Convert processed ContentBuffer into output format
+- Final presentation stage
 
-## Backpressure Rules
-Rule: IF queue is full THEN apply queue policy  
-Rule: IF MLProcessor overloaded THEN drop oldest frames  
-Rule: IF Renderer lagging THEN drop frames  
-Rule: blocking SHOULD be avoided in MLProcessor stage
+## Queue Concept (non-binding)
+- Queues exist as structural connectors between stages
+- Queue behavior, capacity, blocking, or dropping semantics are NOT defined here
+- Queue semantics are defined in CONTR-EXEC-BASE only
 
-## Error Handling
-Fetcher: retry OR skip failed URL  
-Loader: skip failed content  
-MLProcessor: skip invalid payload  
-Renderer: skip failed frame
+## Data Flow Constraint
+- Data flows left-to-right through pipeline stages
+- No reverse flow is defined at architectural level
 
-## Constraints
-Input-output stability under identical Fetcher inputs: REQUIRED  
-State: MUST NOT persist across pipeline stages  
-Latency: SHOULD remain bounded under load  
-Throughput: MUST prioritize MLProcessor efficiency
+## Isolation Constraint
+- Pipeline structure MUST NOT define timing rules
+- Pipeline structure MUST NOT define scheduling rules
+- Pipeline structure MUST NOT define backpressure rules
 
-## Notes / Explanatory
-- [EXPLANATORY] Push-based flow avoids pull-induced stalls and improves throughput.
-- [EXPLANATORY] Frame dropping is REQUIRED for real-time video to maintain responsiveness.
-- [EXPLANATORY] Batching improves GPU utilization but increases latency; trade-off must be tuned.
+## Summary
+INT-PIPE is a structural description of system topology only.  
+All execution behavior is delegated to CONTRACT layer definitions.

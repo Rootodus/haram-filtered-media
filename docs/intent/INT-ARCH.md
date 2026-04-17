@@ -7,6 +7,8 @@ Depends on: STD-DOC
 SystemType: streaming ML-augmented renderer  
 Goal: evaluate approaches for filtering web content using ML with high throughput
 
+All statements in this document are non-binding and may not be used to override CONTR-EXEC-BASE or EXP-ARCH-BASE.
+
 ## Hypotheses
 - A read-only interaction model may reduce variability in outputs for identical inputs
 - Restricting request types to GET may reduce side effects from external state changes

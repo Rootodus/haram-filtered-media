@@ -1,144 +1,204 @@
-# Meta System [NORMATIVE]
+# Meta Core [NORMATIVE]
 Project: MLFilteredBrowser (MLFB)  
 ID: META-CORE  
 Status: PRELIMINARY  
 Depends on: STD-DOC
 
-## Purpose
-Define documentation schema, classification rules, and lifecycle constraints.
+## Scope Boundary
+- This document defines only documentation governance, classification, and dependency rules
+- This document MUST NOT define runtime system behavior
+- This document MUST NOT define execution semantics
+- This document MUST NOT define benchmark semantics
 
-This document defines documentation governance rules only.
+All behavioral exclusions are defined in canonical META rules only.
 
-## Documentation Layer Schema
-The documentation system uses five layers:
+## Document Universe Model
+The system is a directed acyclic graph (DAG) of documents.
+
+### Nodes
+- Each document is a node
+
+### Edges
+- Each dependency reference is a directed edge
+- Edge direction: dependency -> dependent
+
+## Layer Model
+Each document MUST belong to exactly one layer:
+- META
+- INTENT
+- CONTRACT
+- EXPERIMENT
+- DECISION
+
+Layer assignment is exclusive and non-overlapping.
+
+## Layer Definitions
 
 ### META
-- Defines documentation structure and governance rules
-- Defines classification rules for documents
-- Defines lifecycle rules for documents
-- Applies only to the documentation system itself
-- MUST NOT define runtime system behavior
+Defines canonical governance rules for:
+- classification
+- dependency validity
+- lifecycle constraints
+
+MUST NOT define runtime behavior of any external system.
 
 ### INTENT
-- Unverified assumptions
-- No enforcement role
+- Unvalidated assumptions
+- Hypotheses only
+- No executable constraints allowed
 
 ### CONTRACT
-- Testable constraints
-- Defines required system behavior
+- Testable system constraints
+- Required behavior specifications
+- May be referenced by EXPERIMENT
 
 ### EXPERIMENT
-- Execution outputs only
-- No interpretation allowed
+- Structured execution record schema
+- Contains datasets, logs, metrics, and outputs
+- MAY include reproducibility metadata
+- MUST NOT contain interpretive conclusions
 
 ### DECISION
-- Validated conclusions from EXPERIMENT
+- Conclusions derived strictly from EXPERIMENT outputs
+- Must reference at least one EXPERIMENT
 
-## Layer Isolation Rules
-Each document MUST belong to exactly one layer.
+## Rule System Model (Canonical)
+All constraints in META-CORE are atomic and uniquely defined.
 
-Layers are semantically independent.
+### Rule Uniqueness
+- Each rule MUST have exactly one canonical definition
+- Repetition of identical semantic rules is INVALID
 
-Mixed-layer documents are INVALID.
+### Derived Statements
+- Any repeated statement is DERIVED
+- Derived statements MUST NOT introduce new constraints
 
-## Classification Rules
-A document MUST be assigned using rule order with fully defined evaluation precedence and a single unambiguous resolution path.
+### Conflict Rule
+If two rules overlap semantically:
+- they are treated as the same rule
+- they MUST be merged or one marked as derived
 
-IF document contains executable constraints THEN classify as CONTRACT  
-ELSE IF document contains raw outputs, logs, or measurements THEN classify as EXPERIMENT  
-ELSE IF document contains validated conclusions THEN classify as DECISION  
-ELSE IF document contains assumptions or hypotheses THEN classify as INTENT  
-ELSE IF document contains structural or governance rules about this documentation system THEN classify as META  
-ELSE document is INVALID
+## Classification Rules (Deterministic)
+1. CONTRACT: testable constraints
+2. EXPERIMENT: raw execution records
+3. DECISION: validated conclusions
+4. INTENT: assumptions
+5. META: governance rules
+6. else INVALID
 
-## Ambiguity Rule
-IF multiple classification rules apply THEN document MUST be split.
+If multiple apply:
+- document MUST be split
 
-No priority-based selection is permitted.
+## Dependency Graph Rules
 
-## Interpretation Rules
-Documents MUST be interpreted only within their assigned layer.
-
-Cross-layer interpretation is INVALID.
-
-### Strict Boundary Rule
-- CONTRACT defines pre-execution constraints
-- EXPERIMENT records post-execution outputs only
-- DECISION is derived summaries of EXPERIMENT only
-- INTENT contains unvalidated assumptions only
-
-## Non-Authority Rule
-No layer MAY modify or override another layer.
-
-Cross-layer semantic control is prohibited.
-
-- EXPERIMENT MUST NOT affect CONTRACT semantics
-- DECISION MUST NOT affect CONTRACT semantics
-- INTENT MUST NOT invalidate CONTRACT or EXPERIMENT
-
-### Invariance Rule
-- CONTRACT is immutable after definition
-- EXPERIMENT is immutable after recording
-- DECISION is immutable after creation
-
-META does not participate in interpretation.
-
-## Workflow Model
-Information moves through four lifecycle stages:
-
-### INTENT
-- Unverified information
-- No enforcement value
-
-### CONTRACT
-- Testable executable constraints
-- Defines required behavior conditions
-
-### EXPERIMENT
-- Recorded execution outputs only
-- No interpretation or evaluation applied
-
-### DECISION
-- Validated conclusions derived strictly from EXPERIMENT
-
-### Valid Flow
+### Allowed Direction
 INTENT -> CONTRACT -> EXPERIMENT -> DECISION
 
-### Invalid Flows
-- INTENT -> DECISION is allowed ONLY for explicit design commitments
-- Such DECISION MUST NOT claim experimental validation
+### Allowed Edges
+- INTENT -> CONTRACT
+- CONTRACT -> CONTRACT
+- CONTRACT -> EXPERIMENT
+- EXPERIMENT -> EXPERIMENT
+- EXPERIMENT -> DECISION
+- DECISION -> DECISION
+
+### Forbidden Edges
 - CONTRACT -> INTENT
 - EXPERIMENT -> CONTRACT
-- DECISION -> INTENT
+- DECISION -> CONTRACT
+- DECISION -> EXPERIMENT
+- INTENT -> EXPERIMENT
+- INTENT -> DECISION
 
-### Transition Rules
-IF information becomes testable THEN it MAY move INTENT -> CONTRACT  
-IF CONTRACT is executed THEN outputs MUST be stored in EXPERIMENT  
-IF EXPERIMENT exists THEN they remain raw records only
+### Acyclic Constraint
+- Graph MUST be acyclic
 
 ## Traceability Requirements
-- Each EXPERIMENT MUST reference at least one CONTRACT
-- Each DECISION MUST reference at least one EXPERIMENT
-- Each CONTRACT SHOULD reference originating INTENT
-- DECISION MUST NOT be derived without referenced EXPERIMENT evidence
+- CONTRACT SHOULD reference INTENT
+- EXPERIMENT MUST reference CONTRACT
+- DECISION MUST reference EXPERIMENT
 
-Failure of traceability INVALIDATES the document.
+Failure invalidates document.
+
+## Invariance Rules
+- Documents are immutable after creation
+- Changes require new node
+
+## Graph Consistency Rules
+- No dangling references
+- All dependencies must resolve
+- Deterministic resolution required
 
 ## Stability Conditions
-System is stable ONLY IF:
-- Each document belongs to exactly one layer
-- All transitions follow workflow rules
-- No cross-layer mixing exists
-- Classification rules are reproducible under identical inputs and rule ordering
-- No layer has semantic authority over another layer
+System is stable if:
+- single-layer assignment holds
+- DAG is acyclic
+- traceability rules are satisfied
 
-## System Representation Constraint
-The documentation system is a static schema.
+## EXPERIMENT Schema Definition
+EXPERIMENT is a structured execution record, not a process.
 
-It defines categorization and lifecycle rules ONLY.  
-It does NOT represent runtime architecture or execution behavior.
+### Required Fields
+- dataset reference
+- metric schema
+- execution outputs
+- reproducibility metadata
+
+### Constraint
+- EXPERIMENT does NOT define execution semantics
+
+## LINKED EXPERIMENT
+Definition:
+- references external CONTRACT
+
+Requirements:
+- MUST reference CONTRACT identifier(s)
+- MUST follow external BENCH rules
+- MUST be reproducible from referenced CONTRACT
+
+Properties:
+- participates in DAG validation
+- supports comparability
+
+Constraint:
+- does NOT embed CONTRACT logic
+
+## SELF-CONTAINED EXPERIMENT (EXPERIMENT-SC)
+Definition:
+- fully closed execution record with embedded reproducibility snapshot
+
+Requirements:
+- MUST embed resolved CONTRACT snapshot
+- MUST embed metric schema snapshot
+- MUST embed dataset definition snapshot
+- MUST be internally consistent at creation time
+
+Constraints:
+- MUST NOT reference external CONTRACTs for execution
+- MUST NOT claim equivalence to external CONTRACT versions
+
+## Metric Compatibility Rule
+Two EXPERIMENTS are comparable iff:
+- metric schema fields match exactly (name, type, aggregation)
+
+If not:
+- they are non-comparable
+- neither is invalidated
+
+## Execution Interpretation Rule
+- EXPERIMENT does not define execution behavior
+- It defines execution records only
+- Execution itself is external to META system
+
+## Rule Precedence
+1. META-CORE
+2. CONTRACT
+3. EXPERIMENT
+4. INTENT
+5. DECISION
+
+Higher overrides lower if conflict exists.
 
 ## Core Constraint
-META defines governance rules for documentation only.
-
-META has no authority over runtime systems.
+META defines documentation governance only.  
+META does not participate in runtime execution or system behavior.

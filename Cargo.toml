@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-reqwest     # HTTP fetching
-crossbeam   # channels (simpler than std)
-image       # basic image processing
-anyhow      # error handling
+#anyhow = "1.0.102"   # error handling
+#crossbeam = "0.8.4"  # channels (simpler than std)
+#image = "0.25.10"    # basic image processing
+#reqwest = "0.13.2"   # HTTP fetching

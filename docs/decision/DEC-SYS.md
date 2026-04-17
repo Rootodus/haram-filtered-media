@@ -1,66 +1,114 @@
 # System Decisions
 ID: DEC-SYS  
 Status: PRELIMINARY  
-Depends on: STD-DOC, INT-ARCH, INT-DATA-MOD, INT-PIPE
+Depends on: STD-DOC, INT-ARCH, INT-DATA-MOD
+
+## Decision Schema (normative)
+Each decision MUST contain:
+- Decision statement (descriptive, non-normative)
+- Evidence references (≥1 EXP artifact)
+- Observed signals (derived from EXP data only)
+- Relationship mapping (signal -> observed association in data)
+- Rejected alternatives (when comparison exists)
 
 ## Decision: Read-only GET mode
-Constraint: GET requests ONLY  
-Constraint: POST PROHIBITED  
-Constraint: PUT PROHIBITED  
-Constraint: DELETE PROHIBITED  
-Impact: input-output equivalence under identical inputs and reduced side-effect surface increased  
-Reason: side effects reduction
+Evidence:
+- EXP-ARCH-BASE-RUN-A.log
+- EXP-ARCH-BASE-RUN-B.log
+
+Observed Signals:
+- Lower variance in request-side state in Config A
+- Reduced side-effect surface in constrained interaction model
+
+Relationship Mapping:
+- Restriction of interaction surface aligns with fewer observed state variation paths
+- Reduced mutation surface aligns with reduced output variability under identical inputs
+
+Rejected Alternatives:
+- Allowing mixed HTTP methods with runtime filtering (higher observed divergence)
 
 ## Decision: Disable JS execution
-Constraint: JSExecution NONE  
-Constraint: dynamic content uses Loader  
-Impact: execution path variance reduced under identical inputs  
-Reason: DOM mutation elimination
+Evidence:
+- EXP-ARCH-BASE-RUN-A.log
+
+Observed Signals:
+- Client-side execution introduces variability in rendered input representation
+- DOM mutation introduces inconsistent preprocessing states
+
+Relationship Mapping:
+- Removal of client-side execution aligns with more stable input extraction patterns
+
+Rejected Alternatives:
+- Sandboxed JS execution with partial allowlist (still introduces timing variance)
 
 ## Decision: Pipeline architecture
-Constraint: staged pipeline used  
-Constraint: stages communicate via queues ONLY  
-Impact: component scaling enabled  
-Reason: separation of concerns
+Evidence:
+- EXP-ARCH-BASE-RUN-A.log
+- EXP-ARCH-BASE-RUN-B.log
+
+Observed Signals:
+- Config A shows higher scheduling overhead
+- Config B shows lower overhead but reduced isolation between stages
+
+Relationship Mapping:
+- Queue-based separation aligns with higher overhead and stronger stage decoupling
+- Single-stage execution aligns with lower overhead and increased coupling
+
+Rejected Alternatives:
+- Fully single-stage execution (loss of separation boundaries)
 
 ## Decision: Stateless MLProcessor
-Constraint: MLProcessor has no persistent state  
-Constraint: state exists in ContentBuffer only  
-Impact: parallel execution improved  
-Reason: batching simplification
+Evidence:
+- EXP-ARCH-BASE-RUN-A.log
 
-## Decision: Async queue communication
-Constraint: async channels used between stages  
-Constraint: queue capacity configurable  
-Impact: throughput increased  
-Reason: execution decoupling
+Observed Signals:
+- Stateful retention correlates with higher run-to-run variance
+- Stateless execution correlates with more consistent outputs
 
-## Decision: Backpressure with frame dropping
-Constraint: frames dropped under load  
-Constraint: newest frames prioritized  
-Impact: responsiveness preserved  
-Reason: overload handling
+Relationship Mapping:
+- Absence of cross-run state aligns with reduced variability
 
-## Decision: External Loader for dynamic content
-Constraint: Loader handles dynamic content sources  
-Constraint: Loader is optional  
-Constraint: Loader is isolated  
-Impact: core output stability preserved under isolated external variability  
-Reason: external variability isolation
+Rejected Alternatives:
+- Session-based state model (higher cross-run coupling observed)
 
-## Decision: Shared buffer ownership
-Constraint: shared references used where possible  
-Constraint: invalid access prevented via lifetime rules  
-Impact: memory overhead reduced  
-Reason: copy reduction
+## Decision: Async communication
+Evidence:
+- EXP-ARCH-BASE-RUN-A.log
 
-## Decision: LLM-oriented documentation
-Constraint: key/value format used  
-Constraint: each line is single fact  
-Impact: parsing consistency improved  
-Reason: machine interpretability
+Observed Signals:
+- Synchronous coupling increases upstream idle time
+- Queue-based buffering smooths throughput under burst conditions
 
-## Notes / Explanatory
-- [EXPLANATORY] Output variance reduction is the primary driver for most architectural constraints.
-- [EXPLANATORY] Frame dropping trades accuracy for responsiveness under load.
-- [EXPLANATORY] Loader separation allows future extension without modifying core pipeline.
+Relationship Mapping:
+- Decoupling via queues aligns with reduced blocking propagation
+
+Rejected Alternatives:
+- Direct synchronous chaining (backpressure amplification observed)
+
+## Decision: Buffer sharing
+Evidence:
+- EXP-ARCH-BASE-RUN-B.log
+
+Observed Signals:
+- Copy-based handling increases memory usage with payload size
+- Shared references reduce allocation overhead in measured runs
+
+Relationship Mapping:
+- Reduced copying aligns with lower memory usage in observed runs
+
+Rejected Alternatives:
+- Deep copy per stage boundary (higher allocation cost observed)
+
+## Decision: Documentation format
+Evidence:
+- INT-ARCH / INT-DATA-MOD structural evaluation
+
+Observed Signals:
+- Free-form blocks increase parsing ambiguity
+- Atomic key/value formatting reduces interpretation variance
+
+Relationship Mapping:
+- Structural constraints align with more consistent parsing behavior
+
+Rejected Alternatives:
+- Free-form documentation blocks (higher ambiguity observed)

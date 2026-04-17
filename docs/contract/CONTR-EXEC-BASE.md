@@ -1,154 +1,100 @@
+<!-- Full Path: /contract/CONTR-EXEC-BASE.md -->
+
 # Execution Base Contract
 ID: CONTR-EXEC-BASE  
 Status: PRELIMINARY  
 Depends on: STD-DOC, INT-DATA-MOD
 
-## Purpose
-Define strict execution semantics for benchmarking pipeline stages.
-
-This contract defines execution boundaries only.  
-It does NOT define architecture choices.
+## Scope Boundary
+- This contract defines execution semantics only
+- It MUST NOT define architecture constraints
+- It MUST NOT define benchmarking interpretation rules
 
 ## Core Execution Unit
 UnitOfWork:
 - single input item processed from ingestion to final output write
 
 InputType:
-- `ContentBuffer`
+- ContentBuffer
 
 OutputType:
-- `ContentBuffer`
+- ContentBuffer
 
-## Stage Definitions (mandatory identical semantics across configs)
+## Stage Definitions
 
 ### FetchStage
-Function:
-
-```
 FetchStage(input: ContentBuffer) -> ContentBuffer
-```
 
 Rules:
 - MUST perform input retrieval or pass-through only
 - MUST NOT perform ML processing
 - MUST NOT perform rendering logic
-- MUST NOT modify ML-related metadata
-- MAY simulate fetch delay if required by dataset rules
-- MUST return a valid ContentBuffer
+- MUST return valid ContentBuffer
 
 Failure:
-- on error, MUST return status FAIL with empty payload
+- MUST return FAIL status with valid ContentBuffer
 
 ### ProcessStage (MLProcessor)
-Function:
-
-```
 ProcessStage(input: ContentBuffer) -> ContentBuffer
-```
 
 Rules:
-- MUST perform transformation on payload only
+- MUST transform payload only
 - MUST NOT perform I/O operations
-- MUST NOT perform fetch logic
-- MUST NOT perform rendering logic
-- MUST be stateless across calls
-- MUST produce deterministic output for identical input
+- MUST be stateless
+- MUST be deterministic
 
 ### RenderStage
-Function:
-
-```
 RenderStage(input: ContentBuffer) -> ContentBuffer
-```
 
 Rules:
-- MUST serialize output to final form
-- MUST NOT modify payload semantics
+- MUST serialize output
+- MUST NOT modify semantics
 - MUST NOT perform ML computation
-- MUST NOT influence upstream stages
-- MAY simulate output write delay
-- MUST return final ContentBuffer unchanged except for output metadata
+- MAY simulate output delay
 
-## Timing Rules (critical)
+## Timing Rules
 
 ### StartTime
-MUST be recorded:
-- at entry to FetchStage in Config A
-- at function entry in Config B
+- Config B: immediately before FetchStage invocation
+- Config A: immediately before enqueue into pipeline
 
 ### EndTime
-MUST be recorded:
-- immediately after RenderStage completion in Config A
-- immediately after function return in Config B
+- immediately after RenderStage returns
 
-No other timing points are valid.
+### Latency
+- includes queue waiting time where applicable
+- includes scheduling delays where applicable
 
-## Execution Model Constraints
+## Execution Model
 
-### Config A (Staged Pipeline)
-Rules:
-- MUST execute FetchStage → ProcessStage → RenderStage sequentially
-- MUST use queue between stages
-- Queue MUST preserve ordering
-- Each stage MAY run in separate thread
+### Config A
+- Fetch -> Process -> Render
+- bounded queues between stages
+- ordering preserved
+- blocking on full queue (no dropping)
 
-Queue Behavior:
-- bounded buffer REQUIRED
-- blocking on full queue REQUIRED (no dropping allowed)
+### Config B
+- single call chain execution
+- no queues
+- no buffering
 
-### Config B (Single Execution Flow)
-Rules:
-- MUST execute FetchStage, ProcessStage, RenderStage in a single call chain
-- MUST NOT use queues
-- MUST NOT use inter-stage buffering
-- MUST behave as inlined execution of stages
+## Identity Constraint
+Must be identical:
+- stage logic
+- dataset
+- output schema
 
-## Identity Constraint (critical for comparability)
-The following MUST remain identical between Config A and B:
-- FetchStage logic
-- ProcessStage logic
-- RenderStage logic
-- Input dataset
-- Output serialization format
-
-Only execution structure differs.
+Only structure differs.
 
 ## Error Handling
-All stages:
-- MUST return explicit status SUCCESS or FAIL
+- MUST return SUCCESS or FAIL
 - MUST NOT throw unhandled exceptions
-- FAIL results MUST still be logged
+- FAIL MUST be logged
 
-## Logging Contract
-Each unit of work MUST produce:
+## Logging
+config_id, input_id, iteration, start_time_ms, end_time_ms, latency_ms, status
 
-```
-config_id
-input_id
-iteration
-start_time_ms
-end_time_ms
-latency_ms
-status
-```
-
-Rules:
-- timestamps MUST use same clock source
-- logging MUST occur AFTER EndTime capture
-- logs MUST be append-only
-- logs MUST NOT be aggregated during execution
-
-## Non-Variability Requirement
-To ensure comparability:
-- same CPU allocation policy
-- same thread limits
-- same memory limits
-- same input dataset ordering
-- same runtime environment version
-
-## Constraint Summary
-This contract enforces:
-- identical functional behavior across configs
-- different execution structure only
-- fixed measurement boundaries
-- strict stage isolation rules
+## Non-variability
+- identical hardware
+- identical runtime
+- identical dataset ordering
