@@ -1,65 +1,16 @@
 // File: main.rs
 // Implementation of CONTR-EXEC-BASE for Architecture Baseline Experiment (EXP-ARCH-BASE)
 
+use ml_filtered_browser::content_buffer::{ContentBuffer, Status};
+use ml_filtered_browser::fetcher::fetch_stage;
+use ml_filtered_browser::ml_processor::process_stage;
+use ml_filtered_browser::renderer::render_stage;
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-/// --- DATA MODELS ---
-
-#[derive(Clone, Debug)]
-enum Status {
-    SUCCESS,
-    FAIL,
-}
-
-impl Status {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Status::SUCCESS => "SUCCESS",
-            Status::FAIL => "FAIL",
-        }
-    }
-}
-
-/// Core execution unit (UnitOfWork) as defined in CONTR-EXEC-BASE
-#[derive(Clone, Debug)]
-struct ContentBuffer {
-    input_id: String,
-    iteration: usize,
-    payload: String,
-    status: Status,
-    start_time_ms: u128,
-    end_time_ms: u128,
-}
-
-/// --- STAGE DEFINITIONS (Strict Identity Rule) ---
-/// Mandatory identical semantics across Config A and B.
-
-fn fetch_stage(mut input: ContentBuffer) -> ContentBuffer {
-    // MUST NOT perform ML or rendering. MUST return a valid ContentBuffer.
-    if input.payload.is_empty() {
-        input.status = Status::FAIL;
-    }
-    input
-}
-
-fn process_stage(mut input: ContentBuffer) -> ContentBuffer {
-    // MUST perform transformation on payload only. Stateless across calls.
-    if let Status::SUCCESS = input.status {
-        // Input-output consistent transformation: simple reverse
-        input.payload = input.payload.chars().rev().collect();
-    }
-    input
-}
-
-fn render_stage(input: ContentBuffer) -> ContentBuffer {
-    // MUST serialize to final form. MUST NOT modify payload semantics.
-    input
-}
 
 /// --- TIMING & LOGGING UTILITIES ---
 
@@ -189,7 +140,7 @@ fn main() {
         dataset.push(ContentBuffer {
             input_id: id.to_string(),
             iteration: 0,
-            payload: format!("Payload content for identity validation: {}", id),
+            payload: format!("Payload content for identity validation: {}", id).into_bytes(),
             status: Status::SUCCESS,
             start_time_ms: 0,
             end_time_ms: 0,
