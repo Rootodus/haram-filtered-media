@@ -50,7 +50,7 @@ fn fetch_stage(mut input: ContentBuffer) -> ContentBuffer {
 fn process_stage(mut input: ContentBuffer) -> ContentBuffer {
     // MUST perform transformation on payload only. Stateless across calls.
     if let Status::SUCCESS = input.status {
-        // Deterministic transformation: simple reverse
+        // Input-output consistent transformation: simple reverse
         input.payload = input.payload.chars().rev().collect();
     }
     input

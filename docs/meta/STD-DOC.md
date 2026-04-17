@@ -1,5 +1,4 @@
 # Documentation Standard [NORMATIVE]
-Project: MLFilteredBrowser (MLFB)  
 ID: STD-DOC  
 Status: STABLE  
 Depends on: NONE
@@ -65,61 +64,38 @@ Depends on: NONE
 - Tables: Maintain column consistency. Use exactly ONE space between pipes AND content `| Content |`.
 
 ## Document ID System
-- Document IDs MUST follow format: `LAYER-NAME`
-- Each ID MUST start with a valid Layer token.
-- No hierarchical segmentation (DOMAIN / SUBDOMAIN / SEQUENCE) is permitted.
+- Document IDs MUST follow format: `CLASS-IDENTIFIER`
+- Each ID MUST start with a valid Category Class token.
+- `IDENTIFIER` MUST be a unique semantic name using ALL CAPS and hyphens.
 - IDs MUST be stable and globally unique within the system.
 
-### Layer Tokens
-- META = documentation structure and governance rules
-- INTENT = intent and assumptions
-- CONTRACT = executable constraints
-- EXPERIMENT = raw outputs and measurements
-- DECISION = validated conclusions
+### Category Classes
+- ARCH = high-level reasoning, system maps, and terminology
+- SPEC = atomic component instructions, interfaces, and constraints
+- LOG = append-only journals of historical decisions and rationale
+- EXP = structured execution records, benchmarks, and evidence
+- STD = documentation syntax, formatting, and governance standards
 
 ### Construction Rules
-- IDs MUST use only the LAYER-NAME format.
-- No additional segmentation, hierarchy, or token expansion is permitted.
-- Tokens MUST NOT be extended beyond the Layer level.
-- New Layers MUST be explicitly added before use.
+- IDs MUST use exactly one Class token followed by a hyphen and a semantic name.
+- Class tokens MUST NOT be modified or extended.
+- Semantic names MUST be concise and descriptive of the component or concept.
 
 ### Uniqueness Rule
-- Each document ID MUST be globally unique.
-- Uniqueness is enforced at full string level of `LAYER-NAME`.
-- No structural uniqueness constraints apply.
+- Each document ID MUST be globally unique at the full string level.
 
-### Stability Rule
-- Once assigned, a Document ID MUST NOT be modified.
-- Renaming requires creation of a new ID and deprecation of the old document.
+## Anchor & Reference System
+- Semantic Referencing is the PREFERRED method for cross-document linkage [Example: Referring to "Statelessness" in `SPEC-ML` without an explicit anchor].
+- Anchors are OPTIONAL and SHOULD be used ONLY for high-precision disambiguation or mapping to specific test cases.
+- IF an anchor is used, the format MUST be: `[ANCHOR: ANCHOR-ID]`
+- Cross-document references MUST use format: `[REF: DOC-ID]` OR `[REF: DOC-ID::ANCHOR-ID]`
+- References MUST be stable. IF a semantic name is used for a reference, that name MUST be preserved in the target document.
 
-### Anchor System
-- Anchors SHOULD NOT be defined for all sections.
-- Anchors MUST be defined ONLY for concepts requiring external reference or cross-document linkage.
-- Anchor format MUST be: `[ANCHOR: <ANCHOR_ID>]`
-- Anchor IDs MUST be unique within a single document.
-- Anchor IDs MUST NOT include document IDs.
-- Anchor IDs MUST be stable within the document.
-- Anchor IDs MUST be immutable once defined.
-- Anchor creation MUST be minimized and used ONLY when a concept is referenced outside the current document.
-- Anchors SHOULD NOT be created for purely structural or descriptive sections.
-- Excessive anchor creation is PROHIBITED when no cross-reference requirement exists.
-
-### Reference System
-- Cross-document references MUST use format: `[REF: DOC-ID::ANCHOR_ID]`
-- References MUST include full document ID.
-- References MUST include anchor ID.
-- Partial references without DOC-ID are PROHIBITED for cross-document linking.
-- References MUST NOT depend on section numbers.
-
-### Scope Rule
+### Scope and Independence
 - Anchor scope is limited to a single document.
-- Anchor names MUST NOT assume global uniqueness.
-- Global uniqueness is enforced ONLY through DOC-ID + ANCHOR combination.
-
-### Header Independence Rule
+- Global uniqueness is enforced ONLY through the combination of Document ID AND Anchor ID.
 - Section headers MAY change without affecting anchors.
-- Section numbering MUST NOT be used as a reference system.
-- Headers are presentation-only and MUST NOT be referenced externally.
+- Headers are presentation-only and MUST NOT be referenced as stable identifiers.
 
 ## Notes / Explanatory
 - `[EXPLANATORY]` tags denote rationale OR non-binding meta-information.
