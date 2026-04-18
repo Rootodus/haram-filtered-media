@@ -1,165 +1,204 @@
-// File: main.rs
-// Implementation of CONTR-EXEC-BASE for Architecture Baseline Experiment (EXP-ARCH-BASE)
-
 use ml_filtered_browser::content_buffer::{ContentBuffer, Status};
 use ml_filtered_browser::fetcher::fetch_stage;
 use ml_filtered_browser::ml_processor::process_stage;
 use ml_filtered_browser::renderer::render_stage;
+
 use std::env;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
-/// --- TIMING & LOGGING UTILITIES ---
+/// --- LOG BUFFER ---
 
-fn get_now_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("System clock error")
-        .as_millis()
+struct LogEntry {
+    config: &'static str,
+    input_id: String,
+    iteration: usize,
+    latency_ns: u128,
+    status: &'static str,
 }
 
-fn log_unit(file: &mut File, config_id: &str, buf: &ContentBuffer) {
-    let latency = buf.end_time_ms.saturating_sub(buf.start_time_ms);
-    // CSV Schema: config_id,input_id,iteration,start_time_ms,end_time_ms,latency_ms,status
-    let line = format!(
-        "{},{},{},{},{},{},{}\n",
-        config_id,
-        buf.input_id,
-        buf.iteration,
-        buf.start_time_ms,
-        buf.end_time_ms,
-        latency,
-        buf.status.as_str()
+/// --- SUMMARY ---
+
+fn summarize(latencies: &[u128], label: &str) {
+    if latencies.is_empty() {
+        println!("{}: no data", label);
+        return;
+    }
+
+    let sum: u128 = latencies.iter().sum();
+    let mean = sum / latencies.len() as u128;
+    let min = latencies.iter().min().unwrap();
+    let max = latencies.iter().max().unwrap();
+
+    println!(
+        "{} -> count: {}, mean: {} ns, min: {} ns, max: {} ns",
+        label,
+        latencies.len(),
+        mean,
+        min,
+        max
     );
-    file.write_all(line.as_bytes()).expect("Log write failed");
-    file.flush().expect("Log flush failed"); // Ensure append-only, unbuffered logging
 }
 
-/// --- CONFIGURATION A: STAGED PIPELINE ---
+/// --- WRITE LOG ONCE ---
 
-fn run_config_a(dataset: Vec<ContentBuffer>, repetitions: usize) {
-    let mut log_file = OpenOptions::new()
+fn flush_logs(filename: &str, logs: &[LogEntry]) {
+    let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("EXP-ARCH-BASE-RUN-A.log")
-        .expect("Cannot open log A");
+        .open(filename)
+        .expect("Cannot open log file");
 
-    // Channels MUST have fixed capacity defined at startup
+    for entry in logs {
+        let line = format!(
+            "{},{},{},{},{}\n",
+            entry.config, entry.input_id, entry.iteration, entry.latency_ns, entry.status
+        );
+
+        file.write_all(line.as_bytes()).expect("Log write failed");
+    }
+}
+
+/// --- CONFIG A (PIPELINE) ---
+
+fn run_config_a(dataset: Vec<ContentBuffer>, repetitions: usize) {
     let capacity = 100;
-    // Exactly 2 bounded channels: Fetch -> Process, Process -> Render
+
     let (tx1, rx1): (SyncSender<ContentBuffer>, Receiver<ContentBuffer>) = sync_channel(capacity);
-    let (tx2, rx2): (SyncSender<ContentBuffer>, Receiver<ContentBuffer>) = sync_channel(capacity);
+    let (tx2, rx2): (
+        SyncSender<(ContentBuffer, Instant)>,
+        Receiver<(ContentBuffer, Instant)>,
+    ) = sync_channel(capacity);
 
-    // RenderStage Thread
-    // Termination handled by rx2 closing when tx2 is dropped.
+    let latencies = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let logs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let lat_clone = latencies.clone();
+    let log_clone = logs.clone();
+
     let render_thread = thread::spawn(move || {
-        while let Ok(unit) = rx2.recv() {
-            let mut output = render_stage(unit);
-            // EndTime MUST be recorded immediately after RenderStage returns
-            output.end_time_ms = get_now_ms();
-            log_unit(&mut log_file, "A", &output);
+        while let Ok((unit, start)) = rx2.recv() {
+            let output = render_stage(unit);
+
+            let elapsed = start.elapsed().as_nanos() as u128;
+
+            lat_clone.lock().unwrap().push(elapsed);
+
+            log_clone.lock().unwrap().push(LogEntry {
+                config: "A",
+                input_id: output.input_id,
+                iteration: output.iteration,
+                latency_ns: elapsed,
+                status: output.status.as_str(),
+            });
         }
     });
 
-    // ProcessStage Thread
     thread::spawn(move || {
-        while let Ok(unit) = rx1.recv() {
+        while let Ok((unit, start)) = rx1.recv().map(|u| (u, Instant::now())) {
             let output = process_stage(unit);
-            tx2.send(output).expect("Process -> Render send failed");
+            tx2.send((output, start))
+                .expect("Process -> Render send failed");
         }
-        // tx2 dropped here, signaling rx2
     });
 
-    // FetchStage Thread (Entry)
     thread::spawn(move || {
         for base_item in dataset {
             for i in 0..repetitions {
                 let mut unit = base_item.clone();
                 unit.iteration = i;
 
-                // StartTime MUST be recorded immediately before first FetchStage call
-                unit.start_time_ms = get_now_ms();
                 let output = fetch_stage(unit);
-
                 tx1.send(output).expect("Fetch -> Process send failed");
             }
         }
-        // tx1 dropped here, signaling rx1
     });
 
-    render_thread.join().expect("Render thread panicked");
+    render_thread.join().unwrap();
+
+    let lat = latencies.lock().unwrap();
+    summarize(&lat, "Config A");
+
+    let logs = logs.lock().unwrap();
+    flush_logs("EXP-ARCH-BASE-RUN-A.log", &logs);
 }
 
-/// --- CONFIGURATION B: SINGLE EXECUTION FLOW ---
+/// --- CONFIG B (SYNC) ---
 
 fn run_config_b(dataset: Vec<ContentBuffer>, repetitions: usize) {
-    let mut log_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("EXP-ARCH-BASE-RUN-B.log")
-        .expect("Cannot open log B");
+    let mut latencies = Vec::new();
+    let mut logs = Vec::new();
 
     for base_item in dataset {
         for i in 0..repetitions {
             let mut unit = base_item.clone();
             unit.iteration = i;
 
-            // StartTime MUST be recorded immediately before first FetchStage call
-            unit.start_time_ms = get_now_ms();
+            let start = Instant::now();
 
-            // Execute stages in a single linear call chain
             let f = fetch_stage(unit);
             let p = process_stage(f);
-            let mut r = render_stage(p);
+            let r = render_stage(p);
 
-            // EndTime MUST be recorded immediately after RenderStage returns
-            r.end_time_ms = get_now_ms();
+            let elapsed = start.elapsed().as_nanos() as u128;
 
-            log_unit(&mut log_file, "B", &r);
+            latencies.push(elapsed);
+
+            logs.push(LogEntry {
+                config: "B",
+                input_id: r.input_id,
+                iteration: r.iteration,
+                latency_ns: elapsed,
+                status: r.status.as_str(),
+            });
         }
     }
+
+    summarize(&latencies, "Config B");
+    flush_logs("EXP-ARCH-BASE-RUN-B.log", &logs);
 }
 
-/// --- EXECUTION ENTRY ---
+/// --- ENTRY ---
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
     let mode_arg = args
         .iter()
         .position(|r| r == "--mode")
         .and_then(|idx| args.get(idx + 1))
         .map(|s| s.as_str());
 
-    // Dataset MUST be pre-generated before execution starts
     let mut dataset = Vec::new();
     let ids = vec!["alpha", "beta", "gamma", "delta", "epsilon"];
+
     for id in ids {
         dataset.push(ContentBuffer {
             input_id: id.to_string(),
             iteration: 0,
-            payload: format!("Payload content for identity validation: {}", id).into_bytes(),
+            // increased payload to make measurement meaningful
+            payload: vec![0u8; 1024 * 64], // 64 KB
             status: Status::SUCCESS,
             start_time_ms: 0,
             end_time_ms: 0,
         });
     }
 
-    // Each input MUST be processed exactly 1000 times per config
     let repetitions = 1000;
 
+    let total_start = Instant::now();
+
     match mode_arg {
-        Some("A") => {
-            run_config_a(dataset, repetitions);
-        }
-        Some("B") => {
-            run_config_b(dataset, repetitions);
-        }
+        Some("A") => run_config_a(dataset, repetitions),
+        Some("B") => run_config_b(dataset, repetitions),
         _ => {
             eprintln!("Usage: benchmark --mode [A|B]");
             std::process::exit(1);
         }
     }
+
+    println!("Total runtime: {} ms", total_start.elapsed().as_millis());
 }
