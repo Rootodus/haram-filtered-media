@@ -24,7 +24,7 @@ Each experiment run MUST include:
 - output_trace: exact system outputs
 - metrics: numerical aggregates of execution
 - runtime: execution configuration used
-- determinism_check: replay consistency result
+- repro_consistency_check: replay consistency result
 
 ## Trace Integrity Rule
 input_trace and output_trace MUST NOT be modified or inferred.
@@ -39,7 +39,7 @@ No external estimation is allowed.
 ## Observation Rule
 Observations are optional human notes.
 
-They MUST NOT affect metrics or determinism results.
+They MUST NOT affect metrics or reproducible execution consistency results.
 
 ## Reproducibility Rule
 Every experiment MUST be replayable from:

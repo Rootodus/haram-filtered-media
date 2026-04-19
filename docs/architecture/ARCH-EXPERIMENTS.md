@@ -21,18 +21,18 @@ Validate MLProcessor scheduling semantics in isolation.
 ### Scope
 - Single-process execution (in-process only)
 - No IPC, no sockets, no threading boundaries
-- Mock ML function (deterministic transform or sleep)
+- Mock ML function (producing identical output under identical input-state conditions transform or sleep)
 - In-memory queue only
 
 ### Focus Questions
 - Does latency mode correctly drop inputs?
 - Does throughput mode correctly batch inputs?
-- Is execution behavior deterministic under load?
+- Is execution behavior producing identical output under identical input-state conditions under load?
 
 ### Exit Criteria
 - Drop behavior is consistent and reproducible
 - Batch behavior is stable
-- Mode switching is deterministic under identical input conditions
+- Mode switching produces identical output under identical input conditions
 
 ## Phase 1: Load and Stress Validation
 
@@ -64,12 +64,12 @@ Evaluate whether introducing isolation boundaries affects scheduling semantics.
 
 ### Focus Questions
 - Does isolation affect scheduling correctness?
-- Does determinism remain unchanged?
+- Does reproducible execution consistency remain unchanged?
 - Does behavior differ from in-process baseline?
 
 ### Exit Criteria
 - No change in scheduling semantics due to isolation
-- Determinism preserved across boundary introduction
+- Reproducible execution consistency preserved across boundary introduction
 
 ## Phase 3: Real Model Integration Test
 

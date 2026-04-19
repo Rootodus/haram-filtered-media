@@ -1,14 +1,20 @@
-# MLProcessor Decision Model (Minimal Deterministic State Machine)
+# MLProcessor Decision Model (Minimal Reproducible Execution Consistency State Machine)
 ID: EXP-ML-PROC-DEC  
 Status: EXPERIMENTAL  
 Depends on: SPEC-ML-PROC
 
 ## Purpose
-Defines a minimal deterministic decision function for MLProcessor execution.
+Defines a minimal reproducible execution consistency state machine for MLProcessor execution.
 
-This model is implementation-oriented, but does not prescribe architecture, threading, or process boundaries.
+This model specifies behavior only. It does not define architecture, process boundaries, or deployment structure.
 
-## 1. State Definition
+## 1. Time Model (Reproducibility Anchor)
+All time-dependent decisions use `state.current_time`.
+
+- No system clock usage is allowed
+- Time must be externally supplied per evaluation step
+
+## 2. State Definition
 ```
 State {
   queue: list of Input
@@ -17,16 +23,15 @@ State {
   batch_threshold: integer
   batch_interval: duration
   buffer_limit: integer
-  model_cost(model_id) → duration
-  degradation_capable(model_id) → boolean
+  model_cost(model_id) -> duration
+  degradation_capable(model_id) -> boolean
   last_batch_time: timestamp
 }
 ```
 
-All fields are required for deterministic evaluation.  
-`last_batch_time` is required to make batch triggering deterministic.
+All fields are required for reproducible execution consistency evaluation.
 
-## 2. Input Definition
+## 3. Input Definition
 ```
 Input {
   payload
@@ -36,149 +41,161 @@ Input {
 }
 ```
 
-## 3. Output Types
-Exactly one per input:
-- PROCESS
-- DROP
-- DEGRADE
-- QUEUE (only meaningful before scheduling decision is resolved)
-
-Final system outcome MUST resolve to one of:
+## 4. Output Space
+Each evaluation returns exactly one outcome:
 - PROCESS
 - DROP
 - DEGRADE
 
-QUEUE is an intermediate state, not a final output.
+QUEUE is NOT an output. It is a state mutation only.
 
-## 4. Core Rule
-Decision is a single deterministic function:
+## 5. Core Evaluation Model
+Decision function:
 
 ```
-decide(input, state) → outcome
+decide(input, state) -> outcome + state_update
 ```
 
-Evaluation order is fixed:
-1. Mode selection
-2. Queue update
-3. Feasibility check
-4. Execution decision
+Evaluation order:
+1. Queue update
+2. Mode selection
+3. Feasibility evaluation
+4. Outcome resolution
 
-No rule priority system exists outside this order.
+No alternative ordering is valid.
 
-## 5. Latency Mode (Single-Slot Policy)
+## 6. Queue Update Rules
 
-### 5.1 Queue Rule
+### 6.1 Latency Mode
 On input arrival:
 
 ```
 queue := [input]
 ```
 
-All previous entries are discarded immediately.
+All previous entries are discarded.
 
-Queue size is always exactly 0 or 1.
+Queue size ≤ 1 always.
 
-### 5.2 Decision Rule
+### 6.2 Throughput Mode
+On input arrival:
+
 ```
-estimated_cost = model_cost(input.model_id)
+if queue.size >= buffer_limit:
+    queue := queue[1:]   // drop oldest
+
+append(queue, input)
+```
+
+## 7. Latency Mode Execution
+
+### 7.1 Deadline Computation
+```
 deadline = input.timestamp + latency_budget
+cost = model_cost(input.model_id)
 ```
 
+### 7.2 Decision Rule
 ```
-IF current_time + estimated_cost > deadline:
-    IF degradation_capable(input.model_id):
-        RETURN DEGRADE
-    ELSE:
-        RETURN DROP
-ELSE:
-    RETURN PROCESS
-```
-
-## 6. Throughput Mode (Batch Policy)
-
-### 6.1 Queue Rule
-```
-IF queue.size >= buffer_limit:
-    DROP oldest(queue)
-
-append(input)
+if current_time + cost > deadline:
+    if degradation_capable(input.model_id):
+        return DEGRADE
+    else:
+        return DROP
+else:
+    return PROCESS
 ```
 
-### 6.2 Batch Trigger Rule
-Batch execution occurs when:
+## 8. Throughput Mode Execution
+
+### 8.1 Batch Trigger Condition
+A batch executes when:
 
 ```
 queue.size >= batch_threshold
-OR (current_time - last_batch_time) >= batch_interval
+OR
+(current_time - last_batch_time) >= batch_interval
 ```
 
-### 6.3 Batch Execution Rule
+### 8.2 Batch Execution Semantics
 ```
-batch = queue (FIFO order)
-queue := empty
-last_batch_time := current_time
-```
-
-For each input in batch:
-
-```
-process(input)
+batch = queue
+queue = []
+last_batch_time = current_time
 ```
 
-Each input produces exactly one outcome.
+For each input in batch (FIFO order):
 
-## 7. Processing Rule
 ```
-process(input):
+PROCESS(input)
+```
+
+### 8.3 Batch Output Semantics
+Batch execution returns:
+
+```
+list of ProcessedBuffer in FIFO order
+```
+
+Each input produces exactly one output.
+
+## 9. Processing Rule
+```
+PROCESS(input):
     output = ML_MODEL(input.payload)
-    return PROCESS(output)
+    return ProcessedBuffer(output)
 ```
 
-## 8. Degradation Rule
-Only applies in latency mode.
+## 10. DROP Semantics
+DROP is terminal and irreversible.
+
+DROP occurs only in these cases:
+
+### Latency Mode
+- deadline violation AND no degradation path exists
+
+### Throughput Mode
+- buffer overflow (oldest input removed during insertion)
+
+DROP always removes input from system state immediately.
+
+## 11. Degradation Rule
+Only valid in latency mode:
 
 ```
-IF current_time + model_cost(input.model_id) > deadline
+if current_time + model_cost(input.model_id) > deadline
 AND degradation_capable(input.model_id):
-    RETURN DEGRADE
+    return DEGRADE
 ```
 
-Degradation means reduced computation, such as:
-- smaller model variant
-- reduced precision inference
-- partial computation path
+Meaning:
+- reduced precision OR
+- smaller model OR
+- partial inference
 
-No specific technique is mandated.
+No implementation method is specified.
 
-## 9. DROP Rules (Global)
-DROP is terminal and overrides all other outcomes.
+## 12. Reproducible Execution Consistency Constraint
+A valid implementation MUST guarantee:
+- identical input + identical state -> identical output
+- no hidden scheduling logic
+- no system-clock dependency
+- full queue observability
 
-```
-DROP if:
-- latency deadline violated AND no degradation available
-- buffer_limit exceeded in throughput mode (oldest entry)
-```
-
-## 10. Determinism Constraint
-Valid implementation MUST ensure:
-- identical input + identical state → identical output
-- no hidden scheduling behavior outside this model
-- queue state is fully observable and serializable
-
-## 11. Non-Goals
+## 13. Non-Goals
 This model does NOT define:
 - threading model
-- process separation (single vs multi-process)
-- IPC, sockets, or network transport
+- process or IPC boundaries
+- networking or transport layer
 - hardware acceleration strategy
 - ML model internals
-- rendering or UI system
+- rendering or UI systems
 
-## 12. Interpretation Rule
+## 14. Semantic Boundary
 This document defines only:
 
 ```
-Input + State → Deterministic Outcome
+Input + State -> Output + State Update
 ```
 
-It does not define how the function is deployed or executed.
+It does not define where or how execution occurs.

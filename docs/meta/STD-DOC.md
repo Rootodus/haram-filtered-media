@@ -51,6 +51,11 @@ Depends on: NONE
   - Compound conditions using `AND` are PERMITTED within a single `IF` segment. Conditions using `OR` MUST be split into multiple lines.
 - Contract syntax: Preconditions AND postconditions MUST be written as boolean predicates using System Entities, System States, OR Variables.
 
+## Banned Words [PROHIBITED to use]
+- `determinism`: BANNED
+- `deterministic`: BANNED
+- `magic`: BANNED
+
 ## Metadata & Traceability
 - Placement: Metadata MUST be placed at the top of the document immediately following the H1 header.
 - Required fields: ID, Status, Depends on.
