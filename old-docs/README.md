@@ -10,7 +10,7 @@ Depends on: STD-DOC
 - Explain the Atomic Specification model for AI-driven development.
 
 ## Directory Structure
-- `architecture/`: High-level reasoning AND system-wide maps.
+- `architecture/`: High-level reasoning, system-wide maps, AND terminology.
 - `specs/`: Canonical instructions, interfaces, AND constraints for components.
 - `log/`: Append-only historical records AND architectural decisions.
 - `experiments/`: Execution records, benchmarks, AND testing evidence.

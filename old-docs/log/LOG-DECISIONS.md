@@ -3,7 +3,7 @@ ID: LOG-DECISIONS
 Status: STABLE  
 Depends on: STD-DOC, EXP-ARCH-BASELINE
 
-## Decision: Read-only GET mode
+## [202X-XX-XX] Decision: Read-only GET mode
 Statement: The system boundary allows GET requests ONLY.  
 Evidence: `EXP-ARCH-BASELINE`.
 
@@ -18,7 +18,7 @@ Relationship mapping:
 Rejected alternatives:
 - Allowing mixed HTTP methods with runtime filtering [higher observed divergence].
 
-## Decision: Disable JS execution
+## [202X-XX-XX] Decision: Disable JS execution
 Statement: JS execution is disabled in the content loading environment.  
 Evidence: `EXP-ARCH-BASELINE`.
 
@@ -32,7 +32,7 @@ Relationship mapping:
 Rejected alternatives:
 - Sandboxed JS execution with partial allowlist [introduces timing variance].
 
-## Decision: Pipeline architecture
+## [202X-XX-XX] Decision: Pipeline architecture
 Statement: System uses a staged pipeline architecture.  
 Evidence: `EXP-ARCH-BASELINE`.
 
@@ -47,7 +47,7 @@ Relationship mapping:
 Rejected alternatives:
 - Fully single-stage execution [loss of separation boundaries].
 
-## Decision: Stateless MLProcessor
+## [202X-XX-XX] Decision: Stateless MLProcessor
 Statement: `MLProcessor` MUST NOT maintain persistent state between invocations.  
 Evidence: `EXP-ARCH-BASELINE`.
 
@@ -61,7 +61,7 @@ Relationship mapping:
 Rejected alternatives:
 - Session-based state model [higher cross-run coupling observed].
 
-## Decision: Async communication
+## [202X-XX-XX] Decision: Async communication
 Statement: Stages communicate via asynchronous bounded channels.  
 Evidence: `EXP-ARCH-BASELINE`.
 
@@ -75,7 +75,7 @@ Relationship mapping:
 Rejected alternatives:
 - Direct synchronous chaining [backpressure amplification observed].
 
-## Decision: Buffer sharing
+## [202X-XX-XX] Decision: Buffer sharing
 Statement: Buffers use shared references where safe.  
 Evidence: `EXP-ARCH-BASELINE`.
 
@@ -89,7 +89,7 @@ Relationship mapping:
 Rejected alternatives:
 - Deep copy per stage boundary [higher allocation cost observed].
 
-## Decision: Documentation format
+## [202X-XX-XX] Decision: Documentation format
 Statement: Standardize on atomic key/value formatting AND STE logic.  
 Evidence: `ARCH-SYSTEM-MAP` structural evaluation.
 
