@@ -4,7 +4,7 @@ Status: STABLE
 Depends on: STD-DOC
 
 ## Registry
-ContentBuffer -> SPEC-CONTENT-BUFFER  
-PipelineMessage -> SPEC-CONTENT-BUFFER  
-ML transformation rules -> SPEC-ML-PROCESSOR  
+ContentBuffer -> SPEC-CONTENT-BUFF  
+PipelineMessage -> SPEC-CONTENT-BUFF  
+ML transformation rules -> SPEC-ML-PROC  
 Rendering rules -> SPEC-RENDERER
