@@ -40,6 +40,21 @@ The system uses an ID-Atomic model to minimize clerical overhead AND prevent syn
 - IF a decision is significant OR irreversible, THEN record the rationale in `docs/log/LOG-DECISIONS.md`.
 - IF a `SPEC` is updated, THEN the previous state is preserved in Git history ONLY.
 
+## Experiments Directory Rule
+Contains only execution results and validation traces.
+
+Allowed content:
+- run logs (Phase 0–n executions)
+- measurements (latency, drop rate, throughput)
+- observed behavior deviations
+- reproduction notes
+
+Not allowed:
+- architectural design
+- system specifications
+- rule definitions
+- future plans or phases
+
 ## Documentation Governance
 - ALL documents MUST adhere to the syntax AND casing rules defined in `STD-DOC`.
 - Document IDs MUST be globally unique AND follow the `CLASS-IDENTIFIER` format.
