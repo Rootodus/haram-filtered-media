@@ -4,7 +4,7 @@ Status: STABLE
 Depends on: STD-DOC, DOC-MUT-POLICY
 
 ## Purpose
-Defines deterministic transformation from ARCH layer (design space) into SPEC layer (contract space).
+Defines functionally predictable transformation from ARCH layer into SPEC layer.
 
 ## Layer Definitions
 
@@ -12,88 +12,68 @@ Defines deterministic transformation from ARCH layer (design space) into SPEC la
 - Non-binding design space
 - Allows contradictions and alternatives
 - Used for exploration and decomposition
-- MAY contain multiple FIXED candidates alongside CANDIDATE and OBSERVED entries
 
 ### Spec Layer
 - Binding contract space
 - Defines exact system behavior
-- MUST be unambiguous and implementable
-- Conflicts are prohibited within a single SPEC
+- Must be fully implementable and unambiguous
 
-## Promotion Rule
-Content MAY move from architecture to specs ONLY IF all FIXED entries satisfy all transformation requirements.
+## Core Promotion Principle
+Promotion transforms selected architectural intent into executable specification.
 
-Promotion is a structural rewrite operation, not a selection process.
+Only FIXED content MAY be considered for promotion.
 
-## 1. FIXED-Only Input Requirement
-Only FIXED-classified ARCH content is eligible for promotion.
+## ARCH Classification System
 
-- IF content is CANDIDATE -> MUST NOT be promoted
-- IF content is OBSERVED -> MUST NOT be promoted
-- IF no FIXED content exists -> PROMOTION FAILS
+### FIXED
+- Selected design decision
+- Represents chosen intent only
+- Does NOT imply completeness or promotability
 
-## 2. Constraint Extraction Requirement
-All FIXED statements MUST be partitioned into:
-- CONCRETE: directly implementable behavior
-- NON_CONCRETE: removed during promotion
+### CANDIDATE
+- Unselected alternative design
+- Not eligible for promotion
 
-Only CONCRETE statements MAY be included in SPEC.
+### OBSERVED
+- External fact or constraint
+- Not eligible for promotion
 
-IF classification is not possible -> PROMOTION FAILS.
+### UNRESOLVED
+- Missing required information or definition
+- If referenced by FIXED content, blocks promotion until resolved or removed
 
-## 3. Deterministic Mapping Requirement
-Each FIXED ARCH statement MUST map to exactly one SPEC statement.
+## Atomicity Rule
+Promotion operates only on atomic statements.
 
-Mapping rule:
-- 1 ARCH statement -> 1 SPEC constraint OR 1 SPEC structural element
+An atomic statement is:
+- a single behavior or constraint
+- that cannot be decomposed without loss of meaning
 
-IF a statement requires many-to-one mapping -> ARCH MUST be decomposed before promotion.
+## Promotion Eligibility Rule
+A FIXED statement is promotable ONLY IF ALL conditions are satisfied:
+- it is composed of atomic statements
+- it contains no unresolved dependencies (direct or indirect)
+- each atomic statement maps to exactly one SPEC behavior
 
-## 4. Dependency Closure Requirement
-All referenced concepts MUST be resolvable within:
-- target SPEC file OR
-- explicitly declared SPEC dependencies
+If any condition fails, the statement is not promotable.
 
-IF unresolved reference exists -> PROMOTION FAILS.
+## Transformation Rule
+Each atomic FIXED statement is converted 1:1 into a SPEC constraint.
 
-## 5. Output Completeness Requirement
-Resulting SPEC MUST satisfy:
-- no alternative designs remain
-- no unclassified statements remain
-- no ARCH-only terminology remains
+No additional interpretation or restructuring is allowed during promotion.
 
-IF any violation exists -> PROMOTION FAILS.
-
-## Promotion Process
-When promotion occurs:
-1. Extract FIXED ARCH content only
-2. Remove CANDIDATE and OBSERVED content
-3. Rewrite into SPEC-compliant deterministic form
-4. Convert CONCRETE statements into normative SPEC constraints
-5. Assign correct SPEC ownership
-6. Record decision in LOG system
-
-## Non-Promotion Rules
-The following MUST NOT be promoted:
-- CANDIDATE designs (unselected or alternative options)
-- incomplete interface sketches
-- contradictory designs
-- high-level descriptions without behavior definition
-- unspecified improvements or proposals
+## Non-Promotable Content
+- CANDIDATE
+- OBSERVED
+- UNRESOLVED
+- non-atomic or incomplete FIXED statements
 
 ## Stability Rule
 Once promoted:
-- SPEC becomes authoritative source of truth
-- ARCH MUST NOT be modified to align retroactively with SPEC
-- ARCH divergence is allowed and treated as historical design space
-
-## Drift Rule
-If divergence occurs:
-- SPEC takes precedence
-- ARCH remains non-synchronizing by default
-- reconciliation is optional and only for clarity improvement
+- SPEC becomes authoritative
+- ARCH is not retroactively modified to match SPEC
 
 ## Purpose Boundary
-- ARCH answers: "What possible system structures exist?"
-- SPEC answers: "What exact system behavior is enforced?"
-- Promotion is the only transformation bridge between them
+- ARCH defines selected intent space
+- SPEC defines executable system behavior
+- Promotion is a validation + transformation boundary, not a process pipeline

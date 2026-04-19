@@ -34,7 +34,7 @@ All ambiguity MUST be removed:
 
 ### 3. Testability
 The proposed spec MUST be expressible as:
-- deterministic rules OR
+- functionally predictable rules OR
 - explicit conditional logic
 
 ### 4. Scope fit

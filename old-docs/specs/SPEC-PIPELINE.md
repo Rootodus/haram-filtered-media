@@ -52,7 +52,7 @@ Constraint:
 - The `Renderer` MUST terminate its execution loop upon receiving the `SHUTDOWN` signal.
 
 Rationale:
-- Type-safe signaling eliminates the overhead of `HashMap` lookups for control flow AND prevents "Magic String" dependencies in the execution logic.
+- Type-safe signaling eliminates the overhead of `HashMap` lookups for control flow AND prevents hardcoded string dependencies in the execution logic.
 
 ## Notes / Explanatory
 - [EXPLANATORY] This specification defines the structural "Wiring" of the components.

@@ -3,39 +3,61 @@ ID: ARCH-LAYER-RULES
 Status: PRELIMINARY  
 Depends on: STD-DOC
 
-## Status Interpretation Rule
-This document defines non-authoritative design space behavior.
+## Purpose
+Defines how architectural statements are classified as decisions, alternatives, or constraints before potential promotion to SPEC.
 
-- Requirements here are NOT binding.
-- Components described here are NOT finalized.
-- Any constraint expressed here MUST be redefined in SPEC layer before implementation.
-- If conflict exists between sections, no resolution is assumed.
-- Any statement in ARCH that defines `MUST/SHALL/PROHIBITED` behavior is non-binding and must be rewritten during SPEC promotion.
+## Core Constraint
+ARCH is non-binding design space. Nothing in ARCH defines system behavior.
 
-## Decision Status Rule
-Every ARCH statement MUST explicitly classify itself as one of:
-- CANDIDATE: exploratory design option, not eligible for SPEC promotion
-- FIXED: selected design intent eligible for SPEC promotion
-- OBSERVED: factual constraint from experiments or external systems
+Behavior is defined only in SPEC.
 
-## State Semantics
-
-### CANDIDATE
-- Represents alternative or incomplete design options
-- MUST NOT be treated as system structure
-- MUST NOT be promoted to SPEC
+## Classification System
+Every ARCH statement MUST be labeled exactly one of:
 
 ### FIXED
-- Represents selected architectural intent
-- MAY be promoted to SPEC if all promotion constraints are satisfied
-- MUST be internally consistent within the ARCH document
+- Selected design decision
+- Represents chosen intent only
+- Does NOT imply completeness or promotability
+
+### CANDIDATE
+- Alternative or unselected design option
+- Not selected
+- Not eligible for promotion
 
 ### OBSERVED
-- Represents external constraint or empirical fact
-- MUST NOT be interpreted as design choice
-- MAY inform FIXED selection but is not promotable itself
+- External fact or empirical constraint
+- Not a design decision
+- Not eligible for promotion
+
+### UNRESOLVED
+- Required decision or missing information
+- Indicates absence of necessary structure or definition
+- Must not exist in any FIXED-dependent path at time of promotion
+
+## Atomicity Rule
+All FIXED statements MUST be expressible as atomic statements.
+
+An atomic statement is:
+- a single behavior or constraint
+- that cannot be decomposed further without loss of meaning
 
 ## Promotion Eligibility Rule
-Only FIXED items are eligible for SPEC promotion.
+Only FIXED statements are eligible for promotion consideration.
 
-CANDIDATE and OBSERVED items are explicitly excluded from promotion.
+A FIXED statement is promotable ONLY IF all of the following are true:
+- it is expressed in atomic form
+- it contains no unresolved dependencies (direct or indirect)
+- each atomic statement can map to exactly one SPEC behavior
+
+If any condition is not met, the FIXED statement is not promotable.
+
+## Dependency Constraint Rule
+If any FIXED statement depends on an UNRESOLVED element:
+- promotion MUST fail for that statement path
+- UNRESOLVED must be resolved or removed before promotion
+
+## Consistency Rule
+FIXED statements MUST not conflict within the same document.
+
+If conflict exists:
+- FIXED classification MUST be revised before promotion is attempted
