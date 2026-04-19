@@ -1,4 +1,4 @@
-# Architecture → Spec Promotion Rule
+# Architecture -> Spec Promotion Rule
 ID: ARCH-SPEC-PROMOTION-RULE  
 Status: STABLE  
 Depends on: STD-DOC, DOC-MUTATION-POLICY

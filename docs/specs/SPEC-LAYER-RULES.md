@@ -11,7 +11,7 @@ A responsibility domain is defined as:
 - a single system capability OR
 - a single interface contract
 
-If a SPEC contains multiple domains → it is INVALID.
+If a SPEC contains multiple domains -> it is INVALID.
 
 ## No Cross-SPEC Redefinition
 A SPEC MUST NOT redefine:
@@ -26,7 +26,7 @@ SPEC dependencies MUST form a DAG:
 - cycles are PROHIBITED
 - reverse dependency inference is PROHIBITED
 
-If a cycle appears → SPEC decomposition is REQUIRED.
+If a cycle appears -> SPEC decomposition is REQUIRED.
 
 ## Shared Concept Ownership Rule
 Every shared concept (type, buffer, message, protocol) MUST have EXACTLY ONE owner SPEC.

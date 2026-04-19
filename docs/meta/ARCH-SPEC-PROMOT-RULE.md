@@ -4,7 +4,7 @@ Status: STABLE
 Depends on: STD-DOC, DOC-MUT-POLICY
 
 ## Purpose
-Defines how content moves from `architecture/` (design space) into `specs/` (contract space).
+Defines deterministic transformation from ARCH layer (design space) into SPEC layer (contract space).
 
 ## Layer Definitions
 
@@ -12,94 +12,88 @@ Defines how content moves from `architecture/` (design space) into `specs/` (con
 - Non-binding design space
 - Allows contradictions and alternatives
 - Used for exploration and decomposition
-- MAY contain multiple competing models
+- MAY contain multiple FIXED candidates alongside CANDIDATE and OBSERVED entries
 
 ### Spec Layer
 - Binding contract space
 - Defines exact system behavior
 - MUST be unambiguous and implementable
-- Conflicts are prohibited within a single spec
+- Conflicts are prohibited within a single SPEC
 
 ## Promotion Rule
-Content MAY move from architecture to specs ONLY IF it satisfies ALL transformation requirements below.
+Content MAY move from architecture to specs ONLY IF all FIXED entries satisfy all transformation requirements.
 
-Promotion is NOT a decision process.  
-Promotion is a structural rewrite operation.
+Promotion is a structural rewrite operation, not a selection process.
 
-### 1. Single-Variant Requirement
-Input MUST contain exactly ONE selected design variant.
+## 1. FIXED-Only Input Requirement
+Only FIXED-classified ARCH content is eligible for promotion.
 
-- IF multiple variants exist → PROMOTION FAILS
-- IF no explicit selection marker exists → PROMOTION FAILS
+- IF content is CANDIDATE -> MUST NOT be promoted
+- IF content is OBSERVED -> MUST NOT be promoted
+- IF no FIXED content exists -> PROMOTION FAILS
 
-Selection MUST be explicitly marked as:
-- `SELECTED: true`
+## 2. Constraint Extraction Requirement
+All FIXED statements MUST be partitioned into:
+- CONCRETE: directly implementable behavior
+- NON_CONCRETE: removed during promotion
 
-All other variants MUST be marked:
-- `SELECTED: false`
+Only CONCRETE statements MAY be included in SPEC.
 
-### 2. Constraint Extraction Requirement
-All behavioral statements MUST be partitioned into:
-- `CONCRETE` (implementable)
-- `NON_CONCRETE` (removed during promotion)
+IF classification is not possible -> PROMOTION FAILS.
 
-Only CONCRETE statements are allowed into SPEC.
-
-IF classification is not possible → PROMOTION FAILS.
-
-### 3. Deterministic Rewrite Requirement
-Each ARCH statement MUST map to exactly ONE SPEC statement.
+## 3. Deterministic Mapping Requirement
+Each FIXED ARCH statement MUST map to exactly one SPEC statement.
 
 Mapping rule:
-- 1 ARCH statement → 1 SPEC constraint OR 1 SPEC structural element
+- 1 ARCH statement -> 1 SPEC constraint OR 1 SPEC structural element
 
-IF many-to-one mapping is required → ARCH must be split first.
+IF a statement requires many-to-one mapping -> ARCH MUST be decomposed before promotion.
 
-### 4. Dependency Closure Requirement
-All referenced concepts MUST be resolvable inside:
-- the target SPEC file OR
-- imported SPEC dependencies
+## 4. Dependency Closure Requirement
+All referenced concepts MUST be resolvable within:
+- target SPEC file OR
+- explicitly declared SPEC dependencies
 
-IF unresolved reference exists → PROMOTION FAILS.
+IF unresolved reference exists -> PROMOTION FAILS.
 
-### 5. Output Completeness Requirement
-The resulting SPEC MUST satisfy:
-- no alternatives remain
+## 5. Output Completeness Requirement
+Resulting SPEC MUST satisfy:
+- no alternative designs remain
 - no unclassified statements remain
 - no ARCH-only terminology remains
 
-IF any residual ARCH constructs remain → PROMOTION FAILS.
+IF any violation exists -> PROMOTION FAILS.
 
 ## Promotion Process
 When promotion occurs:
-1. Copy relevant architecture content
-2. Rewrite into spec format (normative language only)
-3. Remove all non-binding alternatives
-4. Add explicit constraints and failure behavior
-5. Assign correct SPEC file ownership
-6. Record decision in `LOG-DECISIONS.md`
+1. Extract FIXED ARCH content only
+2. Remove CANDIDATE and OBSERVED content
+3. Rewrite into SPEC-compliant deterministic form
+4. Convert CONCRETE statements into normative SPEC constraints
+5. Assign correct SPEC ownership
+6. Record decision in LOG system
 
 ## Non-Promotion Rules
-The following CANNOT be promoted:
-- exploratory comparisons without a selected option
+The following MUST NOT be promoted:
+- CANDIDATE designs (unselected or alternative options)
 - incomplete interface sketches
 - contradictory designs
 - high-level descriptions without behavior definition
-- “possible improvements” without selection
+- unspecified improvements or proposals
 
 ## Stability Rule
 Once promoted:
-- Spec becomes authoritative
-- Architecture must not be updated to retroactively match spec
-- Architecture may remain outdated without correction
+- SPEC becomes authoritative source of truth
+- ARCH MUST NOT be modified to align retroactively with SPEC
+- ARCH divergence is allowed and treated as historical design space
 
 ## Drift Rule
-If architecture diverges from spec:
-- spec takes precedence
-- architecture is considered historical design residue
-- no synchronization is required unless explicitly useful
+If divergence occurs:
+- SPEC takes precedence
+- ARCH remains non-synchronizing by default
+- reconciliation is optional and only for clarity improvement
 
 ## Purpose Boundary
-- Architecture answers: "What could the system be?"
-- Spec answers: "What must the system do?"
-- Promotion is the only bridge between them
+- ARCH answers: "What possible system structures exist?"
+- SPEC answers: "What exact system behavior is enforced?"
+- Promotion is the only transformation bridge between them
