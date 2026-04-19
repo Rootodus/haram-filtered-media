@@ -3,48 +3,46 @@ ID: ARCH-SYS-MAP
 Status: PRELIMINARY  
 Depends on: STD-DOC
 
-## Conceptual Model
-SystemType: streaming ML-augmented renderer.  
-Goal: Filter web content using ML models with high throughput.  
-Design requirements: Repeatable execution AND stability drive architectural selection.
+## Purpose
+Structural decomposition of system components for conceptual understanding only.
 
-## Pipeline Topology
-The system uses a staged pipeline architecture.  
-Data flows unidirectional from retrieval to presentation.  
-Stages communicate via asynchronous bounded channels.  
-Stages are structural boundaries ONLY.
+## Constraint
+This document defines structure only.
 
-## Interaction Surface
-The system boundary allows GET requests ONLY.  
-POST, PUT, AND DELETE operations are PROHIBITED at the interface layer.  
-Client-side JS execution is disabled to ensure input consistency.
+It does NOT define:
+- execution order
+- runtime behavior
+- guarantees
+- constraints
+- interfaces
 
-## Component Roles
+All behavioral definitions belong to SPEC layer only.
+
+## Components
 
 ### Fetcher
-The Fetcher retrieves static web content.  
-It produces the initial `ContentBuffer` for the pipeline.
+Retrieves web content as raw input.
 
 ### Loader
-The Loader retrieves dynamic OR API-driven content.  
-It MUST be isolated from core processing stages to prevent interference.
+Optional external content retrieval component.
 
 ### MLProcessor
-The MLProcessor transforms `ContentBuffer` payloads using ML models.  
-It is stateless AND input-output consistent.  
-It carries NO internal state between invocations.
+Applies ML models to input data.
 
 ### Renderer
-The Renderer serializes processed content for final output.  
-It decouples processing timing from presentation timing.
+Produces output representation from processed data.
 
-### Data Flow
-1. Fetcher OR Loader retrieves raw data.
-2. Data is encapsulated into a `ContentBuffer`.
-3. `ContentBuffer` passes through the MLProcessor for transformation.
-4. Renderer converts the transformed `ContentBuffer` into output format.
-5. All stages prioritize shared memory references to reduce allocation overhead.
+## Data Representation
+Intermediate data is represented as ContentBuffer (conceptual only).
 
-## Notes / Explanatory
-- [EXPLANATORY] This document provides the mental model for system design.
-- [EXPLANATORY] Normative execution constraints are defined in `SPEC` class documents.
+## Important Constraint
+This document does NOT define:
+- execution order guarantees
+- runtime behavior
+- interface constraints
+- security rules
+
+Those are defined in SPEC layer only.
+
+## Note
+This is a structural diagram, not an execution specification.

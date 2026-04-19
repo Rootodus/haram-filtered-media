@@ -16,8 +16,8 @@ Every ARCH statement MUST be labeled exactly one of:
 
 ### FIXED
 - Selected design decision
-- Represents chosen intent only
-- Does NOT imply completeness or promotability
+- Represents intent only
+- Has no implication of completeness, validity, or promotability
 
 ### CANDIDATE
 - Alternative or unselected design option
@@ -32,7 +32,8 @@ Every ARCH statement MUST be labeled exactly one of:
 ### UNRESOLVED
 - Required decision or missing information
 - Indicates absence of necessary structure or definition
-- Must not exist in any FIXED-dependent path at time of promotion
+- MUST NOT exist in any FIXED-dependent path at time of promotion
+- MUST NOT be interpreted as a design option or candidate state
 
 ## Atomicity Rule
 All FIXED statements MUST be expressible as atomic statements.
