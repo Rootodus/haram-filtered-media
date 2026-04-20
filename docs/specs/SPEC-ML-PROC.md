@@ -8,7 +8,7 @@ Transforms input ContentBuffer into ML-processed output under a defined executio
 
 ## Input
 ContentBuffer:
-- payload: raw data (text / image / video frame / audio segment)
+- payload: raw data [text / image / video frame / audio segment]
 - metadata: optional context
 - model_id: selected ML model identifier
 - execution_mode: "latency" | "throughput"
@@ -26,7 +26,7 @@ ProcessedBuffer:
 - System processes each input individually.
 - If processing completes before deadline -> status = "completed"
 - If deadline is exceeded -> input is discarded -> status = "dropped"
-- If system reduces computation to meet deadline (smaller model / reduced precision) -> status = "degraded"
+- If system reduces computation to meet deadline [smaller model / reduced precision] -> status = "degraded"
 
 Queue rule:
 - Only most recent input is eligible for processing.
@@ -47,9 +47,9 @@ Queue rule:
 - No persistence between invocations
 
 ## Failure Classes
-- Deadline exceedance -> drop (latency mode only)
-- Buffer overflow -> drop (throughput mode only)
-- Computation fallback (reduced precision / smaller model) -> degraded
+- Deadline exceedance -> drop [latency mode only]
+- Buffer overflow -> drop [throughput mode only]
+- Computation fallback [reduced precision / smaller model] -> degraded
 
 ## Non-Goals
 - model architecture

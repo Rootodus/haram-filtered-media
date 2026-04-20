@@ -19,9 +19,9 @@ Only execution structure varies between phases.
 Validate MLProcessor scheduling semantics in isolation.
 
 ### Scope
-- Single-process execution (in-process only)
+- Single-process execution [in-process only]
 - No IPC, no sockets, no threading boundaries
-- Mock ML function (producing identical output under identical input-state conditions transform or sleep)
+- Mock ML function [producing identical output under identical input-state conditions transform or sleep]
 - In-memory queue only
 
 ### Focus Questions
@@ -58,7 +58,7 @@ Validate scheduling stability under sustained input pressure.
 Evaluate whether introducing isolation boundaries affects scheduling semantics.
 
 ### Scope
-- Introduce isolated execution boundary (implementation undefined)
+- Introduce isolated execution boundary [implementation undefined]
 - Preserve identical scheduling rules from Phase 1
 - Do NOT modify MLProcessor logic
 
@@ -89,7 +89,7 @@ Validate scheduling under real ML execution cost variance.
 - Scheduling semantics remain stable under real execution cost
 - No redesign of scheduling logic required
 
-## Phase 4: Architecture Evaluation (Post-Validation Only)
+## Phase 4: Architecture Evaluation [Post-Validation Only]
 
 ### Goal
 Evaluate structural deployment options only after behavior is validated.

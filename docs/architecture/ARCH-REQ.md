@@ -1,101 +1,31 @@
 # Requirements
 ID: ARCH-REQ  
-Status: PRELIMINARY  
+Status: STABLE  
 Depends on: STD-DOC
 
-## Requirement Statements
+## FACTS [Hard Constraints & Observations]
+- ENV-EXT-SLOW: ML execution in browser extensions introduces overhead due to IPC serialization AND main-thread contention.
+- NET-GET-ONLY: Modern network interactions allow complex mutations, but the system environment is restricted to static retrieval.
+- DYN-WEB-JS: Modern websites REQUIRE JavaScript for functional content resolution.
+- COMP-TRADE: High-fidelity document rendering AND high-speed ML inference are computationally competitive goals.
 
-### R1: ML Execution Performance
-[OBSERVED]  
-Running ML models in browser extension environments introduces significant overhead compared to native or localhost execution.
+## DECISIONS [Committed Architecture]
+- HOST-NATIVE: The system SHALL run as a standalone native process [NOT an extension] to minimize environment latency.
+- SCOPE-RESTRICTED: The system IS a restricted runtime; it IS NOT a full web browser.
+- NET-RESTRICT: Network interaction IS limited to `HTTP` `GET`. `POST`, `PUT`, AND `DELETE` are PROHIBITED.
+- DYN-SNAPSHOT: Dynamic content MUST be resolved into a static snapshot via an external `Loader` [Headless Chrome].
+- PIPE-MONOLITH: The system SHALL use a single-process monolithic pipeline to eliminate internal IPC overhead.
+- MODE-SUPPORT: The system SHALL support two `ExecutionMode` values: `latency` AND `throughput`.
+- USER-CONFIG: Users SHALL configure `ExecutionMode` preferences per ML model.
+- SEC-OS-ISOLATION: The primary security boundary IS the host OS process isolation.
+- UNIT-CONTENTBUFFER: The unit of processing IS a `ContentBuffer` containing a serialized DOM snapshot AND CSS computed styles.
 
-[CANDIDATE]  
-The system targets ML execution performance comparable to native runtime environments.
+## GAPS [Active Blockers]
+- MAPPING: The specific algorithm for mapping DOM nodes AND CSS styles to fixed-width tensor indices IS NOT defined.
+- SANDBOX: The necessity of additional sandboxing [e.g., WASM] beyond OS process isolation IS NOT defined.
+- THRESHOLD: The maximum acceptable latency deviation compared to a raw `ONNX` baseline IS NOT defined.
 
-[UNRESOLVED]  
-Acceptable performance deviation threshold is not yet defined.
-
-### R2: System Scope
-[FIXED]  
-The system is a restricted execution runtime for processing web-retrieved content.
-
-[FIXED]  
-The system is NOT a full web browser.
-
-### R3: Content Model
-[FIXED]  
-The system operates on static representations of content retrieved via HTTP GET.
-
-[CANDIDATE]  
-Client-side dynamic execution is not supported within the core system.
-
-[OBSERVED]  
-Modern websites rely on dynamic content loading and client-side execution.
-
-### R4: Network Interaction Model
-[OBSERVED]  
-Full browser interaction (POST, PUT, DELETE) increases system complexity and security surface.
-
-[FIXED]  
-The system performs HTTP GET requests only.
-
-[FIXED]  
-POST, PUT, and DELETE operations are excluded from core functionality.
-
-### R5: Dynamic Content Strategy
-[CANDIDATE]  
-Dynamic content may be resolved externally into static form prior to processing.
-
-[UNRESOLVED]  
-Completeness and fidelity of external resolution are not defined.
-
-### R6: Execution Modes
-[FIXED]  
-The system supports two execution modes:
-- latency-constrained (real-time)
-- throughput-optimized (buffered)
-
-[CANDIDATE]  
-Latency-constrained mode may drop or degrade data to meet timing constraints.
-
-[CANDIDATE]  
-Throughput-optimized mode may buffer and preprocess data before output.
-
-[UNRESOLVED]  
-Selection mechanism between execution modes is not defined.
-
-### R7: User Configuration
-[FIXED]  
-Users may configure execution mode preferences per ML model.
-
-[UNRESOLVED]  
-System override conditions for user preferences are not defined.
-
-### R8: Pipeline Simplicity
-[FIXED]  
-The system prioritizes simplified execution flow to minimize processing overhead.
-
-### R9: Compatibility Constraint
-[FIXED]  
-Full compatibility with modern dynamic websites is NOT a requirement.
-
-[UNRESOLVED]  
-Minimum acceptable compatibility level is not defined.
-
-### R10: System Tradeoffs
-[FIXED]  
-The system prioritizes performance over feature completeness.
-
-[UNRESOLVED]  
-Exact tradeoff boundary between performance and compatibility is not defined.
-
-### R11: Security Boundary
-[OBSERVED]  
-Executing external content and ML models introduces security risks.
-
-[UNRESOLVED]  
-Isolation and execution boundaries for external content and ML models are not defined.
-
-### R12: Processing Unit
-[UNRESOLVED]  
-Primary unit of data processing (e.g. document, frame, chunk, node) is not defined.
+## NOTES / EXPLANATORY
+- [IDEA] `latency` mode could implement aggressive dropping of pending `ContentBuffer` items to preserve real-time constraints.
+- [IDEA] `throughput` mode could implement batching of `ContentBuffer` items to maximize GPU utilization.
+- [EXPLANATORY] `HOST-NATIVE` is the primary response to the observed slowness of browser extensions documented in `ENV-EXT-SLOW`.

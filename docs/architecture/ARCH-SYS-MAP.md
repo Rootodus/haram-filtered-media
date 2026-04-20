@@ -1,48 +1,59 @@
-# System Map
+# System Map (Data Flow Specification)
 ID: ARCH-SYS-MAP  
-Status: PRELIMINARY  
-Depends on: STD-DOC
+Status: STABLE  
+Depends on: ARCH-REQ, STD-DOC
 
-## Purpose
-Structural decomposition of system components for conceptual understanding only.
+## Data Flow Pipeline
+The system operates as a unidirectional pipeline. Data transitions through the following stages within a single memory space.
 
-## Constraint
-This document defines structure only.
+### 1. Acquisition Stage [STAGE-ACQUIRE]
+- Source A [Static]: `Fetcher` performs a direct `HTTP` `GET` request. Output is raw `HTML` bytes.
+- Source B [Dynamic]: `Loader` [Headless Chrome] generates a serialized `DOM` snapshot AND computed styles.
+- Output: `RawBuffer` [Bytes or JSON-serialized CDP snapshot].
 
-It does NOT define:
-- execution order
-- runtime behavior
-- guarantees
-- constraints
-- interfaces
+### 2. Transformation Stage [STAGE-TRANSFORM]
+- Parser: Converts `RawBuffer` into a structured, in-memory `DOM` tree AND `StyleMap`.
+- Unit Creation: Encapsulates the structured data into a `ContentBuffer`.
+- Memory Strategy [DATA-ARC]: The `ContentBuffer` IS wrapped in an `Arc<T>` [Atomic Reference Counted pointer].
 
-All behavioral definitions belong to SPEC layer only.
+### 3. Extraction Stage [STAGE-EXTRACT]
+- Feature Extractor: Traverses the `ContentBuffer` via the `Arc` pointer.
+- Mapping: Maps DOM elements AND CSS properties to fixed-width numerical features [Tensors].
+- Output: `InferenceTensor` [Contiguous memory block].
 
-## Components
+### 4. Inference Stage [STAGE-INFER]
+- MLProcessor: Ingests the `InferenceTensor`.
+- Execution: Invokes the ML model [ONNX/Tract].
+- Output [DATA-INSTRUCTIONS]: `ProcessedBuffer` containing Transformation Instructions [e.g., Blur Masks, Redaction Rectangles, Text Replacement Maps].
+- Constraint: The original `ContentBuffer` remains UNCHANGED and read-only.
 
-### Fetcher
-Retrieves web content as raw input.
+### 5. Finalization Stage [STAGE-RENDER]
+- Renderer: Receives the original `Arc<ContentBuffer>` AND the `ProcessedBuffer`.
+- Composition: Applies the Transformation Instructions to the source data for final output.
+- Modifications: Execution of blurs, black boxes, or text rewriting happens ONLY in this stage.
 
-### Loader
-Optional external content retrieval component.
+## Memory Management Strategy
 
-### MLProcessor
-Applies ML models to input data.
+### Zero-Copy Pointer Passing [MEM-ZEROCOPY]
+- Data MUST NOT be duplicated between pipeline stages.
+- `STAGE-TRANSFORM` owns the allocation of the `ContentBuffer`.
+- All subsequent stages receive the same read-only `Arc<ContentBuffer>`.
+- Logic: Modifications are represented as metadata overlays [Instructions] rather than byte-level mutations of the source.
 
-### Renderer
-Produces output representation from processed data.
+### Admission Control [MEM-ADMISSION]
+- The pipeline utilizes a Bounded Task Queue with a capacity of 1 between `STAGE-TRANSFORM` and `STAGE-EXTRACT`.
+- Overwrite Policy: If the `MLProcessor` is busy, the pending `Arc<ContentBuffer>` IS dropped AND replaced by the newest arrival to ensure real-time latency [Ref: `MODE-LATENCY`].
 
-## Data Representation
-Intermediate data is represented as ContentBuffer (conceptual only).
+## Component Interaction Map
+| Transition | Mechanism | Responsibility |
+| --- | --- | --- |
+| `Loader` -> `Parser` | Bytes/CDP Pipe | Data Ingestion |
+| `Parser` -> `Extractor` | `Arc<ContentBuffer>` | Feature Synthesis |
+| `Extractor` -> `Inference` | `&[f32]` (Tensor View) | Model Input |
+| `Inference` -> `Renderer` | `ProcessedBuffer` | Transformation Orders |
+| `ContentBuffer` -> `Renderer` | `Arc<ContentBuffer>` | Source Material |
 
-## Important Constraint
-This document does NOT define:
-- execution order guarantees
-- runtime behavior
-- interface constraints
-- security rules
-
-Those are defined in SPEC layer only.
-
-## Note
-This is a structural diagram, not an execution specification.
+## Notes / Explanatory
+- [EXPLANATORY] `MEM-ZEROCOPY` prevents the performance collapse seen in browser extensions by ensuring the 4MB-10MB buffer is never copied.
+- [EXPLANATORY] `DATA-INSTRUCTIONS` allows for multi-model parallelism: multiple models can read the same `Arc<ContentBuffer>` simultaneously and produce independent instruction sets for the `Renderer`.
+- [EXPLANATORY] `STAGE-RENDER` enables lazy modification; visual changes like blurring are performed at the final display step, potentially utilizing hardware acceleration.
