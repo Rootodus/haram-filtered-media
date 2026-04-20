@@ -1,37 +1,15 @@
-# MLProcessor Decision Model (Minimal Reproducible Execution Consistency State Machine)
+# MLProcessor Decision Model (Pure Decision Layer)
 ID: EXP-ML-PROC-DEC  
 Status: EXPERIMENTAL  
 Depends on: SPEC-ML-PROC
 
 ## Purpose
-Defines a minimal reproducible execution consistency state machine for MLProcessor execution.
+Defines a pure function that maps an input and an immutable state snapshot to a single execution outcome.
 
-This model specifies behavior only. It does not define architecture, process boundaries, or deployment structure.
+This document defines decision logic only.  
+It does NOT define time progression, queueing, batching, or execution orchestration.
 
-## 1. Time Model (Reproducibility Anchor)
-All time-dependent decisions use `state.current_time`.
-
-- No system clock usage is allowed
-- Time must be externally supplied per evaluation step
-
-## 2. State Definition
-```
-State {
-  queue: list of Input
-  current_time: timestamp
-  latency_budget: duration
-  batch_threshold: integer
-  batch_interval: duration
-  buffer_limit: integer
-  model_cost(model_id) -> duration
-  degradation_capable(model_id) -> boolean
-  last_batch_time: timestamp
-}
-```
-
-All fields are required for reproducible execution consistency evaluation.
-
-## 3. Input Definition
+## Input Contract
 ```
 Input {
   payload
@@ -41,161 +19,85 @@ Input {
 }
 ```
 
-## 4. Output Space
-Each evaluation returns exactly one outcome:
+## State Snapshot Contract
+```
+StateSnapshot {
+  current_time: timestamp
+  latency_budget: duration
+  model_cost(model_id) -> duration
+  degradation_capable(model_id) -> boolean
+}
+```
+
+Constraints:
+- StateSnapshot is read-only
+- No queue exists in this layer
+- No batch state exists in this layer
+
+## Output Contract
+Exactly one outcome:
 - PROCESS
 - DROP
 - DEGRADE
 
-QUEUE is NOT an output. It is a state mutation only.
+No other outputs are valid.
 
-## 5. Core Evaluation Model
-Decision function:
-
+## Decision Function
 ```
-decide(input, state) -> outcome + state_update
+decide(input, state_snapshot) -> outcome
 ```
 
-Evaluation order:
-1. Queue update
-2. Mode selection
-3. Feasibility evaluation
-4. Outcome resolution
+This function MUST be:
+- stateless
+- side-effect free
+- independent of call history
 
-No alternative ordering is valid.
-
-## 6. Queue Update Rules
-
-### 6.1 Latency Mode
-On input arrival:
-
+## Latency Mode Logic
 ```
-queue := [input]
+deadline = input.timestamp + state_snapshot.latency_budget
+cost = state_snapshot.model_cost(input.model_id)
 ```
 
-All previous entries are discarded.
-
-Queue size ≤ 1 always.
-
-### 6.2 Throughput Mode
-On input arrival:
+Decision:
 
 ```
-if queue.size >= buffer_limit:
-    queue := queue[1:]   // drop oldest
-
-append(queue, input)
+IF state_snapshot.current_time + cost > deadline:
+    IF state_snapshot.degradation_capable(input.model_id):
+        RETURN DEGRADE
+    ELSE:
+        RETURN DROP
+ELSE:
+    RETURN PROCESS
 ```
 
-## 7. Latency Mode Execution
+## Throughput Mode Logic (Decision-only interpretation)
+Throughput mode does NOT evaluate batching here.
 
-### 7.1 Deadline Computation
-```
-deadline = input.timestamp + latency_budget
-cost = model_cost(input.model_id)
-```
-
-### 7.2 Decision Rule
-```
-if current_time + cost > deadline:
-    if degradation_capable(input.model_id):
-        return DEGRADE
-    else:
-        return DROP
-else:
-    return PROCESS
-```
-
-## 8. Throughput Mode Execution
-
-### 8.1 Batch Trigger Condition
-A batch executes when:
+For this layer:
 
 ```
-queue.size >= batch_threshold
-OR
-(current_time - last_batch_time) >= batch_interval
+RETURN PROCESS
 ```
 
-### 8.2 Batch Execution Semantics
-```
-batch = queue
-queue = []
-last_batch_time = current_time
-```
+Constraint:
+- Throughput scheduling is handled outside this function
+- This function only evaluates per-item feasibility constraints if later expanded
 
-For each input in batch (FIFO order):
+(Reason: batching is not a property of a single-input decision function)
 
-```
-PROCESS(input)
-```
+## Consistency Constraint
+Valid implementation MUST ensure:
+- identical Input + identical StateSnapshot → identical outcome
+- no hidden state influence
+- no external timing access
+- no queue or batch dependency
 
-### 8.3 Batch Output Semantics
-Batch execution returns:
-
-```
-list of ProcessedBuffer in FIFO order
-```
-
-Each input produces exactly one output.
-
-## 9. Processing Rule
-```
-PROCESS(input):
-    output = ML_MODEL(input.payload)
-    return ProcessedBuffer(output)
-```
-
-## 10. DROP Semantics
-DROP is terminal and irreversible.
-
-DROP occurs only in these cases:
-
-### Latency Mode
-- deadline violation AND no degradation path exists
-
-### Throughput Mode
-- buffer overflow (oldest input removed during insertion)
-
-DROP always removes input from system state immediately.
-
-## 11. Degradation Rule
-Only valid in latency mode:
-
-```
-if current_time + model_cost(input.model_id) > deadline
-AND degradation_capable(input.model_id):
-    return DEGRADE
-```
-
-Meaning:
-- reduced precision OR
-- smaller model OR
-- partial inference
-
-No implementation method is specified.
-
-## 12. Reproducible Execution Consistency Constraint
-A valid implementation MUST guarantee:
-- identical input + identical state -> identical output
-- no hidden scheduling logic
-- no system-clock dependency
-- full queue observability
-
-## 13. Non-Goals
-This model does NOT define:
-- threading model
-- process or IPC boundaries
-- networking or transport layer
-- hardware acceleration strategy
-- ML model internals
-- rendering or UI systems
-
-## 14. Semantic Boundary
-This document defines only:
-
-```
-Input + State -> Output + State Update
-```
-
-It does not define where or how execution occurs.
+## Non-Goals
+This layer does NOT define:
+- queues
+- batching
+- buffering
+- scheduling policies
+- process boundaries
+- IPC or threading
+- execution ordering across inputs
