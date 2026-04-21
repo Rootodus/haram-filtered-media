@@ -1,48 +1,38 @@
-# MLProcessor Data Contract
+# MLProcessor Data Contract (Spike-01)
 ID: SPEC-ML-PROC  
-Status: DRAFT  
-Depends on: ARCH-REQ, ARCH-SYS-MAP
+Status: STABLE-FOR-SPIKE  
+Depends on: ARCH-REQ
 
-## Purpose
-Defines the binary schema for data moving across the `IPC-MSGPACK` pipe and through the monolithic pipeline.
+## 1. IPC Protocol [PROTOCOL-SPIKE]
+- Transport: Unix Domain Socket (Linux/macOS) or Named Pipe (Windows).
+- Framing: `[Payload_Length: u32]` + `[MessagePack_Payload: bytes]`.
+- Byte Order: Little-Endian (LE) for the length prefix AND all numerical fields.
+- Backpressure (ACK): The `Runtime` SHALL send a single byte `0x01` (OK) back through the pipe to the `Loader` upon completion of the `STAGE-RENDER` for the current frame.
 
-## 1. ContentBuffer Schema [SCHEMA-BUFFER]
-The `ContentBuffer` is the primary unit of processing. It must be serialized by the `Loader` and deserialized by the `Parser`.
+## 2. ContentBuffer [SCHEMA-BUFFER-SPIKE]
+| Field | Type | Invariant |
+| --- | --- | --- |
+| `timestamp` | u64 | Monotonic acquisition time. |
+| `width` | u32 | Must match native window width. |
+| `height` | u32 | Must match native window height. |
+| `pixel_data` | bin | MessagePack Binary type. Length MUST be `width * height * 4`. |
 
+## 3. ProcessedBuffer [SCHEMA-OUTPUT-SPIKE]
 | Field | Type | Description |
 | --- | --- | --- |
-| `document_url` | String | Source URL for `MODEL-ROUTING`. |
-| `timestamp` | U64 | Acquisition time in epoch milliseconds. |
-| `elements` | List<Node> | The subset of DOM nodes selected by the user. |
-| `viewport` | Rect | The dimensions of the active render area. |
+| `instructions` | List<VisualAction> | Sequential list of render commands. |
 
-### 1.1 Node Structure
-| Field | Type | Description |
-| --- | --- | --- |
-| `id` | String | Unique DOM identifier. |
-| `tag` | String | HTML tag name (e.g., "DIV", "VIDEO"). |
-| `text_content` | Optional<String> | Raw text within the element. |
-| `computed_styles` | Map<String, String> | Map of CSS properties to absolute values. |
-| `bounding_box` | Rect | Viewport-relative coordinates (x, y, w, h). |
+### 3.1 VisualAction [WIRE-FORMAT]
+The `VisualAction` is a fixed-size structure for predictable parsing.
 
-## 2. ProcessedBuffer Schema [SCHEMA-OUTPUT]
-The output produced by the `MLProcessor` to be consumed by the `Renderer`.
+- `action_type`: `u8`
+  - `0` = `BLUR`
+  - `1` = `BLACKBOX`
+- `rect`: `[f32; 4]`
+  - Layout: `[x, y, width, height]`
+  - Unit: Pixel Coordinates (Relative to 0,0 top-left).
+  - Float Format: IEEE 754 Single Precision.
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `model_id` | String | Identifier of the model that produced the result. |
-| `instructions` | List<Action> | List of operations for the `Renderer`. |
-
-### 2.1 Action Structure
-| Type | Parameters | Target |
-| --- | --- | --- |
-| `VISUAL_MASK` | `type` (Blur/Black), `alpha` | `Rect` coordinates |
-| `AUDIO_MASK` | `type` (Mute/Beep), `volume` | `TemporalSegment` (ms) |
-| `TEXT_REPLACE` | `new_text` | `Node_ID` |
-
-## 3. Admission Policy [ADMISSION-LOGIC]
-- Mechanism: A `crossbeam-channel` with `capacity(1)`.
-- Logic:
-  - `Sender` (Parser) uses `try_send()`.
-  - IF `Full` -> `Receiver` (Inference) is busy -> `Sender` drops the previous item and sends the new `Arc<ContentBuffer>`.
-- Reason: To satisfy `MODE-LATENCY` by ensuring the most recent data always has priority.
+## 4. Operational Constraints
+- Stop-and-Wait: The `Loader` MUST NOT initiate a new `STAGE-ACQUIRE` until it receives the `0x01` ACK for the previous frame.
+- Deserialization: The `Runtime` SHALL use `serde_bytes` or equivalent to deserialize `pixel_data` directly into a borrowed slice `&[u8]` to avoid an intermediate `Vec<u8>` allocation.
