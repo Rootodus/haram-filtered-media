@@ -1,58 +1,48 @@
-# MLProcessor SPEC
+# MLProcessor Data Contract
 ID: SPEC-ML-PROC  
 Status: DRAFT  
-Depends on: NONE
+Depends on: ARCH-REQ, ARCH-SYS-MAP
 
 ## Purpose
-Transforms input ContentBuffer into ML-processed output under a defined execution mode.
+Defines the binary schema for data moving across the `IPC-MSGPACK` pipe and through the monolithic pipeline.
 
-## Input
-ContentBuffer:
-- payload: raw data [text / image / video frame / audio segment]
-- metadata: optional context
-- model_id: selected ML model identifier
-- execution_mode: "latency" | "throughput"
+## 1. ContentBuffer Schema [SCHEMA-BUFFER]
+The `ContentBuffer` is the primary unit of processing. It must be serialized by the `Loader` and deserialized by the `Parser`.
 
-## Output
-ProcessedBuffer:
-- transformed_payload
-- processing_timestamp
-- model_id
-- processing_status: "completed" | "dropped" | "degraded"
+| Field | Type | Description |
+| --- | --- | --- |
+| `document_url` | String | Source URL for `MODEL-ROUTING`. |
+| `timestamp` | U64 | Acquisition time in epoch milliseconds. |
+| `elements` | List<Node> | The subset of DOM nodes selected by the user. |
+| `viewport` | Rect | The dimensions of the active render area. |
 
-## Execution Semantics
+### 1.1 Node Structure
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | String | Unique DOM identifier. |
+| `tag` | String | HTML tag name (e.g., "DIV", "VIDEO"). |
+| `text_content` | Optional<String> | Raw text within the element. |
+| `computed_styles` | Map<String, String> | Map of CSS properties to absolute values. |
+| `bounding_box` | Rect | Viewport-relative coordinates (x, y, w, h). |
 
-### Latency Mode
-- System processes each input individually.
-- If processing completes before deadline -> status = "completed"
-- If deadline is exceeded -> input is discarded -> status = "dropped"
-- If system reduces computation to meet deadline [smaller model / reduced precision] -> status = "degraded"
+## 2. ProcessedBuffer Schema [SCHEMA-OUTPUT]
+The output produced by the `MLProcessor` to be consumed by the `Renderer`.
 
-Queue rule:
-- Only most recent input is eligible for processing.
-- Older queued inputs are discarded when a newer input arrives.
+| Field | Type | Description |
+| --- | --- | --- |
+| `model_id` | String | Identifier of the model that produced the result. |
+| `instructions` | List<Action> | List of operations for the `Renderer`. |
 
-### Throughput Mode
-- System processes inputs in batches.
-- Inputs are queued until processed.
-- If buffer capacity is exceeded -> oldest inputs are discarded -> status = "dropped"
-- Otherwise all processed outputs -> status = "completed"
+### 2.1 Action Structure
+| Type | Parameters | Target |
+| --- | --- | --- |
+| `VISUAL_MASK` | `type` (Blur/Black), `alpha` | `Rect` coordinates |
+| `AUDIO_MASK` | `type` (Mute/Beep), `volume` | `TemporalSegment` (ms) |
+| `TEXT_REPLACE` | `new_text` | `Node_ID` |
 
-## Scheduling Rule
-- Latency mode: latest input overrides earlier queued inputs.
-- Throughput mode: maximize batch utilization; order preserved within batch.
-
-## Model Execution Constraint
-- Model is a stateless function: input -> output
-- No persistence between invocations
-
-## Failure Classes
-- Deadline exceedance -> drop [latency mode only]
-- Buffer overflow -> drop [throughput mode only]
-- Computation fallback [reduced precision / smaller model] -> degraded
-
-## Non-Goals
-- model architecture
-- hardware implementation
-- network retrieval
-- rendering system
+## 3. Admission Policy [ADMISSION-LOGIC]
+- Mechanism: A `crossbeam-channel` with `capacity(1)`.
+- Logic:
+  - `Sender` (Parser) uses `try_send()`.
+  - IF `Full` -> `Receiver` (Inference) is busy -> `Sender` drops the previous item and sends the new `Arc<ContentBuffer>`.
+- Reason: To satisfy `MODE-LATENCY` by ensuring the most recent data always has priority.
