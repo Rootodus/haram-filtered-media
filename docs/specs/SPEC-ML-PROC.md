@@ -1,3 +1,5 @@
+// Note: update this later by asking ai about the new code and what should be updated about the spec.
+
 # MLProcessor Data Contract (Spike-01)
 ID: SPEC-ML-PROC  
 Status: STABLE-FOR-SPIKE  
