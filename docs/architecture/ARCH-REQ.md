@@ -3,7 +3,7 @@ ID: ARCH-REQ
 Status: STABLE  
 Depends on: STD-DOC
 
-## FACTS [Hard Constraints & Observations]
+## Facts [Hard Constraints & Observations]
 - ENV-EXT-LATENCY: ML execution in browser extensions introduces unacceptable overhead due to IPC serialization AND main-thread contention.
 - NET-GET-ONLY: Modern network interactions allow complex mutations, but this system environment is restricted to static retrieval to minimize state complexity.
 - DYN-WEB-JS: Modern websites REQUIRE JavaScript for functional content resolution, necessitating a high-fidelity engine for acquisition.
@@ -11,7 +11,7 @@ Depends on: STD-DOC
 - PLATFORM-DESKTOP: Mobile operating systems prohibit the required sidecar process architecture; the system is restricted to Windows, Linux, and macOS.
 - GPU-CONTENTION: Simultaneous execution of the `Loader` [Chrome], `Renderer` [wgpu], and `MLProcessor` [ONNX] creates high VRAM pressure AND compute contention.
 
-## DECISIONS [Committed Architecture]
+## Decisions [Committed Architecture]
 - HOST-NATIVE: The system SHALL run as a standalone native process to minimize environment-induced latency.
 - SCOPE-RESTRICTED: The system IS a restricted runtime; it IS NOT a full web browser.
 - UI-SINGLE-TAB: The interface IS a minimal single-tab shell containing an address bar, navigation [Back/Forward], and reload functionality ONLY.
@@ -43,14 +43,20 @@ Depends on: STD-DOC
 - WINDOW-OWNERSHIP: The native process SHALL create and own the OS window via a hardware-accelerated graphics library [e.g., `winit` + `wgpu`].
 - LOADER-LIFECYCLE: The native process SHALL manage the `Loader` sidecar as a child process.
 - INFERENCE-BACKEND: The system SHALL utilize the `ONNX Runtime` with execution providers prioritized as: 1. GPU [CUDA/DirectML/CoreML] 2. CPU.
+- ASYNC-ACQUISITION: The `Fetcher` and `Loader-Bridge` SHALL use `tokio` async tasks. Inference and Rendering SHALL use dedicated synchronous thread-pools to prevent executor starvation.
 
-## GAPS [Active Blockers]
+## Gaps [Active Blockers]
 - MAPPING: The specific algorithm for mapping user-selected DOM nodes AND CSS styles to fixed-width tensor indices IS NOT defined.
 - THRESHOLD: The numerical trigger conditions for the system to override user-defined `ExecutionMode` preferences are NOT defined.
 - AUDIO-CAPTURE: The mechanism for capturing raw audio buffers from the `Loader` [Chrome] into the native `Stream Layer` is NOT defined.
 - RESOURCE-QUOTA: It is not defined how the system prevents a user-inserted model from consuming 100% of the System RAM or CPU.
 
-## NOTES / EXPLANATORY
+## Implementation Criteria
+- NATIVE-OVER-EXTENSION: Rejection of browser extensions is based on IPC serialization bottlenecks and JS main-thread contention. Any proposed solution involving high-frequency data copying or JS-side logic is a regression.
+- TCP-JITTER-CONTROL: TCP `nodelay` MUST be enabled on both sides of the IPC pipe. The system priorities low-jitter real-time delivery over bulk bandwidth efficiency.
+- GPU-PREEMPTION: The `Renderer` [wgpu] owns the GPU context. `MLProcessor` [ONNX] tasks are guest operations and MUST be throttled or offloaded to CPU if VRAM headroom is <10% to prevent UI stutter.
+
+## Notes / Explanatory
 - [EXPLANATORY]: `MessagePack` was selected over `Protobuf` to allow for rapid schema iteration during the R&D phase without complex build-system synchronization.
 - [EXPLANATORY]: The `Single-Tab` constraint simplifies memory management and ensures maximum CPU cache locality for the active task.
 - [EXPLANATORY]: Async is utilized ONLY for I/O-bound tasks [Fetcher/Networking]; dedicated thread pools are utilized for compute-bound tasks [Inference/Parsing] to prevent executor starvation.
