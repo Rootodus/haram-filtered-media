@@ -22,32 +22,32 @@ Depends on: NONE
 | Concept Properties | lowercase | status, mode, type, segment |
 | Document Keys | Sentence case | Status, Project, Depends on, Input, Output |
 
-- Initialism/acronym exception: Initialisms AND acronyms [ID, URL, ML, GPU, JS, HTTP] MUST remain ALL CAPS regardless of category.
-- Casing hierarchy: Initialism/acronym exception > System Entity syntax > Document Key [Sentence case].
-- Key-value mapping: Text appearing before a colon [:] MUST follow the Casing hierarchy. Text appearing after a colon follows its categorical casing [Example: `Component: Fetcher` OR `Fetcher: Active` OR `ID: 0001`].
+- Initialism/acronym exception: Initialisms AND acronyms (ID, URL, ML, GPU, JS, HTTP) MUST remain ALL CAPS regardless of category.
+- Casing hierarchy: Initialism/acronym exception > System Entity syntax > Document Key (Sentence case).
+- Key-value mapping: Text appearing before a colon (:) MUST follow the Casing hierarchy. Text appearing after a colon follows its categorical casing (Example: `Component: Fetcher` OR `Fetcher: Active` OR `ID: 0001`).
 - Context precedence: IF a token refers to functional behavior, THEN use System Entity syntax. IF a token refers to code implementation, THEN use Type syntax.
 - Collision rule: IF a statement describes both behavior AND implementation, THEN Type syntax MUST take precedence.
 - Identifier parity: Documentation MUST use exact source code naming for all types, variables, AND constants.
-- Markdown tokens: Syntax characters [---, |, >, #] are exempt from casing rules.
+- Markdown tokens: Syntax characters (---, |, >, #) are exempt from casing rules.
 
 ## Structural Geometry
 - NO emphasis: NO bold, NO italics. Casing is the ONLY emphasis.
 - Fenced blocks: Use backticks for all technical snippets, variables, types, AND file paths.
-- Bracketing: Use square brackets [] for meta-information [Units, Examples, Tags, Narrative].
-- Parentheses: Use parentheses () ONLY for logical grouping OR acronym definitions.
-- Horizontal rules: Horizontal rules [---] are PROHIBITED EXCEPT as Markdown table delimiters.
-- List markers: Unordered lists MUST use hyphen [-] markers. Ordered lists MUST use number AND dot [1.] markers.
+- Bracketing: Use square brackets [] primarily for References `[Re: ID]` AND Metadata tags.
+- Parentheses: Use parentheses () for asides, context, and logical grouping.
+- Horizontal rules: Horizontal rules (---) are PROHIBITED EXCEPT as Markdown table delimiters.
+- List markers: Unordered lists MUST use hyphen (-) markers. Ordered lists MUST use number AND dot (1.) markers.
 - Indentation: Use exactly TWO spaces per level for sub-items AND list continuations.
 - Vertical spacing: Exactly ONE newline between logical blocks. A sequence of single-spaced key/value lines is treated as ONE logical block.
 
-## English Reduction [Dense Logic Prose]
+## English Reduction (Dense Logic Prose)
 - STE usage: Use Simplified Technical English. Narrative fluff is PROHIBITED.
 - Active voice: Subject-Verb-Object REQUIRED.
 - Atomic logic: EACH line MUST convey exactly ONE fact OR constraint. This applies to `IF/THEN` actions AND key-value assignments.
-- Explicit operators: Implicit logic is PROHIBITED. Lists AND definitions MUST use explicit operators [AND, OR] to define relationships.
+- Explicit operators: Implicit logic is PROHIBITED. Lists AND definitions MUST use explicit operators (AND, OR) to define relationships.
 - Logical flattening:
   - `IF/THEN` is the outermost operator.
-  - EACH `IF/THEN` line MUST contain exactly ONE outcome [action].
+  - EACH `IF/THEN` line MUST contain exactly ONE outcome (action).
   - Compound conditions using `AND` are PERMITTED within a single `IF` segment. Conditions using `OR` MUST be split into multiple lines.
 - Contract syntax: Preconditions AND postconditions MUST be written as boolean predicates using System Entities, System States, OR Variables.
 
@@ -64,8 +64,8 @@ Depends on: NONE
 - Circularity: Circular dependencies are PROHIBITED.
 
 ## Tables & Lists
-- Data mapping: Use single-spaced key/value lines WITHOUT bullets for metadata OR static system properties [Example: `Mode: read-only`].
-- Instructional lists: Use hyphen [-] markers ONLY for constraints, requirements, OR rationale.
+- Data mapping: Use single-spaced key/value lines WITHOUT bullets for metadata OR static system properties (Example: `Mode: read-only`).
+- Instructional lists: Use hyphen (-) markers ONLY for constraints, requirements, OR rationale.
 - Tables: Maintain column consistency. Use exactly ONE space between pipes AND content `| Content |`.
 
 ## Document ID System
@@ -90,11 +90,11 @@ Depends on: NONE
 - Each document ID MUST be globally unique at the full string level.
 
 ## Anchor & Reference System
-- Semantic Referencing is the PREFERRED method for cross-document linkage [Example: Referring to "Statelessness" in `SPEC-ML` without an explicit anchor].
+- Semantic Referencing is the PREFERRED method for cross-document linkage (Example: Referring to "Statelessness" in `SPEC-ML` without an explicit anchor SHOULD NOT be done).
 - Anchors are OPTIONAL and SHOULD be used ONLY for high-precision disambiguation or mapping to specific test cases.
-- IF an anchor is used, the format MUST be: `[ANCHOR: ANCHOR-ID]`
-- Cross-document references MUST use format: `[REF: DOC-ID]` OR `[REF: DOC-ID::ANCHOR-ID]`
-- References MUST be stable. IF a semantic name is used for a reference, that name MUST be preserved in the target document.
+- IF an anchor is used, the format MUST be: `[Anchor: ANCHOR-ID]`
+- Cross-document references MUST use format: `[Ref: DOC-ID]` OR `[Ref: DOC-ID::ANCHOR-ID]`
+- References MUST be stable. IF a semantic name is used for a reference, THEN that name MUST be preserved in the target document.
 
 ### Scope and Independence
 - Anchor scope is limited to a single document.

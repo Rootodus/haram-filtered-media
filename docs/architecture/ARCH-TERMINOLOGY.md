@@ -1,4 +1,4 @@
-# ARCH Terminology [Core Vocabulary]
+# ARCH Terminology (Core Vocabulary)
 ID: ARCH-TERMINOLOGY  
 Status: STABLE  
 Depends on: STD-DOC
@@ -13,7 +13,7 @@ It does NOT define behavior, execution rules, or system policies.
 A data container representing a unit of input passed into the system.
 
 Structure:
-- payload: raw input data [any media type]
+- payload: raw input data (any media type)
 - metadata: optional contextual information
 
 Property:

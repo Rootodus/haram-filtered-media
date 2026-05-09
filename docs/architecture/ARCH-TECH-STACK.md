@@ -3,7 +3,7 @@ ID: ARCH-TECH-STACK
 Status: STABLE  
 Depends on: ARCH-REQ, STD-DOC
 
-## Component Mapping
+## Component Mapping [Using: ARCH-REQ::*]
 
 ### Loader and IPC [Ref: DYN-SNAPSHOT, IPC-MSGPACK]
 - `chromiumoxide`: CDP integration and Headless Chrome orchestration.

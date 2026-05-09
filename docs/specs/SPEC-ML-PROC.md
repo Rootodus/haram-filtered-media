@@ -5,13 +5,13 @@ ID: SPEC-ML-PROC
 Status: STABLE-FOR-SPIKE  
 Depends on: ARCH-REQ
 
-## IPC Protocol [ANCHOR: PROTOCOL-SPIKE]
+## IPC Protocol [Anchor: PROTOCOL-SPIKE]
 - Transport: Unix Domain Socket (Linux/macOS) or Named Pipe (Windows).
 - Framing: `[Payload_Length: u32]` + `[MessagePack_Payload: bytes]`.
 - Byte Order: Little-Endian (LE) for the length prefix AND all numerical fields.
 - Backpressure (ACK): The `Runtime` SHALL send a single byte `0x01` (OK) back through the pipe to the `Loader` upon completion of the `STAGE-RENDER` for the current frame.
 
-## ContentBuffer [ANCHOR: SCHEMA-BUFFER-SPIKE]
+## ContentBuffer [Anchor: SCHEMA-BUFFER-SPIKE]
 | Field | Type | Invariant |
 | --- | --- | --- |
 | `timestamp` | u64 | Monotonic acquisition time. |
@@ -19,12 +19,12 @@ Depends on: ARCH-REQ
 | `height` | u32 | Must match native window height. |
 | `pixel_data` | bin | MessagePack Binary type. Length MUST be `width * height * 4`. |
 
-## ProcessedBuffer [ANCHOR: SCHEMA-OUTPUT-SPIKE]
+## ProcessedBuffer [Anchor: SCHEMA-OUTPUT-SPIKE]
 | Field | Type | Description |
 | --- | --- | --- |
 | `instructions` | List<VisualAction> | Sequential list of render commands. |
 
-### VisualAction [ANCHOR: WIRE-FORMAT]
+### VisualAction [Anchor: WIRE-FORMAT]
 The `VisualAction` is a fixed-size structure for predictable parsing.
 
 - `action_type`: `u8`

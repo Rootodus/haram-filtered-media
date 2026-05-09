@@ -16,7 +16,7 @@ Relationship mapping:
 - Reduced mutation surface aligns with reduced output variability under identical inputs.
 
 Rejected alternatives:
-- Allowing mixed HTTP methods with runtime filtering [higher observed divergence].
+- Allowing mixed HTTP methods with runtime filtering (higher observed divergence).
 
 ## Decision: Disable JS execution
 Statement: JS execution is disabled in the content loading environment.  
@@ -30,7 +30,7 @@ Relationship mapping:
 - Removal of client-side execution aligns with more stable input extraction patterns.
 
 Rejected alternatives:
-- Sandboxed JS execution with partial allowlist [introduces timing variance].
+- Sandboxed JS execution with partial allowlist (introduces timing variance).
 
 ## Decision: Pipeline architecture
 Statement: System uses a staged pipeline architecture.  
@@ -45,7 +45,7 @@ Relationship mapping:
 - Single-stage execution aligns with lower overhead AND increased coupling.
 
 Rejected alternatives:
-- Fully single-stage execution [loss of separation boundaries].
+- Fully single-stage execution (loss of separation boundaries).
 
 ## Decision: Stateless MLProcessor
 Statement: `MLProcessor` MUST NOT maintain persistent state between invocations.  
@@ -59,7 +59,7 @@ Relationship mapping:
 - Absence of cross-run state aligns with reduced variability.
 
 Rejected alternatives:
-- Session-based state model [higher cross-run coupling observed].
+- Session-based state model (higher cross-run coupling observed).
 
 ## Decision: Async communication
 Statement: Stages communicate via asynchronous bounded channels.  
@@ -73,7 +73,7 @@ Relationship mapping:
 - Decoupling via queues aligns with reduced blocking propagation.
 
 Rejected alternatives:
-- Direct synchronous chaining [backpressure amplification observed].
+- Direct synchronous chaining (backpressure amplification observed).
 
 ## Decision: Buffer sharing
 Statement: Buffers use shared references where safe.  
@@ -87,7 +87,7 @@ Relationship mapping:
 - Reduced copying aligns with lower memory usage in observed runs.
 
 Rejected alternatives:
-- Deep copy per stage boundary [higher allocation cost observed].
+- Deep copy per stage boundary (higher allocation cost observed).
 
 ## Decision: Documentation format
 Statement: Standardize on atomic key/value formatting AND STE logic.  
@@ -101,7 +101,7 @@ Relationship mapping:
 - Structural constraints align with more consistent parsing behavior.
 
 Rejected alternatives:
-- Free-form documentation blocks [higher ambiguity observed].
+- Free-form documentation blocks (higher ambiguity observed).
 
 ## Notes / Explanatory
 - [EXPLANATORY] This log is append-only to preserve the historical rationale.

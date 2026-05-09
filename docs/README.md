@@ -44,8 +44,8 @@ The system uses an ID-Atomic model to minimize clerical overhead AND prevent syn
 Contains only execution results and validation traces.
 
 Allowed content:
-- run logs [Phase 0–n executions]
-- measurements [latency, drop rate, throughput]
+- run logs (Phase 0–n executions)
+- measurements (latency, drop rate, throughput)
 - observed behavior deviations
 - reproduction notes
 
