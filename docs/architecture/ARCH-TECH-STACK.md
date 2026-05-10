@@ -37,5 +37,5 @@ Depends on: ARCH-REQ, STD-DOC
 - `derivative`
 
 ## Selection Rationale [Ref: LOG-DECISIONS]
-- MessagePack over Protobuf: Selected to minimize build-system complexity while maintaining near-native serialization speeds.
-- `ort` over `tract`: Selected to ensure access to GPU Execution Providers (CUDA/CoreML), which is required to satisfy `ENV-EXT-LATENCY`.
+- MessagePack over Protobuf: Currently selected to minimize build-system complexity while maintaining near-native serialization speeds. Note that later on, FlatBuffers will be used instead.
+- `ort` over `tract`: Selected to ensure access to GPU Execution Providers (CUDA/CoreML), which is required to satisfy ENV-EXT-LATENCY. Also to maximize compatibility with user-provided models and allow seamless scaling from CPU fallback to GPU acceleration. Pure-Rust alternatives (like `tract`) are rejected due to limited operator support and lack of GPU execution providers.
