@@ -32,6 +32,10 @@ Depends on: ARCH-REQ, STD-DOC
 ### Audio Stream [Ref: AUDIO-CAPTURE]
 - `cpal`: Low-level audio I/O for temporal stream modifications.
 
+## Other Potential Useful Crates
+- `smart_default`
+- `derivative`
+
 ## Selection Rationale [Ref: LOG-DECISIONS]
 - MessagePack over Protobuf: Selected to minimize build-system complexity while maintaining near-native serialization speeds.
 - `ort` over `tract`: Selected to ensure access to GPU Execution Providers (CUDA/CoreML), which is required to satisfy `ENV-EXT-LATENCY`.
