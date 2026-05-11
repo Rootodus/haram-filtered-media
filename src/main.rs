@@ -181,7 +181,7 @@ impl ApplicationHandler for App {
             format: TextureFormat::Rgba8UnormSrgb,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: wgpu::PresentMode::Immediate,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -207,6 +207,9 @@ impl ApplicationHandler for App {
 
                 // --- PHASE 1: Data Update (Conditional) ---
                 if let Some(frame) = self.state.get_frame_if_dirty() {
+                    // --- MOCK INFERENCE STAGE ---
+                    mock_inference(&frame.pixel_data);
+
                     let texture_size = Extent3d {
                         width: frame.meta.width,
                         height: frame.meta.height,
@@ -355,6 +358,19 @@ async fn handle_connection(
         }
     }
     Ok(())
+}
+
+fn mock_inference(pixels: &[u8]) {
+    // 1. Perform a "heavy" CPU calculation (read-heavy)
+    let mut sum: u64 = 0;
+    for i in (0..pixels.len()).step_by(100) {
+        sum += pixels[i] as u64;
+    }
+    // Prevent compiler from optimizing the loop away
+    std::hint::black_box(sum);
+
+    // 2. Simulate ML model execution latency
+    std::thread::sleep(std::time::Duration::from_millis(10));
 }
 
 #[tokio::main]
