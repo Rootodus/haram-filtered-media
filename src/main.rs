@@ -29,6 +29,14 @@ pub struct DomNode {
     pub rect: [f32; 4],
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DomNodeBorrowed<'a> {
+    pub id: u32,
+    pub tag: &'a str,
+    pub text: Option<&'a str>,
+    pub rect: [f32; 4],
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VisualAction {
     pub action_type: u8,
@@ -332,7 +340,6 @@ async fn handle_connection(
     let mut len_buf = [0u8; 4];
 
     loop {
-        // 1. Read Metadata
         if stream.read_exact(&mut len_buf).await.is_err() {
             break;
         }
@@ -341,7 +348,6 @@ async fn handle_connection(
         stream.read_exact(&mut meta_payload).await?;
         let meta: Metadata = rmp_serde::from_slice(&meta_payload)?;
 
-        // 2. Read DOM Nodes
         if stream.read_exact(&mut len_buf).await.is_err() {
             break;
         }
@@ -349,21 +355,25 @@ async fn handle_connection(
         let mut dom_payload = vec![0u8; dom_len];
         stream.read_exact(&mut dom_payload).await?;
 
-        let start_deser = std::time::Instant::now();
-        let nodes: Vec<DomNode> = rmp_serde::from_slice(&dom_payload)?;
-        let deser_dur = start_deser.elapsed();
+        // --- BENCHMARK START ---
+        // 1. Borrowed Deserialization (Zero-Allocation)
+        let start_borrowed = std::time::Instant::now();
+        let borrowed_nodes: Vec<DomNodeBorrowed> = rmp_serde::from_slice(&dom_payload)?;
+        let borrowed_dur = start_borrowed.elapsed();
+        std::hint::black_box(borrowed_nodes); // Prevent optimization
 
-        // --- FIX: Capture values before meta is moved ---
+        // 2. Owned Deserialization (Standard Heap Allocations)
+        let start_owned = std::time::Instant::now();
+        let nodes: Vec<DomNode> = rmp_serde::from_slice(&dom_payload)?;
+        let owned_dur = start_owned.elapsed();
+        // --- BENCHMARK END ---
+
         let current_ts = meta.timestamp;
         let node_count = meta.node_count;
         let pixel_bytes = (meta.width * meta.height * 4) as usize;
-        // ------------------------------------------------
-
-        // 3. Read Pixels
         let mut pixel_vec = vec![0u8; pixel_bytes];
         stream.read_exact(&mut pixel_vec).await?;
 
-        // Ownership of meta is moved here
         state.update_frame(meta, pixel_vec, nodes);
 
         if ack_receiver.recv().await.is_none() {
@@ -371,11 +381,10 @@ async fn handle_connection(
         }
         stream.write_all(&[0x01]).await?;
 
-        // Use captured variables instead of meta fields
         if current_ts % 100 == 0 {
             println!(
-                "DOM Deserialization ({} nodes): {:?}",
-                node_count, deser_dur
+                "DOM Race ({} nodes) | Borrowed (Zero-Alloc): {:?} | Owned (Heap-Alloc): {:?}",
+                node_count, borrowed_dur, owned_dur
             );
         }
     }
