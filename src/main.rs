@@ -12,12 +12,21 @@ pub struct Metadata {
     pub timestamp: u64,
     pub width: u32,
     pub height: u32,
+    pub node_count: u32,
 }
 
 /// The internal representation used by MLProcessor and Renderer
 pub struct ContentBuffer<'a> {
     pub meta: Metadata,
     pub pixel_data: &'a [u8],
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DomNode {
+    pub id: u32,
+    pub tag: String,
+    pub text: Option<String>,
+    pub rect: [f32; 4],
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,6 +47,7 @@ pub struct ProcessedBuffer {
 pub struct FrameState {
     pub meta: Metadata,
     pub pixel_data: Arc<[u8]>,
+    pub nodes: Vec<DomNode>,
 }
 
 /// High-performance shared state for the native runtime.
@@ -69,12 +79,13 @@ impl SharedAppState {
     /// Updates the frame data.
     /// Converts Vec<u8> to Box<[u8]> then to Arc<[u8]> to ensure the
     /// allocation is exactly the size of the data with no extra capacity overhead.
-    pub fn update_frame(&self, meta: Metadata, data: Vec<u8>) {
+    pub fn update_frame(&self, meta: Metadata, data: Vec<u8>, nodes: Vec<DomNode>) {
         // Prepare the state before locking
         let new_frame = FrameState {
             meta,
             // Convert Vec to Boxed slice then Arc to achieve Arc<[u8]>
             pixel_data: Arc::from(data.into_boxed_slice()),
+            nodes,
         };
 
         if let Ok(mut lock) = self.frame.lock() {
@@ -208,7 +219,7 @@ impl ApplicationHandler for App {
                 // --- PHASE 1: Data Update (Conditional) ---
                 if let Some(frame) = self.state.get_frame_if_dirty() {
                     // --- MOCK INFERENCE STAGE ---
-                    mock_inference(&frame.pixel_data);
+                    mock_inference(&frame);
 
                     let texture_size = Extent3d {
                         width: frame.meta.width,
@@ -319,57 +330,75 @@ async fn handle_connection(
 ) -> Result<(), Box<dyn Error>> {
     let _ = stream.set_nodelay(true);
     let mut len_buf = [0u8; 4];
-    let mut meta_payload = Vec::with_capacity(1024);
 
     loop {
+        // 1. Read Metadata
         if stream.read_exact(&mut len_buf).await.is_err() {
             break;
         }
         let meta_len = u32::from_le_bytes(len_buf) as usize;
-
-        meta_payload.resize(meta_len, 0);
+        let mut meta_payload = vec![0u8; meta_len];
         stream.read_exact(&mut meta_payload).await?;
         let meta: Metadata = rmp_serde::from_slice(&meta_payload)?;
 
-        // Capture properties before meta is moved
+        // 2. Read DOM Nodes
+        if stream.read_exact(&mut len_buf).await.is_err() {
+            break;
+        }
+        let dom_len = u32::from_le_bytes(len_buf) as usize;
+        let mut dom_payload = vec![0u8; dom_len];
+        stream.read_exact(&mut dom_payload).await?;
+
+        let start_deser = std::time::Instant::now();
+        let nodes: Vec<DomNode> = rmp_serde::from_slice(&dom_payload)?;
+        let deser_dur = start_deser.elapsed();
+
+        // --- FIX: Capture values before meta is moved ---
         let current_ts = meta.timestamp;
+        let node_count = meta.node_count;
         let pixel_bytes = (meta.width * meta.height * 4) as usize;
+        // ------------------------------------------------
 
+        // 3. Read Pixels
         let mut pixel_vec = vec![0u8; pixel_bytes];
-
-        let start_io = std::time::Instant::now();
         stream.read_exact(&mut pixel_vec).await?;
-        let io_duration = start_io.elapsed();
 
-        // 1. Hand off to renderer (Moves ownership of meta)
-        state.update_frame(meta, pixel_vec);
+        // Ownership of meta is moved here
+        state.update_frame(meta, pixel_vec, nodes);
 
-        // 2. CRITICAL: Wait for the Renderer to signal that the frame hit the screen
         if ack_receiver.recv().await.is_none() {
             break;
         }
-
-        // 3. Send ACK to JS Loader
         stream.write_all(&[0x01]).await?;
 
-        // Use captured timestamp for logging
+        // Use captured variables instead of meta fields
         if current_ts % 100 == 0 {
-            println!("Net IO Duration: {:?}", io_duration);
+            println!(
+                "DOM Deserialization ({} nodes): {:?}",
+                node_count, deser_dur
+            );
         }
     }
     Ok(())
 }
 
-fn mock_inference(pixels: &[u8]) {
-    // 1. Perform a "heavy" CPU calculation (read-heavy)
-    let mut sum: u64 = 0;
-    for i in (0..pixels.len()).step_by(100) {
-        sum += pixels[i] as u64;
+fn mock_inference(frame: &FrameState) {
+    // 1. Touch DOM Strings to force cache fills/memory access
+    for node in &frame.nodes {
+        std::hint::black_box(&node.tag);
+        if let Some(text) = &node.text {
+            std::hint::black_box(text);
+        }
     }
-    // Prevent compiler from optimizing the loop away
+
+    // 2. Heavy Pixel Calculation
+    let mut sum: u64 = 0;
+    for i in (0..frame.pixel_data.len()).step_by(100) {
+        sum += frame.pixel_data[i] as u64;
+    }
     std::hint::black_box(sum);
 
-    // 2. Simulate ML model execution latency
+    // 3. Simulated ML Latency
     std::thread::sleep(std::time::Duration::from_millis(10));
 }
 
