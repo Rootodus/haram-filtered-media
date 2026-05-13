@@ -8,13 +8,13 @@ The system operates as an asynchronous multithreaded pipeline within a single mo
 
 ### 1. Acquisition Stage [Anchor: STAGE-ACQUIRE]
 - Mechanic: `Loader` (Headless Chrome Sidecar) generates snapshots based on ARCH-REQ::SNAPSHOT-TRIGGER.
-- Transport: Data moves via ARCH-REQ::IPC-MSGPACK over a binary pipe into the native process memory.
-- Output: `RawBuffer` (MessagePack-encoded DOM/Style data).
+- Transport: Data moves via ARCH-REQ::IPC-FLATBUFFERS over a binary pipe into the native process memory.
+- Output: `RawBuffer` (Length-prefixed FlatBuffer containing DOM/Metadata + Trailing raw pixel bitstream).
 
 ### 2. Transformation Stage [Anchor: STAGE-TRANSFORM]
-- Parser: Deserializes `RawBuffer` into a structured, in-memory `DOM` tree AND `StyleMap`.
+- Parser: Verifies the memory-mapped FlatBuffer within `RawBuffer` and provides direct accessor roots for the DOM tree and styles.
 - Metadata: Appends viewport-relative element coordinates.
-- Unit Creation: Encapsulates structured data into a `ContentBuffer`.
+- Unit Creation: Encapsulates the verified FlatBuffer and pixel slice into a `ContentBuffer`.
 - Memory Strategy [Anchor: DATA-ARC]: The `ContentBuffer` IS wrapped in an `Arc<T>` (Atomic Reference Counted pointer).
 
 ### 3. Extraction Stage [Anchor: STAGE-EXTRACT]
@@ -53,13 +53,14 @@ The system operates as an asynchronous multithreaded pipeline within a single mo
 ## Component Interaction Map
 | Transition | Mechanism | Responsibility |
 | --- | --- | --- |
-| `Loader` -> `Parser` | ARCH-REQ::IPC-MSGPACK Pipe | External Data Acquisition |
+| `Loader` -> `Parser` | ARCH-REQ::IPC-FLATBUFFERS Pipe | External Data Acquisition |
 | `Parser` -> `Extractor` | `Arc<ContentBuffer>` | Feature Synthesis |
 | `Extractor` -> `Inference` | `&[f32]` (Tensor View) | Model Input |
 | `Inference` -> `Renderer` | `ProcessedBuffer` | Transformation Orders |
 | `Renderer` -> `Loader` | `CDP` (JSON/WebSocket) | Input Event Proxying |
 
 ## Notes / Explanatory
+- [EXPLANATORY] STAGE-TRANSFORM is computationally trivial under the FlatBuffer model, as "parsing" is replaced by a non-recursive integrity check and pointer assignment.
 - [EXPLANATORY] STAGE-EXTRACT utilizes user-defined selectors to prevent "Mapping Bloat," ensuring only high-signal data enters the ML engine.
 - [EXPLANATORY] The `Renderer` -> `Loader` feedback loop ensures the "Static Snapshot" remains interactive for the end user.
-- [EXPLANATORY] MEM-ZEROCOPY is strictly enforced between threads within the monolith; cross-process copies only occur at the `Loader` boundary.
+- [EXPLANATORY] MEM-ZEROCOPY is achieved cross-process by FlatBuffers (eliminating decode-side allocation) and in-process via `Arc` (eliminating move-side copying).

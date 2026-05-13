@@ -7,8 +7,9 @@ Depends on: ARCH-REQ, STD-DOC
 
 ### Loader and IPC [Ref: DYN-SNAPSHOT, IPC-MSGPACK]
 - `chromiumoxide`: CDP integration and Headless Chrome orchestration.
-- `rmp-serde`: MessagePack implementation for binary serialization.
 - `tokio`: Async runtime for I/O-bound acquisition tasks.
+- `flatbuffers` [NEW]: Zero-copy serialization library for structural data access.
+- `flatc` [NEW]: Schema compiler for generating Rust/JS data access code.
 
 ### Processing Pipeline [Ref: PIPE-MONOLITH, UNIT-BUFFER]
 - `crossbeam-channel`: High-performance multi-threaded data passing.
@@ -37,5 +38,5 @@ Depends on: ARCH-REQ, STD-DOC
 - `derivative`
 
 ## Selection Rationale [Ref: LOG-DECISIONS]
-- MessagePack over Protobuf: Currently selected to minimize build-system complexity while maintaining near-native serialization speeds. Note that later on, FlatBuffers will be used instead.
-- `ort` over `tract`: Selected to ensure access to GPU Execution Providers (CUDA/CoreML), which is required to satisfy ENV-EXT-LATENCY. Also to maximize compatibility with user-provided models and allow seamless scaling from CPU fallback to GPU acceleration. Pure-Rust alternatives (like `tract`) are rejected due to limited operator support and lack of GPU execution providers.
+- FlatBuffers over MessagePack: Adopted to eliminate the 11–124 ms sequential scanning overhead observed in `Spike-05`. FlatBuffers allows the `MLProcessor` to access DOM nodes via memory-mapped offsets with zero CPU parsing. MessagePack is relegated to non-critical R&D tasks only.
+- `ort` over `tract`: Selected to ensure access to GPU Execution Providers (CUDA/CoreML), which is required to satisfy ENV-EXT-LATENCY, and to maximize compatibility with user-provided models and allow seamless scaling from CPU fallback to GPU acceleration. Pure-Rust alternatives (like `tract`) are rejected due to limited operator support and lack of GPU execution providers.

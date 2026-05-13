@@ -7,7 +7,7 @@ Status: STABLE
 - Priority: 1. End-to-End Latency, 2. Simplicity, 3. Throughput.
 
 ## Critical Nuances Discovered in Prototype Phase
-- Data Plane: TCP Loopback is currently sufficient (>700MB/s), but jitter is the enemy.
+- Data Plane: TCP Loopback is currently sufficient (>700 MB/s), but jitter is the enemy.
 - Memory: Arc<T> is mandatory for stage hand-offs. Clones are forbidden in the render path.
 - Graphics: Winit 0.30 and Wgpu 29.0 are the target stack. ApplicationHandler trait is the required architecture.
 - Mapping: User-defined CSS/Regex selectors are used to prune the DOM before tensor mapping to avoid "DOM-to-Tensor" bloat.

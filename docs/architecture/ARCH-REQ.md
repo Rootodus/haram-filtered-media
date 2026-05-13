@@ -18,7 +18,7 @@ Depends on: STD-DOC
 - NET-RESTRICT: Network interaction IS limited to `HTTP` `GET`. `POST`, `PUT`, and `DELETE` are PROHIBITED.
 - DYN-SNAPSHOT: Dynamic content MUST be resolved into a static snapshot via an external `Loader` (Headless Chrome).
 - SNAPSHOT-TRIGGER: The `Loader` SHALL emit a snapshot on: 1. Navigation complete, 2. DOM mutation idle for > 200ms, or 3. User interaction event.
-- IPC-MSGPACK: Data transition between the `Loader` and the native runtime SHALL use `MessagePack` over a binary pipe (Unix Domain Sockets or Named Pipes).
+- IPC-FLATBUFFERS: Data transition between the `Loader` and the native runtime SHALL use `FlatBuffers` over a binary pipe (Unix Domain Sockets or Named Pipes) to enable zero-decode random access.
 - PIPE-MONOLITH: The core pipeline (Ingest -> Parse -> Infer -> Render) SHALL execute within a single monolithic native process using Multithreading for stage isolation to enable zero-copy data passing.
 - MODE-SUPPORT: The system SHALL support two `ExecutionMode` values: `latency` AND `throughput`.
 - PLUGIN-DECLARATIVE: Users SHALL insert ML models via a JSON manifest defining:
@@ -50,15 +50,20 @@ Depends on: STD-DOC
 - THRESHOLD: The numerical trigger conditions for the system to override user-defined `ExecutionMode` preferences are NOT defined.
 - AUDIO-CAPTURE: The mechanism for capturing raw audio buffers from the `Loader` (Chrome) into the native `Stream Layer` is NOT defined.
 - RESOURCE-QUOTA: It is not defined how the system prevents a user-inserted model from consuming 100% of the System RAM or CPU.
+- SPEC-PARSER: Mechanical specification for tokenizing HTML/CSS into tensors is pending model selection.
+- SPEC-INPUT-PROXY: Mechanical specification for coordinate-mapped event propagation via CDP is pending renderer stabilization.
+- SPEC-ML-CORE: Mechanical specification for `ort` (ONNX) session management and thread-pool isolation is pending pipeline integration.
 
 ## Implementation Criteria
 - NATIVE-OVER-EXTENSION: Rejection of browser extensions is based on IPC serialization bottlenecks and JS main-thread contention. Any proposed solution involving high-frequency data copying or JS-side logic is a regression.
 - TCP-JITTER-CONTROL: TCP `nodelay` MUST be enabled on both sides of the IPC pipe. The system priorities low-jitter real-time delivery over bulk bandwidth efficiency.
 - GPU-PREEMPTION: The `Renderer` (wgpu) owns the GPU context. `MLProcessor` (ONNX) tasks are guest operations and MUST be throttled or offloaded to CPU if VRAM headroom is <10% to prevent UI stutter.
+- ZERO-DECODE-CONTRACT: The IPC layer MUST NOT perform sequential scanning of the DOM tree. Data access MUST be performed via pointer offsets into memory-mapped FlatBuffer regions.
 
 ## Notes / Explanatory
-- [EXPLANATORY]: `MessagePack` was selected over `Protobuf` to allow for rapid schema iteration during the R&D phase without complex build-system synchronization.
-- [EXPLANATORY]: The `Single-Tab` constraint simplifies memory management and ensures maximum CPU cache locality for the active task.
-- [EXPLANATORY]: Async is utilized ONLY for I/O-bound tasks (Fetcher/Networking); dedicated thread pools are utilized for compute-bound tasks (Inference/Parsing) to prevent executor starvation.
-- [EXPLANATORY]: `PIPE-MONOLITH` utilizes `Arc<T>` for internal data passing to ensure zero-copy performance between threads.
-- [IDEA]: Semantic summarization of elements remains a candidate feature but is currently excluded from `ACTION-LIBRARY` due to reflow performance costs.
+- [EXPLANATORY] `FlatBuffers` was adopted as the primary IPC format to resolve the O(N) sequential scanning bottleneck observed with `MessagePack` in `Spike-05`, which exceeded the 16.6ms frame budget for 5,000 nodes.
+- [EXPLANATORY] `Raw Pixels` remain a trailing unencoded bitstream following the `FlatBuffer` metadata to avoid the overhead of structural wrapping for bulk binary data.
+- [EXPLANATORY] The `Single-Tab` constraint simplifies memory management and ensures maximum CPU cache locality for the active task.
+- [EXPLANATORY] Async is utilized ONLY for I/O-bound tasks (Fetcher/Networking); dedicated thread pools are utilized for compute-bound tasks (Inference/Parsing) to prevent executor starvation.
+- [EXPLANATORY] `PIPE-MONOLITH` utilizes `Arc<T>` for internal data passing to ensure zero-copy performance between threads.
+- [IDEA] Semantic summarization of elements remains a candidate feature but is currently excluded from `ACTION-LIBRARY` due to reflow performance costs.

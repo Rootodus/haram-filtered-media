@@ -1,23 +1,42 @@
-// Note: update this later by asking ai about the new code and what should be updated about the spec.
-
-# MLProcessor Data Contract (Spike-01)
+# MLProcessor Data Contract
 ID: SPEC-ML-PROC  
 Status: STABLE-FOR-SPIKE  
-Depends on: ARCH-REQ
+Depends on: ARCH-REQ, ARCH-PERF-STRATEGY
 
 ## IPC Protocol [Anchor: PROTOCOL-SPIKE]
-- Transport: Unix Domain Socket (Linux/macOS) or Named Pipe (Windows).
-- Framing: `[Payload_Length: u32]` + `[MessagePack_Payload: bytes]`.
-- Byte Order: Little-Endian (LE) for the length prefix AND all numerical fields.
-- Backpressure (ACK): The `Runtime` SHALL send a single byte `0x01` (OK) back through the pipe to the `Loader` upon completion of the `STAGE-RENDER` for the current frame.
+- Transport: TCP Loopback (127.0.0.1) [Windows] or Unix Domain Sockets [Unix].
+- Framing: `[FB_Length: u32]` + `[FlatBuffer_Payload: bytes]` + `[Raw_Pixels: bytes]`.
+- Byte Order: Little-Endian (LE) for length prefixes and numerical data.
+- Backpressure (ACK): The `Runtime` SHALL send a single byte `0x01` back to the `Loader` ONLY AFTER `surface_texture.present()` has completed for the frame.
 
 ## ContentBuffer [Anchor: SCHEMA-BUFFER-SPIKE]
-| Field | Type | Invariant |
-| --- | --- | --- |
-| `timestamp` | u64 | Monotonic acquisition time. |
-| `width` | u32 | Must match native window width. |
-| `height` | u32 | Must match native window height. |
-| `pixel_data` | bin | MessagePack Binary type. Length MUST be `width * height * 4`. |
+The `ContentBuffer` is composed of a memory-mapped FlatBuffer and a trailing pixel bitstream.
+
+### FlatBuffer Structure (`schema.fbs`)
+```flatbuffers
+struct Vec4 { x: float; y: float; w: float; h: float; }
+
+table DomNode {
+    id: uint32;
+    tag: string;
+    text: string;
+    rect: Vec4;
+}
+
+table Metadata {
+    timestamp: uint64;
+    width: uint32;
+    height: uint32;
+    nodes: [DomNode];
+}
+
+root_type Metadata;
+```
+
+### Pixel Payload
+- Format: Raw RGBA8.
+- Size: `Metadata.width * Metadata.height * 4` bytes.
+- Position: Immediate successor to the FlatBuffer bytes.
 
 ## ProcessedBuffer [Anchor: SCHEMA-OUTPUT-SPIKE]
 | Field | Type | Description |
@@ -36,10 +55,10 @@ The `VisualAction` is a fixed-size structure for predictable parsing.
   - Float Format: IEEE 754 Single Precision.
 
 ## Invariants
-- HEADER-PAYLOAD-SPLIT: The IPC protocol MUST separate metadata (MessagePack) from raw pixel data (Raw Bitstream). Do not wrap pixels in MessagePack; this prevents decoder-induced latency spikes.
-- LITTLE-ENDIAN-ONLY: All binary fields (length prefixes, coordinate floats) MUST use Little-Endian encoding to match the target x86/ARM64 architectures.
-- ACK-GATING: The 1-byte `0x01` ACK is the primary backpressure mechanism. Its placement determines system-wide latency.
+- ZERO-DECODE-DOM: The system MUST NOT use MessagePack or JSON for DOM data. Access to nodes MUST be performed via FlatBuffer pointer offsets to eliminate the 11ms scanning bottleneck observed in `Spike-05`.
+- FB-PIXEL-SPLIT: The FlatBuffer payload contains structural metadata only. Raw pixel data MUST remain as a trailing bitstream to prevent FlatBuffer builder overhead for large binary blobs.
+- LIFETIME-STRICT: The `Runtime` SHALL treat the FlatBuffer as a read-only memory map. Strings (`tag`, `text`) are accessed as `&str` directly from the IPC buffer.
 
 ## Operational Constraints
-- Stop-and-Wait: The `Loader` MUST NOT initiate a new `STAGE-ACQUIRE` until it receives the `0x01` ACK for the previous frame.
-- Deserialization: The `Runtime` SHALL use `serde_bytes` or equivalent to deserialize `pixel_data` directly into a borrowed slice `&[u8]` to avoid an intermediate `Vec<u8>` allocation.
+- Stop-and-Wait: The `Loader` MUST NOT initiate a new capture until the `0x01` ACK is received, ensuring the system is clocked to the physical GPU presentation rate.
+- Zero-Copy Hand-off: The `Parser` stage SHALL verify the FlatBuffer integrity without copying. The `MLProcessor` SHALL receive a pointer into the existing IPC buffer.

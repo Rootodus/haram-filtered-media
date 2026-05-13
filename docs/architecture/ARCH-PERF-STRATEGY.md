@@ -1,22 +1,21 @@
 # Performance Optimization Strategy
 ID: ARCH-PERF-STRATEGY  
-Status: DRAFT  
+Status: STABLE  
 Depends on: ARCH-REQ, ARCH-SYS-MAP
 
 ## Purpose
 Defines the technical roadmap for minimizing latency and maximizing throughput beyond the baseline implementation.
 
 ## Serialization Evolution [Anchor: PERF-SERIAL]
-The system utilizes a tiered approach to data serialization to balance development speed with execution performance.
-
 | Stage | Format | Nature | Reason |
 | --- | --- | --- | --- |
-| Current | `MessagePack` | Object-based | Fastest to code for the initial Spike. |
-| Endgame | `FlatBuffers` | Memory-mapped | Used for DOM, Styles, and Metadata. Allows the CPU to "peek" at any node with zero-copy. |
+| Current | `FlatBuffers` | Memory-mapped | Provides zero-decode random access; solves 11 ms MessagePack scanning bottleneck. |
+| Endgame | `FlatBuffers` + `SHM` | Shared Memory | Eliminates OS-level memory copies between Loader and Runtime. |
 
-### FlatBuffers Transition
-- Trigger: When STAGE-TRANSFORM latency for DOM trees exceeds 5 ms.
-- Benefit: Allows the `Extractor` to "peek" at specific element properties without walking or decoding the entire MessagePack map.
+### FlatBuffers Implementation
+- Status: ACTIVE.
+- Evidence: `Spike-05` demonstrated that MessagePack scanning exceeded the 16.6 ms frame budget.
+- Benefit: The `Extractor` and `MLProcessor` access DOM nodes and metadata via pointer offsets with zero CPU parsing overhead.
 
 ## Transport Optimization [Anchor: PERF-TRANSPORT]
 Current IPC relies on TCP Loopback (Windows) or Unix Sockets (Linux).
@@ -28,5 +27,6 @@ Current IPC relies on TCP Loopback (Windows) or Unix Sockets (Linux).
 
 ## ML Ingestion [Anchor: PERF-ML]
 - Target: Eliminate the `Vec` to `Tensor` conversion.
-- Strategy: Use Columnar Layouts (Arrow) for CSS styles.
-- Mechanism: The `Parser` stage writes styles into contiguous memory blocks that match the input shape of the `Inference Engine`.
+- Strategy: Use FlatBuffers Structs for fixed-width numerical data (e.g., coordinates, style indices).
+- Mechanism: The `Parser` stage reads aligned data directly from the memory-mapped buffer, matching the input shape of the `Inference Engine` without reshuffling.
+- Note: Apache Arrow is REJECTED as it introduces unnecessary columnar-to-row overhead for single-page inference units.

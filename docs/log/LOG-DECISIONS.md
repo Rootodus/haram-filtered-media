@@ -18,7 +18,12 @@ Relationship mapping:
 Rejected alternatives:
 - Allowing mixed HTTP methods with runtime filtering (higher observed divergence).
 
-## Decision: Disable JS execution
+## [SUPERSEDED] Decision: Disable JS execution
+- Status: SUPERSEDED by `DEC-JS-BOUNDARY`.
+- Reason: Conflicted with the requirement to support dynamic web content resolution via Headless Chrome.
+- Reference: `ARCH-REQ::DYN-WEB-JS`.
+
+```historical_logic
 Statement: JS execution is disabled in the content loading environment.  
 Evidence: `EXP-ARCH-BASELINE`.
 
@@ -31,9 +36,10 @@ Relationship mapping:
 
 Rejected alternatives:
 - Sandboxed JS execution with partial allowlist (introduces timing variance).
+```
 
 ## Decision: Pipeline architecture
-Statement: System uses a staged pipeline architecture.  
+Statement: System uses a staged (does NOT mean separate processes) pipeline architecture.  
 Evidence: `EXP-ARCH-BASELINE`.
 
 Observed signals:
@@ -61,7 +67,12 @@ Relationship mapping:
 Rejected alternatives:
 - Session-based state model (higher cross-run coupling observed).
 
-## Decision: Async communication
+## [SUPERSEDED] Decision: Async communication
+- Status: SUPERSEDED by `DEC-HARD-SYNC-PIPE`.
+- Reason: Asynchronous decoupling caused unmanaged latency drift in `Spike-02` and `Spike-03`.
+- References: EXP-SPIKE-02, EXP-SPIKE-03.
+
+```historical_logic
 Statement: Stages communicate via asynchronous bounded channels.  
 Evidence: `EXP-ARCH-BASELINE`.
 
@@ -74,6 +85,7 @@ Relationship mapping:
 
 Rejected alternatives:
 - Direct synchronous chaining (backpressure amplification observed).
+```
 
 ## Decision: Buffer sharing
 Statement: Buffers use shared references where safe.  
@@ -103,6 +115,59 @@ Relationship mapping:
 Rejected alternatives:
 - Free-form documentation blocks (higher ambiguity observed).
 
+## Decision: Reject MessagePack for Structural Data
+Statement: The system SHALL NOT use MessagePack for DOM or metadata serialization.  
+Evidence: `Spike-05` benchmarking.
+
+Observed signals:
+- 5,000-node DOM deserialization consumed 11ms-14ms baseline.
+- Jitter spikes up to 124ms observed during sequential scanning.
+- MessagePack requires O(N) traversal to identify field boundaries.
+
+Relationship mapping:
+- Elimination of sequential parsing aligns with 16.6ms frame budget (R1).
+
+Rejected alternatives:
+- Optimizing MessagePack via string-borrowing (proven statistically insufficient).
+
+## Decision: Adopt FlatBuffers for IPC
+Statement: The system SHALL use FlatBuffers for all hierarchical and metadata serialization.  
+Evidence: `Spike-05` failure analysis.
+
+Observed signals:
+- MessagePack parsing overhead saturated CPU cycles required for GPU upload.
+- Lack of random access prevented efficient "peeking" of DOM properties.
+
+Relationship mapping:
+- Transition to memory-mapped random access aligns with zero-decode goals.
+
+Rejected alternatives:
+- Apache Arrow (rejected due to columnar-to-row overhead for single-page inference).
+- Cap'n Proto (rejected due to inferior JavaScript ecosystem support for the Loader).
+
+## Decision: JS Execution Boundary [Anchor: DEC-JS-BOUNDARY]
+Statement: JS execution IS PERMITTED within the `Loader` [Headless Chrome] sidecar ONLY. JS execution IS PROHIBITED within the native `Runtime` (MLProcessor/Renderer).  
+Evidence: `ARCH-REQ::DYN-WEB-JS`.
+
+Observed signals:
+- Total JS disablement rendered modern SPAs (Single Page Apps) non-functional.
+- Isolating JS to a child process preserves the native performance of the core pipeline.
+
+Relationship mapping:
+- Separation of "Content Logic" (JS) from "Filtering Logic" (Rust) aligns with `PIPE-MONOLITH` simplicity.
+
+## Decision: Hard-Synchronous Stop-and-Wait [Anchor: DEC-HARD-SYNC-PIPE]
+Statement: The pipeline SHALL operate as a synchronous stop-and-wait system. The `Loader` MUST NOT send a new frame until the `Renderer` signals completion via an explicit ACK (0x01).  
+Evidence: `EXP-SPIKE-03`.
+
+Observed signals:
+- Async queuing resulted in 100ms+ latency drift (out-of-sync video).
+- Hard-sync ACK stabilized latency to 1-2 frame intervals.
+- Matches `PresentMode::Fifo` (V-Sync) hardware behavior.
+
+Relationship mapping:
+- Tight coupling of acquisition to presentation aligns with the End-to-End Latency priority.
+
 ## Notes / Explanatory
 - [EXPLANATORY] This log is append-only to preserve the historical rationale.
-- [EXPLANATORY] All decisions MUST reference evidence from the `EXP` class.
+- [EXPLANATORY] All decisions MUST reference evidence from the `EXP` class or technical spikes.
