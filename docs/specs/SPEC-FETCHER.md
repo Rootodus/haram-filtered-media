@@ -1,7 +1,7 @@
 # Loader Orchestration (Fetcher)
 ID: SPEC-FETCHER  
 Status: STABLE-FOR-IMPLEMENTATION  
-Depends on: ARCH-REQ, SPEC-ML-PROC
+Depends on: ARCH-REQ, SPEC-ML-PROC, STYLE-RUST
 
 ## 1. Process Management [FETCH-PROCESS]
 - The `Fetcher` module SHALL spawn the `Headless Chrome` binary as a child process.

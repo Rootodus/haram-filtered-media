@@ -1,7 +1,7 @@
 # Layered Composition Renderer
 ID: SPEC-RENDERER  
 Status: STABLE-FOR-IMPLEMENTATION  
-Depends on: ARCH-REQ, ARCH-SYS-MAP, SPEC-ML-PROC
+Depends on: ARCH-REQ, ARCH-SYS-MAP, SPEC-ML-PROC, STYLE-RUST
 
 ## 1. Pipeline Layout [RENDER-PIPELINE]
 - Target: `wgpu 29.0`.

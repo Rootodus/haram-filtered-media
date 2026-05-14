@@ -1,7 +1,7 @@
 # MLProcessor Data Contract
 ID: SPEC-ML-PROC  
 Status: STABLE-FOR-SPIKE  
-Depends on: ARCH-REQ, ARCH-PERF-STRATEGY
+Depends on: ARCH-REQ, ARCH-PERF-STRATEGY, STYLE-RUST
 
 ## IPC Protocol [Anchor: PROTOCOL-SPIKE]
 - Transport: TCP Loopback (127.0.0.1) [Windows] or Unix Domain Sockets [Unix].

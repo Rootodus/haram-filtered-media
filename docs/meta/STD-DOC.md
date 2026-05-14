@@ -84,6 +84,7 @@ Depends on: NONE
 - LOG = append-only journals of historical decisions and rationale
 - EXP = structured execution records, benchmarks, and evidence
 - STD = documentation syntax, formatting, and governance standards
+- STYLE = coding conventions, language‑specific rules, and performance patterns
 
 ### Construction Rules
 - IDs MUST use exactly one Class token followed by a hyphen and a semantic name.
