@@ -10,9 +10,6 @@ Depends on: NONE
 ## Syntax & Naming Conventions
 | Category | Casing | Example |
 | --- | --- | --- |
-| Normative Verbs | ALL CAPS | MUST, SHALL, REQUIRED, PROHIBITED, PERMITTED |
-| Logical Operators | ALL CAPS | IF, THEN, AND, OR, XOR, NOT |
-| Quantifiers | ALL CAPS | ONLY, ALL, ANY, EACH, NONE, UNIQUE |
 | System Entities | PascalCase | Fetcher, MLProcessor, Renderer, Loader |
 | System States | PascalCase | PipelineActive, Processing, Completed |
 | Types / Structs | Backticks + PascalCase | `ContentBuffer`, `AudioChunk` |
