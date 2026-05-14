@@ -38,5 +38,5 @@ Depends on: ARCH-REQ, STD-DOC
 - `derivative`
 
 ## Selection Rationale [Ref: LOG-DECISIONS]
-- FlatBuffers over MessagePack: Adopted to eliminate the 11–124 ms sequential scanning overhead observed in `Spike-05`. FlatBuffers allows the `MLProcessor` to access DOM nodes via memory-mapped offsets with zero CPU parsing. MessagePack is relegated to non-critical R&D tasks only.
+- FlatBuffers over MessagePack: Adopted to eliminate the 11–124 ms sequential scanning overhead observed in Spike-05. FlatBuffers allows the `MLProcessor` to access DOM nodes via memory-mapped offsets with zero CPU parsing. MessagePack is relegated to non-critical R&D tasks only.
 - `ort` over `tract`: Selected to ensure access to GPU Execution Providers (CUDA/CoreML), which is required to satisfy ENV-EXT-LATENCY, and to maximize compatibility with user-provided models and allow seamless scaling from CPU fallback to GPU acceleration. Pure-Rust alternatives (like `tract`) are rejected due to limited operator support and lack of GPU execution providers.

@@ -1,5 +1,5 @@
 # Experiment: WGPU Presentation & Backpressure
-ID: EXP-SPIKE-03  
+ID: EXP-SPIKE-03-VISUAL-WGPU (Spike-3)  
 Status: SUCCESS
 
 ## Hypothesis
@@ -12,4 +12,4 @@ A dedicated Renderer thread using `wgpu` can display pixel buffers with "Stop-an
 - Visuals: Confirmed "pulse" synchronization; color changes matched JS-sent timestamps.
 
 ## Conclusion
-The graphics stack is functional. Admission control correctly skips frames when the GPU/Monitor is busy, satisfying `MODE-LATENCY`.
+The graphics stack is functional. Admission control correctly skips frames when the GPU/Monitor is busy, satisfying MODE-LATENCY.

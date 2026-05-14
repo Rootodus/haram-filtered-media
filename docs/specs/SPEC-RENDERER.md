@@ -20,4 +20,4 @@ Depends on: ARCH-REQ, ARCH-SYS-MAP, SPEC-ML-PROC, STYLE-RUST
 
 ## 4. Admission Invariants
 - V-Sync Policy: The `Renderer` SHALL use `PresentMode::Immediate` or `Mailbox` for performance testing, but `Fifo` is the default for user stability.
-- Drop Policy: If `state.get_frame_if_dirty()` returns `None` during a `RedrawRequested` event, the `Renderer` SHALL redraw the *last* valid `frame_texture` to maintain UI responsiveness.
+- Drop Policy: If `state.get_frame_if_dirty()` returns `None` during a `RedrawRequested` event, the `Renderer` SHALL redraw the last valid `frame_texture` to maintain UI responsiveness.

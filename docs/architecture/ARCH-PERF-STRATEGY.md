@@ -14,7 +14,7 @@ Defines the technical roadmap for minimizing latency and maximizing throughput b
 
 ### FlatBuffers Implementation
 - Status: ACTIVE.
-- Evidence: `Spike-05` demonstrated that MessagePack scanning exceeded the 16.6 ms frame budget.
+- Evidence: Spike-05 demonstrated that MessagePack scanning exceeded the 16.6 ms frame budget.
 - Benefit: The `Extractor` and `MLProcessor` access DOM nodes and metadata via pointer offsets with zero CPU parsing overhead.
 
 ## Transport Optimization [PERF-TRANSPORT]

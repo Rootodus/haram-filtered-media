@@ -1,5 +1,5 @@
 # Experiment: Length-Prefixed IPC Bridge
-ID: EXP-SPIKE-01  
+ID: EXP-SPIKE-01-IPC-PROTO (Spike-1)  
 Status: SUCCESS
 
 ## Hypothesis

@@ -26,4 +26,4 @@ Depends on: ARCH-REQ, LOG-DECISIONS
 
 ## Notes / Explanatory
 - [EXPLANATORY] The transition from "Independent Threads" to "Hard-Sync" was necessitated by the observation of unmanaged latency drift in Spike-03.
-- [EXPLANATORY] Performance metrics from `EXP-SPIKE-05` serve as the rejection criteria for any proposed non-zero-copy serialization.
+- [EXPLANATORY] Performance metrics from Spike-05 serve as the rejection criteria for any proposed non-zero-copy serialization.

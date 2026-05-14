@@ -55,7 +55,7 @@ The `VisualAction` is a fixed-size structure for predictable parsing.
   - Float Format: IEEE 754 Single Precision.
 
 ## Invariants
-- ZERO-DECODE-DOM: The system MUST NOT use MessagePack or JSON for DOM data. Access to nodes MUST be performed via FlatBuffer pointer offsets to eliminate the 11ms scanning bottleneck observed in `Spike-05`.
+- ZERO-DECODE-DOM: The system MUST NOT use MessagePack or JSON for DOM data. Access to nodes MUST be performed via FlatBuffer pointer offsets to eliminate the 11ms scanning bottleneck observed in Spike-05.
 - FB-PIXEL-SPLIT: The FlatBuffer payload contains structural metadata only. Raw pixel data MUST remain as a trailing bitstream to prevent FlatBuffer builder overhead for large binary blobs.
 - LIFETIME-STRICT: The `Runtime` SHALL treat the FlatBuffer as a read-only memory map. Strings (`tag`, `text`) are accessed as `&str` directly from the IPC buffer.
 
