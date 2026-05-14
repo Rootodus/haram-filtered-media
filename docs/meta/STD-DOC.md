@@ -68,6 +68,10 @@ Depends on: NONE
 - Instructional lists: Use hyphen (-) markers ONLY for constraints, requirements, OR rationale.
 - Tables: Maintain column consistency. Use exactly ONE space between pipes AND content `| Content |`.
 
+## Units
+- A space SHALL separate a numeric value from its unit: `10 ms`, `5 MB`, `11 ms`.
+- Exceptions (no space): percent (`10%`), degree (`90°`).
+
 ## Document ID System
 - Document IDs MUST follow format: `CLASS-IDENTIFIER`
 - Each ID MUST start with a valid Category Class token.
@@ -90,17 +94,45 @@ Depends on: NONE
 - Each document ID MUST be globally unique at the full string level.
 
 ## Anchor & Reference System
-- Semantic Referencing is the PREFERRED method for cross-document linkage (Example: Referring to "Statelessness" in `SPEC-ML` without an explicit anchor SHOULD NOT be done).
-- Anchors are OPTIONAL and SHOULD be used ONLY for high-precision disambiguation or mapping to specific test cases.
-- IF an anchor is used, the format MUST be: `[Anchor: ANCHOR-ID]`
-- Cross-document references MUST use format: `[Ref: DOC-ID]` OR `[Ref: DOC-ID::ANCHOR-ID]`
-- References MUST be stable. IF a semantic name is used for a reference, THEN that name MUST be preserved in the target document.
 
-### Scope and Independence
-- Anchor scope is limited to a single document.
-- Global uniqueness is enforced ONLY through the combination of Document ID AND Anchor ID.
-- Section headers MAY change without affecting anchors.
-- Headers are presentation-only and MUST NOT be referenced as stable identifiers.
+### Anchor Definitions
+Definition Bullets (FACTS, DECISIONS, GAPS, or any block marked `[DEFINITIONS]`):
+- EVERY bullet MUST begin with an implicit anchor `ID:` at line start.
+- `ID` ALWAYS in `UPPER-KEBAB-CASE` format.
+- Example: `ENV-EXT-LATENCY: Text.`
+
+Ordinary Bullets (other normative lists, e.g., implementation steps):
+- No implicit anchor required.
+- If a bullet needs to be referenceable, add an explicit anchor `[ID]` at the end of the line.
+- Example: `- Use `wgpu` for rendering. [WGPU-USE]`
+
+Non‑Normative Bullets (e.g., within `[EXPLANATORY]` blocks):
+- No anchors.
+
+Explicit Anchors (headers, paragraphs, tables, code blocks):
+- `[ID]` immediately after the element.
+- Header: `## Title [ID]`
+- Paragraph/table/code block: `[ID]` on its own line or at end.
+
+Uniqueness:
+- `ID` MUST be unique within a document.
+- Different documents MAY reuse the same `ID`.
+
+### References
+A reference is any `ID` or `DOC-ID::ID` not in a definition position (not after `:` at bullet start, not inside `[ID]`).
+
+- Same document: `ID`
+- Cross document: `DOC-ID::ID`
+- No backticks required.
+
+Context shortening:
+- `[Using: DOC-ID::*]` at section/file start.
+- After that, `::ID` expands to `DOC-ID::ID`.
+
+### Scope
+- Anchor scope is single document.
+- Global identification uses `DOC-ID` + `ID`.
+- Headers are not stable identifiers. Do not reference them.
 
 ## Notes / Explanatory
 - `[EXPLANATORY]` tags denote rationale OR non-binding meta-information.
