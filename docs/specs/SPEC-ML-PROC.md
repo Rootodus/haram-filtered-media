@@ -3,13 +3,13 @@ ID: SPEC-ML-PROC
 Status: STABLE-FOR-SPIKE  
 Depends on: ARCH-REQ, ARCH-PERF-STRATEGY, STYLE-RUST
 
-## IPC Protocol [Anchor: PROTOCOL-SPIKE]
+## IPC Protocol [PROTOCOL-SPIKE]
 - Transport: TCP Loopback (127.0.0.1) [Windows] or Unix Domain Sockets [Unix].
 - Framing: `[FB_Length: u32]` + `[FlatBuffer_Payload: bytes]` + `[Raw_Pixels: bytes]`.
 - Byte Order: Little-Endian (LE) for length prefixes and numerical data.
 - Backpressure (ACK): The `Runtime` SHALL send a single byte `0x01` back to the `Loader` ONLY AFTER `surface_texture.present()` has completed for the frame.
 
-## ContentBuffer [Anchor: SCHEMA-BUFFER-SPIKE]
+## ContentBuffer [SCHEMA-BUFFER-SPIKE]
 The `ContentBuffer` is composed of a memory-mapped FlatBuffer and a trailing pixel bitstream.
 
 ### FlatBuffer Structure (`schema.fbs`)
@@ -38,12 +38,12 @@ root_type Metadata;
 - Size: `Metadata.width * Metadata.height * 4` bytes.
 - Position: Immediate successor to the FlatBuffer bytes.
 
-## ProcessedBuffer [Anchor: SCHEMA-OUTPUT-SPIKE]
+## ProcessedBuffer [SCHEMA-OUTPUT-SPIKE]
 | Field | Type | Description |
 | --- | --- | --- |
 | `instructions` | List<VisualAction> | Sequential list of render commands. |
 
-### VisualAction [Anchor: WIRE-FORMAT]
+### VisualAction [WIRE-FORMAT]
 The `VisualAction` is a fixed-size structure for predictable parsing.
 
 - `action_type`: `u8`

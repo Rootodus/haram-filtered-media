@@ -121,10 +121,10 @@ Uniqueness:
 - Different documents MAY reuse the same `ID`.
 
 ### References
-A reference is any `ID` or `DOC-ID::ID` not in a definition position (not after `:` at bullet start, not inside `[ID]`).
+A reference is any `ID` or `DOC-ID::ID` not in a definition position (not after `:` at bullet start, not inside `[ID]`) or is wrapped in `[Ref: ID]`.
 
-- Same document: `ID`
-- Cross document: `DOC-ID::ID`
+- Same document: `ID` or `[Ref: ID]`
+- Cross document: `DOC-ID::ID` or `[Ref: DOC-ID::ID]`
 - No backticks required.
 
 Context shortening:

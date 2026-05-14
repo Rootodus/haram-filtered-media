@@ -6,33 +6,33 @@ Depends on: ARCH-REQ, STD-DOC
 ## Data Flow Pipeline
 The system operates as an asynchronous multithreaded pipeline within a single monolithic native process. Data transitions through the following stages.
 
-### 1. Acquisition Stage [Anchor: STAGE-ACQUIRE]
+### 1. Acquisition Stage [STAGE-ACQUIRE]
 - Mechanic: `Loader` (Headless Chrome Sidecar) generates snapshots based on ARCH-REQ::SNAPSHOT-TRIGGER.
 - Transport: Data moves via ARCH-REQ::IPC-FLATBUFFERS over a binary pipe into the native process memory.
 - Output: `RawBuffer` (Length-prefixed FlatBuffer containing DOM/Metadata + Trailing raw pixel bitstream).
 
-### 2. Transformation Stage [Anchor: STAGE-TRANSFORM]
+### 2. Transformation Stage [STAGE-TRANSFORM]
 - Parser: Verifies the memory-mapped FlatBuffer within `RawBuffer` and provides direct accessor roots for the DOM tree and styles.
 - Metadata: Appends viewport-relative element coordinates.
 - Unit Creation: Encapsulates the verified FlatBuffer and pixel slice into a `ContentBuffer`.
-- Memory Strategy [Anchor: DATA-ARC]: The `ContentBuffer` IS wrapped in an `Arc<T>` (Atomic Reference Counted pointer).
+- Memory Strategy [DATA-ARC]: The `ContentBuffer` IS wrapped in an `Arc<T>` (Atomic Reference Counted pointer).
 
-### 3. Extraction Stage [Anchor: STAGE-EXTRACT]
+### 3. Extraction Stage [STAGE-EXTRACT]
 - Selector Application: Applies User-Provided Selectors [Ref: ARCH-REQ::PLUGIN-DECLARATIVE] to the `Arc<ContentBuffer>`.
 - Pruning: Only the selected DOM/Style nodes are retained for feature synthesis.
 - Mapping: Maps pruned data to fixed-width numerical features.
 - Output: `InferenceTensor` (Contiguous memory block).
 
-### 4. Inference Stage [Anchor: STAGE-INFER]
+### 4. Inference Stage [STAGE-INFER]
 - MLProcessor: Ingests `InferenceTensor` into `ONNX Runtime`.
 - Execution: Invokes model via GPU (Primary) or CPU (Fallback) [Ref: ARCH-REQ::GPU-PRIORITY].
-- Output [Anchor: DATA-INSTRUCTIONS]: `ProcessedBuffer` containing:
+- Output [DATA-INSTRUCTIONS]: `ProcessedBuffer` containing:
   - Temporal Instructions: Audio mutes/frequency shifts (Stream Layer).
   - Spatial Instructions: Blur/Pixelate/Blackbox masks (Stream Layer).
   - Textual Instructions: String replacement maps (Content Layer).
 - Constraint: The original `ContentBuffer` remains UNCHANGED and read-only.
 
-### 5. Finalization Stage [Anchor: STAGE-RENDER]
+### 5. Finalization Stage [STAGE-RENDER]
 - Composition: `Renderer` (wgpu) receives the original `Arc<ContentBuffer>` AND the `ProcessedBuffer`.
 - Stream Layer: Applies coordinate-based pixel masks AND temporal audio segments.
 - Content Layer: Applies text replacements AND performs required DOM reflow.
@@ -40,13 +40,13 @@ The system operates as an asynchronous multithreaded pipeline within a single mo
 
 ## Memory Management Strategy
 
-### Zero-Copy Pointer Passing [Anchor: MEM-ZEROCOPY]
+### Zero-Copy Pointer Passing [MEM-ZEROCOPY]
 - Data MUST NOT be duplicated between pipeline stages.
 - STAGE-TRANSFORM owns the allocation of the `ContentBuffer`.
 - Stages (EXTRACT, INFER, RENDER) all reference the same memory address via `Arc`.
 - Logic: Eliminates the serialization cost observed in extensions.
 
-### Admission Control [Anchor: MEM-ADMISSION]
+### Admission Control [MEM-ADMISSION]
 - The pipeline utilizes a Bounded Task Queue with a capacity of 1 between STAGE-TRANSFORM and STAGE-EXTRACT.
 - Overwrite Policy: If the `MLProcessor` is busy, the pending `Arc<ContentBuffer>` IS dropped AND replaced by the newest arrival.
 

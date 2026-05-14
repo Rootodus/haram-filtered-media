@@ -145,7 +145,7 @@ Rejected alternatives:
 - Apache Arrow (rejected due to columnar-to-row overhead for single-page inference).
 - Cap'n Proto (rejected due to inferior JavaScript ecosystem support for the Loader).
 
-## Decision: JS Execution Boundary [Anchor: DEC-JS-BOUNDARY]
+## Decision: JS Execution Boundary [DEC-JS-BOUNDARY]
 Statement: JS execution IS PERMITTED within the `Loader` [Headless Chrome] sidecar ONLY. JS execution IS PROHIBITED within the native `Runtime` (MLProcessor/Renderer).  
 Evidence: `ARCH-REQ::DYN-WEB-JS`.
 
@@ -156,7 +156,7 @@ Observed signals:
 Relationship mapping:
 - Separation of "Content Logic" (JS) from "Filtering Logic" (Rust) aligns with `PIPE-MONOLITH` simplicity.
 
-## Decision: Hard-Synchronous Stop-and-Wait [Anchor: DEC-HARD-SYNC-PIPE]
+## Decision: Hard-Synchronous Stop-and-Wait [DEC-HARD-SYNC-PIPE]
 Statement: The pipeline SHALL operate as a synchronous stop-and-wait system. The `Loader` MUST NOT send a new frame until the `Renderer` signals completion via an explicit ACK (0x01).  
 Evidence: `EXP-SPIKE-03`.
 
