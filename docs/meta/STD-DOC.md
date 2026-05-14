@@ -105,31 +105,30 @@ Definition Bullets (FACTS, DECISIONS, GAPS, or any block marked `[DEFINITIONS]`)
 
 Ordinary Bullets (other normative lists, e.g., implementation steps):
 - No implicit anchor required.
-- If a bullet needs to be referenceable, add an explicit anchor `[ID]` at the end of the line.
-- Example: ``- Use `wgpu` for rendering. [WGPU-USE]``
+- If a bullet needs to be referenceable, add an explicit anchor `ID` at the end of the line (no brackets).
+- Example: `- Use wgpu for rendering. WGPU-USE`
 
 Non‑Normative Bullets (e.g., within `[EXPLANATORY]` blocks):
 - No anchors.
 
 Explicit Anchors (headers, paragraphs, tables, code blocks):
-- `[ID]` immediately after the element.
-- Header: `## Title [ID]`
-- Paragraph/table/code block: `[ID]` on its own line or at end.
+- Header: `## Title - ID` (space‑hyphen‑space)
+- Paragraph/table/code block: `ID` alone on its own line immediately after the element.
+- Example: after a paragraph, a line containing `PROTOCOL-STABLE`
 
 Uniqueness:
 - `ID` MUST be unique within a document.
 - Different documents MAY reuse the same `ID`.
 
 ### References
-A reference is any `ID` or `DOC-ID::ID` not in a definition position (not after `:` at bullet start, not inside `[ID]`) or is wrapped in `[Ref: ID]`.
+A reference is `@ID` or `@DOC-ID::ID` anywhere in prose (including asides, parentheses, or header lines). No brackets.
 
-- Same document: `ID` or `[Ref: ID]`
-- Cross document: `DOC-ID::ID` or `[Ref: DOC-ID::ID]`
-- No backticks required.
+- Same document: `@ID`
+- Cross document: `@DOC-ID::ID`
 
 Context shortening:
 - `[Using: DOC-ID::*]` at section/file start.
-- After that, `ID` expands to `DOC-ID::ID`.
+- After that, `@ID` expands to `@DOC-ID::ID`.
 
 ### Scope
 - Anchor scope is single document.
