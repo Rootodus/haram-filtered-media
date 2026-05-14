@@ -129,7 +129,7 @@ A reference is any `ID` or `DOC-ID::ID` not in a definition position (not after 
 
 Context shortening:
 - `[Using: DOC-ID::*]` at section/file start.
-- After that, `::ID` expands to `DOC-ID::ID`.
+- After that, `ID` expands to `DOC-ID::ID`.
 
 ### Scope
 - Anchor scope is single document.
