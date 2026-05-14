@@ -1,0 +1,17 @@
+struct Vec4 { x: float; y: float; w: float; h: float; }
+
+table DomNode {
+    id: uint32;
+    tag: string;
+    text: string;
+    rect: Vec4;
+}
+
+table Metadata {
+    timestamp: uint64;
+    width: uint32;
+    height: uint32;
+    nodes: [DomNode];
+}
+
+root_type Metadata;
