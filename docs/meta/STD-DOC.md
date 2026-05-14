@@ -106,7 +106,7 @@ Definition Bullets (FACTS, DECISIONS, GAPS, or any block marked `[DEFINITIONS]`)
 Ordinary Bullets (other normative lists, e.g., implementation steps):
 - No implicit anchor required.
 - If a bullet needs to be referenceable, add an explicit anchor `[ID]` at the end of the line.
-- Example: `- Use `wgpu` for rendering. [WGPU-USE]`
+- Example: ``- Use `wgpu` for rendering. [WGPU-USE]``
 
 Non‑Normative Bullets (e.g., within `[EXPLANATORY]` blocks):
 - No anchors.
