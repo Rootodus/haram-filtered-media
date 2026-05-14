@@ -49,9 +49,13 @@ Depends on: NONE
 - Contract syntax: Preconditions AND postconditions MUST be written as boolean predicates using System Entities, System States, OR Variables.
 
 ## Banned Words [PROHIBITED to use]
+- `philosophy`: BANNED
+- `philosophical`: BANNED
 - `determinism`: BANNED
 - `deterministic`: BANNED
 - `magic`: BANNED
+- `holy`: BANNED
+- `god`: BANNED
 
 ## Metadata & Traceability
 - Placement: Metadata MUST be placed at the top of the document immediately following the H1 header.
