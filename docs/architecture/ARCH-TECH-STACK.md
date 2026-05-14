@@ -8,8 +8,8 @@ Depends on: ARCH-REQ, STD-DOC
 ### Loader and IPC [Ref: DYN-SNAPSHOT, IPC-MSGPACK]
 - `chromiumoxide`: CDP integration and Headless Chrome orchestration.
 - `tokio`: Async runtime for I/O-bound acquisition tasks.
-- `flatbuffers` [NEW]: Zero-copy serialization library for structural data access.
-- `flatc` [NEW]: Schema compiler for generating Rust/JS data access code.
+- `flatbuffers`: Zero-copy serialization library for structural data access.
+- `flatc`: Schema compiler for generating Rust/JS data access code.
 
 ### Processing Pipeline [Ref: PIPE-MONOLITH, UNIT-BUFFER]
 - `crossbeam-channel`: High-performance multi-threaded data passing.
