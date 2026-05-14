@@ -14,4 +14,4 @@ Each architecture document MUST categorize information into exactly three blocks
 - They MUST be relegated to the NOTES section to prevent implementation ambiguity.
 
 ## Performance Alignment
-Every DECISION must explicitly support R1 (Native Performance) or R8 (Simple Implementation).
+Every DECISION must explicitly support Native Performance or Simple Implementation.

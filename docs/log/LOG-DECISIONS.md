@@ -125,7 +125,7 @@ Observed signals:
 - MessagePack requires O(N) traversal to identify field boundaries.
 
 Relationship mapping:
-- Elimination of sequential parsing aligns with 16.6ms frame budget (R1).
+- Elimination of sequential parsing aligns with 16.6 ms frame budget (Native Performance).
 
 Rejected alternatives:
 - Optimizing MessagePack via string-borrowing (proven statistically insufficient).
@@ -161,7 +161,7 @@ Statement: The pipeline SHALL operate as a synchronous stop-and-wait system. The
 Evidence: `EXP-SPIKE-03`.
 
 Observed signals:
-- Async queuing resulted in 100ms+ latency drift (out-of-sync video).
+- Async queuing resulted in 100 ms+ latency drift (out-of-sync video).
 - Hard-sync ACK stabilized latency to 1-2 frame intervals.
 - Matches `PresentMode::Fifo` (V-Sync) hardware behavior.
 
