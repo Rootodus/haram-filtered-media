@@ -17,7 +17,7 @@ Depends on: @STD-DOC
 - UI-SINGLE-TAB: The interface IS a minimal single-tab shell containing an address bar, navigation (Back/Forward), and reload functionality ONLY.
 - NET-RESTRICT: Network interaction IS limited to `HTTP` `GET`. `POST`, `PUT`, and `DELETE` are PROHIBITED.
 - DYN-SNAPSHOT: Dynamic content MUST be resolved into a static snapshot via an external `Loader` (Headless Chrome).
-- SNAPSHOT-TRIGGER: The `Loader` SHALL emit a snapshot on: 1. Navigation complete, 2. DOM mutation idle for > 200ms, or 3. User interaction event.
+- SNAPSHOT-TRIGGER: The `Loader` SHALL emit a snapshot on: 1. Navigation complete, 2. DOM mutation idle for > 200 ms, or 3. User interaction event.
 - IPC-FLATBUFFERS: Data transition between the `Loader` and the native runtime SHALL use `FlatBuffers` over a binary pipe (Unix Domain Sockets or Named Pipes) to enable zero-decode random access.
 - PIPE-MONOLITH: The core pipeline (Ingest -> Parse -> Infer -> Render) SHALL execute within a single monolithic native process using Multithreading for stage isolation to enable zero-copy data passing.
 - MODE-SUPPORT: The system SHALL support two `ExecutionMode` values: `latency` AND `throughput`.
