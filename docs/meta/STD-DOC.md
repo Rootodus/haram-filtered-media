@@ -97,30 +97,25 @@ Depends on: NONE
 ## Anchor & Reference System
 
 ### Anchor Definitions
-Definition Bullets (FACTS, DECISIONS, GAPS, or any block marked `[DEFINITIONS]`):
-- EVERY bullet MUST begin with an implicit anchor `ANCHOR-ID:` at line start.
-- `ANCHOR-ID` ALWAYS in `UPPER-KEBAB-CASE` format.
-- Example: `ENV-EXT-LATENCY: Text.`
+An anchor is a stable identifier that can be referenced elsewhere. Anchors are placed directly in the document content without brackets.
 
-Ordinary Bullets (other normative lists, e.g., implementation steps):
-- No implicit anchor required.
-- If a bullet needs to be referenceable, add an explicit `ANCHOR-ID` at the end of the line (no brackets).
-- Example: `- Use wgpu for rendering. WGPU-USE`
+Placement rules:
 
-Non‑Normative Bullets (e.g., within `[EXPLANATORY]` blocks):
-- No anchors.
+| Element type | Anchor placement | Example |
+| --- | --- | --- |
+| Definition bullets (FACTS, DECISIONS, GAPS, or any block marked `[DEFINITIONS]`) | At line start, immediately before the bullet text, followed by a colon and a space. | `ENV-EXT-LATENCY: ML execution in browser extensions...` |
+| Ordinary normative bullets (implementation steps, constraints, requirements) | At line end, after the bullet text, separated by a space. | `- Use wgpu for rendering. WGPU-USE` |
+| Non‑normative bullets (within `[EXPLANATORY]` blocks) | No anchor. |  |
+| Headers | After the header title, with ` - ` separator. | `## Pipeline Layout - RENDER-PIPELINE` |
+| Paragraphs, tables, code blocks | On a separate line immediately after the element. | (paragraph text) then next line: `ANCHOR-ID` |
 
-Document Metadata ID:
-- The `DOC-ID` value in the metadata block SHALL be treated as an implicit anchor for the document.
-
-Explicit Anchors (headers, paragraphs, tables, code blocks):
-- Header: `## Title - ANCHOR-ID` (space‑hyphen‑space)
-- Paragraph/table/code block: `ANCHOR-ID` alone on its own line immediately after the element.
-- Example: after a paragraph, a line containing the `ANCHOR-ID`
-
-Uniqueness:
+Format rules:
+- `ANCHOR-ID` MUST be in `UPPER-KEBAB-CASE`.
 - `ANCHOR-ID` MUST be unique within a document.
 - Different documents MAY reuse the same `ANCHOR-ID`.
+
+Document metadata:
+- The `DOC-ID` value in the metadata block SHALL be treated as an anchor for the document.
 
 ### References
 A reference is `@DOC-ID` OR `@ANCHOR-ID` OR `@DOC-ID::ANCHOR-ID` anywhere in prose (including asides, parentheses, or header lines). No brackets.
