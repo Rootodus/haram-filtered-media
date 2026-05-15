@@ -13,7 +13,7 @@ Depends on: @ARCH-REQ, @SPEC-ML-PROC, @STYLE-RUST
 - Responsibility: The script walks the DOM, generates a `FlatBuffer` (Metadata + Nodes), captures a `Page.captureScreenshot` in raw `RGBA`, and writes the 3-part payload to the IPC socket.
 
 ## 3. IPC Handshake - FETCH-HANDSHAKE
-- The `Fetcher` SHALL implement the client-side of the @SPEC-ML-PROC::PROTOCOL-STABLE.
+- The `Fetcher` SHALL implement the client-side of the @SPEC-ML-PROC::PROTOCOL-SPIKE.
 - Sequence:
   1. Write `[Meta_FB_Length: u32]`.
   2. Write `[Meta_FB_Bytes]`.

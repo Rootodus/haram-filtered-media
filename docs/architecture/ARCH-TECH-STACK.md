@@ -5,18 +5,18 @@ Depends on: @ARCH-REQ, @STD-DOC
 
 ## Component Mapping [Using: ARCH-REQ::*]
 
-### Loader and IPC - @DYN-SNAPSHOT, @IPC-MSGPACK
+### Loader and IPC - @DYN-SNAPSHOT, @IPC-FLATBUFFERS
 - `chromiumoxide`: CDP integration and Headless Chrome orchestration.
 - `tokio`: Async runtime for I/O-bound acquisition tasks.
 - `flatbuffers`: Zero-copy serialization library for structural data access.
 - `flatc`: Schema compiler for generating Rust/JS data access code.
 
-### Processing Pipeline - @PIPE-MONOLITH, @UNIT-BUFFER
+### Processing Pipeline - @PIPE-MONOLITH, @UNIT-CONTENTBUFFER
 - `crossbeam-channel`: High-performance multi-threaded data passing.
 - `rayon`: Work-stealing thread pool for compute-bound parsing and inference.
 - `Arc<T>`: Standard library atomic reference counting for zero-copy memory sharing.
 
-### Parsing and Mapping - @UNIT-BUFFER, @MAPPING
+### Parsing and Mapping - @UNIT-CONTENTBUFFER, @MAPPING
 - `scraper`: HTML parsing and CSS selector execution.
 - `lightningcss`: High-performance CSS lexing and computed style resolution.
 

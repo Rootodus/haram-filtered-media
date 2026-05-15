@@ -116,7 +116,7 @@ Document Metadata ID:
 Explicit Anchors (headers, paragraphs, tables, code blocks):
 - Header: `## Title - ANCHOR-ID` (space‑hyphen‑space)
 - Paragraph/table/code block: `ANCHOR-ID` alone on its own line immediately after the element.
-- Example: after a paragraph, a line containing `PROTOCOL-STABLE`
+- Example: after a paragraph, a line containing the `ANCHOR-ID`
 
 Uniqueness:
 - `ANCHOR-ID` MUST be unique within a document.

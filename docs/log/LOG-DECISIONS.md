@@ -103,7 +103,7 @@ Rejected alternatives:
 
 ## Decision: Documentation format
 Statement: Standardize on atomic key/value formatting AND STE logic.  
-Evidence: @ARCH-SYSTEM-MAP structural evaluation.
+Evidence: @ARCH-SYS-MAP structural evaluation.
 
 Observed signals:
 - Free-form blocks increase parsing ambiguity for AI models.
@@ -145,8 +145,8 @@ Rejected alternatives:
 - Apache Arrow (rejected due to columnar-to-row overhead for single-page inference).
 - Cap'n Proto (rejected due to inferior JavaScript ecosystem support for the Loader).
 
-## Decision: JS Execution Boundary [DEC-JS-BOUNDARY]
-Statement: JS execution IS PERMITTED within the `Loader` [Headless Chrome] sidecar ONLY. JS execution IS PROHIBITED within the native `Runtime` (MLProcessor/Renderer).  
+## Decision: JS Execution Boundary - DEC-JS-BOUNDARY
+Statement: JS execution IS PERMITTED within the `Loader` (Headless Chrome) sidecar ONLY. JS execution IS PROHIBITED within the native `Runtime` (MLProcessor/Renderer).  
 Evidence: @ARCH-REQ::DYN-WEB-JS.
 
 Observed signals:
@@ -156,7 +156,7 @@ Observed signals:
 Relationship mapping:
 - Separation of "Content Logic" (JS) from "Filtering Logic" (Rust) aligns with PIPE-MONOLITH simplicity.
 
-## Decision: Hard-Synchronous Stop-and-Wait [DEC-HARD-SYNC-PIPE]
+## Decision: Hard-Synchronous Stop-and-Wait - DEC-HARD-SYNC-PIPE
 Statement: The pipeline SHALL operate as a synchronous stop-and-wait system. The `Loader` MUST NOT send a new frame until the `Renderer` signals completion via an explicit ACK (0x01).  
 Evidence: @EXP-SPIKE-03-VISUAL-WGPU.
 
