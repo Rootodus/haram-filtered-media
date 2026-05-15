@@ -26,3 +26,6 @@ Each experiment file MUST follow the "HEAC" pattern:
 
 ## Validation Rule
 An experiment is VALID only if it provides a clear signal for a DECISION or a GAP resolution.
+
+## Notes / Explanatory
+- [EXPLANATORY] The following experiments were written before this document: @EXP-SPIKE-01-IPC-PROTO, @EXP-SPIKE-02-PIXEL-PIPE, @EXP-SPIKE-03-VISUAL-WGPU, @EXP-SPIKE-04-PRESSURE-TEST, @EXP-SPIKE-05-DOM-STRESS
