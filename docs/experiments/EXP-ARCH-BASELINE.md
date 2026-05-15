@@ -1,7 +1,7 @@
 # Experiment: Foundational Pivot (Simulation vs. Native)
 ID: EXP-ARCH-BASELINE  
 Status: STABLE  
-Depends on: STD-DOC, EXP-RULES
+Depends on: @STD-DOC, @EXP-RULES
 
 ## Hypothesis
 Browser extensions and localhost servers introduce overhead incompatible with real-time ML performance requirements. A formal simulation/harness model introduces excessive abstraction debt; a direct "Spike-First" native implementation is required to validate Native Performance.
