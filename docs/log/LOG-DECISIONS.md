@@ -1,11 +1,11 @@
 # Decision Log
 ID: LOG-DECISIONS  
 Status: STABLE  
-Depends on: STD-DOC, EXP-ARCH-BASELINE
+Depends on: @STD-DOC, @EXP-ARCH-BASELINE
 
 ## Decision: Read-only GET mode
 Statement: The system boundary allows GET requests ONLY.  
-Evidence: EXP-ARCH-BASELINE.
+Evidence: @EXP-ARCH-BASELINE.
 
 Observed signals:
 - Lower variance in request-side state in Configuration A.
@@ -19,13 +19,13 @@ Rejected alternatives:
 - Allowing mixed HTTP methods with runtime filtering (higher observed divergence).
 
 ## [SUPERSEDED] Decision: Disable JS execution
-- Status: SUPERSEDED by DEC-JS-BOUNDARY.
+- Status: SUPERSEDED by @DEC-JS-BOUNDARY.
 - Reason: Conflicted with the requirement to support dynamic web content resolution via Headless Chrome.
-- Reference: ARCH-REQ::DYN-WEB-JS.
+- Reference: @ARCH-REQ::DYN-WEB-JS.
 
 ```historical_logic
 Statement: JS execution is disabled in the content loading environment.  
-Evidence: EXP-ARCH-BASELINE.
+Evidence: @EXP-ARCH-BASELINE.
 
 Observed signals:
 - Client-side execution introduces variability in rendered input representation.
@@ -40,7 +40,7 @@ Rejected alternatives:
 
 ## Decision: Pipeline architecture
 Statement: System uses a staged (does NOT mean separate processes) pipeline architecture.  
-Evidence: EXP-ARCH-BASELINE.
+Evidence: @EXP-ARCH-BASELINE.
 
 Observed signals:
 - Configuration A shows higher scheduling overhead.
@@ -55,7 +55,7 @@ Rejected alternatives:
 
 ## Decision: Stateless MLProcessor
 Statement: `MLProcessor` MUST NOT maintain persistent state between invocations.  
-Evidence: EXP-ARCH-BASELINE.
+Evidence: @EXP-ARCH-BASELINE.
 
 Observed signals:
 - Stateful retention correlates with higher run-to-run variance.
@@ -68,13 +68,13 @@ Rejected alternatives:
 - Session-based state model (higher cross-run coupling observed).
 
 ## [SUPERSEDED] Decision: Async communication
-- Status: SUPERSEDED by DEC-HARD-SYNC-PIPE.
-- Reason: Asynchronous decoupling caused unmanaged latency drift in Spike-02 and Spike-03.
-- References: EXP-SPIKE-02-PIXEL-PIPE, EXP-SPIKE-03-VISUAL-WGPU.
+- Status: SUPERSEDED by @DEC-HARD-SYNC-PIPE.
+- Reason: Asynchronous decoupling caused unmanaged latency drift in @EXP-SPIKE-02-PIXEL-PIPE and @EXP-SPIKE-03-VISUAL-WGPU.
+- References: @EXP-SPIKE-02-PIXEL-PIPE, @EXP-SPIKE-03-VISUAL-WGPU.
 
 ```historical_logic
 Statement: Stages communicate via asynchronous bounded channels.  
-Evidence: EXP-ARCH-BASELINE.
+Evidence: @EXP-ARCH-BASELINE.
 
 Observed signals:
 - Synchronous coupling increases upstream idle time.
@@ -89,7 +89,7 @@ Rejected alternatives:
 
 ## Decision: Buffer sharing
 Statement: Buffers use shared references where safe.  
-Evidence: EXP-ARCH-BASELINE.
+Evidence: @EXP-ARCH-BASELINE.
 
 Observed signals:
 - Copy-based handling increases memory usage with payload size.
@@ -103,7 +103,7 @@ Rejected alternatives:
 
 ## Decision: Documentation format
 Statement: Standardize on atomic key/value formatting AND STE logic.  
-Evidence: ARCH-SYSTEM-MAP structural evaluation.
+Evidence: @ARCH-SYSTEM-MAP structural evaluation.
 
 Observed signals:
 - Free-form blocks increase parsing ambiguity for AI models.
@@ -117,7 +117,7 @@ Rejected alternatives:
 
 ## Decision: Reject MessagePack for Structural Data
 Statement: The system SHALL NOT use MessagePack for DOM or metadata serialization.  
-Evidence: Spike-05 benchmarking.
+Evidence: @EXP-SPIKE-05-DOM-STRESS benchmarking.
 
 Observed signals:
 - 5,000-node DOM deserialization consumed 11-14 ms baseline.
@@ -132,7 +132,7 @@ Rejected alternatives:
 
 ## Decision: Adopt FlatBuffers for IPC
 Statement: The system SHALL use FlatBuffers for all hierarchical and metadata serialization.  
-Evidence: Spike-05 failure analysis.
+Evidence: @EXP-SPIKE-05-DOM-STRESS failure analysis.
 
 Observed signals:
 - MessagePack parsing overhead saturated CPU cycles required for GPU upload.
@@ -147,7 +147,7 @@ Rejected alternatives:
 
 ## Decision: JS Execution Boundary [DEC-JS-BOUNDARY]
 Statement: JS execution IS PERMITTED within the `Loader` [Headless Chrome] sidecar ONLY. JS execution IS PROHIBITED within the native `Runtime` (MLProcessor/Renderer).  
-Evidence: ARCH-REQ::DYN-WEB-JS.
+Evidence: @ARCH-REQ::DYN-WEB-JS.
 
 Observed signals:
 - Total JS disablement rendered modern SPAs (Single Page Apps) non-functional.
@@ -158,7 +158,7 @@ Relationship mapping:
 
 ## Decision: Hard-Synchronous Stop-and-Wait [DEC-HARD-SYNC-PIPE]
 Statement: The pipeline SHALL operate as a synchronous stop-and-wait system. The `Loader` MUST NOT send a new frame until the `Renderer` signals completion via an explicit ACK (0x01).  
-Evidence: EXP-SPIKE-03-VISUAL-WGPU.
+Evidence: @EXP-SPIKE-03-VISUAL-WGPU.
 
 Observed signals:
 - Async queuing resulted in 100 ms+ latency drift (out-of-sync video).

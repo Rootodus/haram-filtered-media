@@ -16,7 +16,6 @@ Depends on: NONE
 | Variables / Fields | Backticks + snake_case | `queue_size`, `timestamp_ms` |
 | Constants | Backticks + SCREAMING_SNAKE_CASE | `MAX_QUEUE_SIZE` |
 | File Paths | Backticks + native syntax | `docs/architecture.md`, `src/main.rs` |
-| Concept Properties | lowercase | status, mode, type, segment |
 | Document Keys | Sentence case | Status, Project, Depends on, Input, Output |
 
 - Initialism/acronym exception: Initialisms AND acronyms (ID, URL, ML, GPU, JS, HTTP) MUST remain ALL CAPS regardless of category.
@@ -30,7 +29,7 @@ Depends on: NONE
 ## Structural Geometry
 - NO emphasis: NO bold, NO italics. Casing is the ONLY emphasis.
 - Fenced blocks: Use backticks for all technical snippets, variables, types, AND file paths.
-- Bracketing: Use square brackets [] primarily for References `[Re: ID]` AND Metadata tags.
+- Bracketing: Use square brackets [] primarily for Metadata tags.
 - Parentheses: Use parentheses () for asides, context, and logical grouping.
 - Horizontal rules: Horizontal rules (---) are PROHIBITED EXCEPT as Markdown table delimiters.
 - List markers: Unordered lists MUST use hyphen (-) markers. Ordered lists MUST use number AND dot (1.) markers.
@@ -99,40 +98,43 @@ Depends on: NONE
 
 ### Anchor Definitions
 Definition Bullets (FACTS, DECISIONS, GAPS, or any block marked `[DEFINITIONS]`):
-- EVERY bullet MUST begin with an implicit anchor `ID:` at line start.
-- `ID` ALWAYS in `UPPER-KEBAB-CASE` format.
+- EVERY bullet MUST begin with an implicit anchor `ANCHOR-ID:` at line start.
+- `ANCHOR-ID` ALWAYS in `UPPER-KEBAB-CASE` format.
 - Example: `ENV-EXT-LATENCY: Text.`
 
 Ordinary Bullets (other normative lists, e.g., implementation steps):
 - No implicit anchor required.
-- If a bullet needs to be referenceable, add an explicit anchor `ID` at the end of the line (no brackets).
+- If a bullet needs to be referenceable, add an explicit `ANCHOR-ID` at the end of the line (no brackets).
 - Example: `- Use wgpu for rendering. WGPU-USE`
 
 Non‑Normative Bullets (e.g., within `[EXPLANATORY]` blocks):
 - No anchors.
 
+Document Metadata ID:
+- The `DOC-ID` value in the metadata block SHALL be treated as an implicit anchor for the document.
+
 Explicit Anchors (headers, paragraphs, tables, code blocks):
-- Header: `## Title - ID` (space‑hyphen‑space)
-- Paragraph/table/code block: `ID` alone on its own line immediately after the element.
+- Header: `## Title - ANCHOR-ID` (space‑hyphen‑space)
+- Paragraph/table/code block: `ANCHOR-ID` alone on its own line immediately after the element.
 - Example: after a paragraph, a line containing `PROTOCOL-STABLE`
 
 Uniqueness:
-- `ID` MUST be unique within a document.
-- Different documents MAY reuse the same `ID`.
+- `ANCHOR-ID` MUST be unique within a document.
+- Different documents MAY reuse the same `ANCHOR-ID`.
 
 ### References
-A reference is `@ID` or `@DOC-ID::ID` anywhere in prose (including asides, parentheses, or header lines). No brackets.
+A reference is `@DOC-ID` OR `@ANCHOR-ID` OR `@DOC-ID::ANCHOR-ID` anywhere in prose (including asides, parentheses, or header lines). No brackets.
 
-- Same document: `@ID`
-- Cross document: `@DOC-ID::ID`
+- Same document: `@ANCHOR-ID`
+- Cross document: `@DOC-ID::ANCHOR-ID`
 
 Context shortening:
 - `[Using: DOC-ID::*]` at section/file start.
-- After that, `@ID` expands to `@DOC-ID::ID`.
+- After that, `@ANCHOR-ID` expands to `@DOC-ID::ANCHOR-ID`.
 
 ### Scope
 - Anchor scope is single document.
-- Global identification uses `DOC-ID` + `ID`.
+- Global identification uses `DOC-ID` + `ANCHOR-ID`.
 - Headers are not stable identifiers. Do not reference them.
 
 ## Notes / Explanatory

@@ -1,7 +1,7 @@
 # ARCH Terminology (Core Vocabulary)
 ID: ARCH-TERMINOLOGY  
 Status: STABLE  
-Depends on: STD-DOC
+Depends on: @STD-DOC
 
 ## Purpose
 Defines shared structural meaning of terms used across ARCH and SPEC documents.

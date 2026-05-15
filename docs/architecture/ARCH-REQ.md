@@ -1,7 +1,7 @@
 # Requirements
 ID: ARCH-REQ  
 Status: STABLE  
-Depends on: STD-DOC
+Depends on: @STD-DOC
 
 ## Facts (Hard Constraints & Observations)
 - ENV-EXT-LATENCY: ML execution in browser extensions introduces unacceptable overhead due to IPC serialization AND main-thread contention.
@@ -61,7 +61,7 @@ Depends on: STD-DOC
 - ZERO-DECODE-CONTRACT: The IPC layer MUST NOT perform sequential scanning of the DOM tree. Data access MUST be performed via pointer offsets into memory-mapped FlatBuffer regions.
 
 ## Notes / Explanatory
-- [EXPLANATORY] `FlatBuffers` was adopted as the primary IPC format to resolve the O(N) sequential scanning bottleneck observed with `MessagePack` in Spike-05, which exceeded the 16.6 ms frame budget for 5,000 nodes.
+- [EXPLANATORY] `FlatBuffers` was adopted as the primary IPC format to resolve the O(N) sequential scanning bottleneck observed with `MessagePack` in @EXP-SPIKE-05-DOM-STRESS, which exceeded the 16.6 ms frame budget for 5,000 nodes.
 - [EXPLANATORY] `Raw Pixels` remain a trailing unencoded bitstream following the `FlatBuffer` metadata to avoid the overhead of structural wrapping for bulk binary data.
 - [EXPLANATORY] The `Single-Tab` constraint simplifies memory management and ensures maximum CPU cache locality for the active task.
 - [EXPLANATORY] Async is utilized ONLY for I/O-bound tasks (Fetcher/Networking); dedicated thread pools are utilized for compute-bound tasks (Inference/Parsing) to prevent executor starvation.

@@ -1,5 +1,5 @@
 # Experiment: Raw Pixel Pipe Throughput
-ID: EXP-SPIKE-02-PIXEL-PIPE (Spike-2)  
+ID: EXP-SPIKE-02-PIXEL-PIPE  
 Status: SUCCESS
 
 ## Hypothesis

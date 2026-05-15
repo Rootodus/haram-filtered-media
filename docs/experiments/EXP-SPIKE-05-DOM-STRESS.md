@@ -1,5 +1,5 @@
 # Experiment: DOM Stress Test (MessagePack)
-ID: EXP-SPIKE-05-DOM-STRESS (Spike-5)  
+ID: EXP-SPIKE-05-DOM-STRESS  
 Status: FAILED
 
 ## Hypothesis

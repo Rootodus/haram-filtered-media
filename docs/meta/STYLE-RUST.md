@@ -1,7 +1,7 @@
 # Rust Coding Style [NORMATIVE]
 ID: STYLE-RUST  
 Status: DRAFT  
-Depends on: STD-DOC, ARCH-REQ
+Depends on: @STD-DOC, @ARCH-REQ
 
 ## Unsafe
 - `unsafe` is PROHIBITED unless a benchmark proves a >15% performance gain.

@@ -1,15 +1,15 @@
 # MLProcessor Data Contract
 ID: SPEC-ML-PROC  
 Status: STABLE-FOR-SPIKE  
-Depends on: ARCH-REQ, ARCH-PERF-STRATEGY, STYLE-RUST
+Depends on: @ARCH-REQ, @ARCH-PERF-STRATEGY, @STYLE-RUST
 
-## IPC Protocol [PROTOCOL-SPIKE]
-- Transport: TCP Loopback (127.0.0.1) [Windows] or Unix Domain Sockets [Unix].
+## IPC Protocol - PROTOCOL-SPIKE
+- Transport: TCP Loopback (127.0.0.1) (Windows) or Unix Domain Sockets (Unix).
 - Framing: `[FB_Length: u32]` + `[FlatBuffer_Payload: bytes]` + `[Raw_Pixels: bytes]`.
 - Byte Order: Little-Endian (LE) for length prefixes and numerical data.
 - Backpressure (ACK): The `Runtime` SHALL send a single byte `0x01` back to the `Loader` ONLY AFTER `surface_texture.present()` has completed for the frame.
 
-## ContentBuffer [SCHEMA-BUFFER-SPIKE]
+## ContentBuffer - SCHEMA-BUFFER-SPIKE
 The `ContentBuffer` is composed of a memory-mapped FlatBuffer and a trailing pixel bitstream.
 
 ### FlatBuffer Structure (`schema.fbs`)
@@ -38,12 +38,12 @@ root_type Metadata;
 - Size: `Metadata.width * Metadata.height * 4` bytes.
 - Position: Immediate successor to the FlatBuffer bytes.
 
-## ProcessedBuffer [SCHEMA-OUTPUT-SPIKE]
+## ProcessedBuffer - SCHEMA-OUTPUT-SPIKE
 | Field | Type | Description |
 | --- | --- | --- |
 | `instructions` | List<VisualAction> | Sequential list of render commands. |
 
-### VisualAction [WIRE-FORMAT]
+### VisualAction - WIRE-FORMAT
 The `VisualAction` is a fixed-size structure for predictable parsing.
 
 - `action_type`: `u8`
@@ -55,7 +55,7 @@ The `VisualAction` is a fixed-size structure for predictable parsing.
   - Float Format: IEEE 754 Single Precision.
 
 ## Invariants
-- ZERO-DECODE-DOM: The system MUST NOT use MessagePack or JSON for DOM data. Access to nodes MUST be performed via FlatBuffer pointer offsets to eliminate the 11ms scanning bottleneck observed in Spike-05.
+- ZERO-DECODE-DOM: The system MUST NOT use MessagePack or JSON for DOM data. Access to nodes MUST be performed via FlatBuffer pointer offsets to eliminate the 11ms scanning bottleneck observed in @EXP-SPIKE-05-DOM-STRESS.
 - FB-PIXEL-SPLIT: The FlatBuffer payload contains structural metadata only. Raw pixel data MUST remain as a trailing bitstream to prevent FlatBuffer builder overhead for large binary blobs.
 - LIFETIME-STRICT: The `Runtime` SHALL treat the FlatBuffer as a read-only memory map. Strings (`tag`, `text`) are accessed as `&str` directly from the IPC buffer.
 

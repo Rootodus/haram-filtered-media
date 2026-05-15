@@ -1,5 +1,5 @@
 # Experiment: Mock Inference Pressure Test
-ID: EXP-SPIKE-04-PRESSURE-TEST (Spike-4)  
+ID: EXP-SPIKE-04-PRESSURE-TEST  
 Status: SUCCESS
 
 ## Hypothesis

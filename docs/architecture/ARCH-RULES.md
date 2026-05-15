@@ -1,7 +1,7 @@
 # Architecture Governance Rules [NORMATIVE]
 ID: ARCH-RULES  
 Status: STABLE  
-Depends on: STD-DOC
+Depends on: @STD-DOC
 
 ## FDG Model Enforcement
 Each architecture document MUST categorize information into exactly three blocks:

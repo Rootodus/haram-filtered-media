@@ -1,7 +1,7 @@
 # Decision Logging Rules [NORMATIVE]
 ID: LOG-RULES  
 Status: STABLE  
-Depends on: STD-DOC, EXP-RULES
+Depends on: @STD-DOC, @EXP-RULES
 
 ## Evidence Requirement
 - No DECISION can be recorded as STABLE without a reference to an `EXP-SPIKE` or a `FACT`.

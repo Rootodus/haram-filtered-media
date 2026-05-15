@@ -1,7 +1,7 @@
 # Specification Rules [NORMATIVE]
 ID: SPEC-RULES  
 Status: STABLE  
-Depends on: STD-DOC
+Depends on: @STD-DOC
 
 ## Implementation Readiness
 - A SPEC is valid ONLY IF an AI can generate a functional Rust module from it without asking for clarification.

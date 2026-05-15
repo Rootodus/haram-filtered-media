@@ -2,7 +2,7 @@
 Project: MLFilteredBrowser (MLFB)  
 ID: DOCS-README  
 Status: STABLE  
-Depends on: STD-DOC
+Depends on: @STD-DOC
 
 ## Purpose
 - Define the organization of the documentation directory.

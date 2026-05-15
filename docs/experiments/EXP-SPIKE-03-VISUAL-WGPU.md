@@ -1,5 +1,5 @@
 # Experiment: WGPU Presentation & Backpressure
-ID: EXP-SPIKE-03-VISUAL-WGPU (Spike-3)  
+ID: EXP-SPIKE-03-VISUAL-WGPU  
 Status: SUCCESS
 
 ## Hypothesis

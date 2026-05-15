@@ -1,7 +1,7 @@
 # Experiment & Spike Logging Rules [NORMATIVE]
 ID: EXP-RULES  
 Status: STABLE  
-Depends on: STD-DOC
+Depends on: @STD-DOC
 
 ## Purpose
 Defines how technical spikes and performance benchmarks MUST be documented to provide evidence for architectural decisions.

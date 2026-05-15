@@ -1,7 +1,7 @@
 # Architectural Manifest (Handover Document)
 ID: META-MANIFEST  
 Status: STABLE  
-Depends on: ARCH-REQ, LOG-DECISIONS
+Depends on: @ARCH-REQ, @LOG-DECISIONS
 
 ## Project Principles
 - Target: Native performance browser-like runtime.
@@ -9,7 +9,7 @@ Depends on: ARCH-REQ, LOG-DECISIONS
 
 ## Critical Nuances Discovered in Prototype Phase
 - Data Plane: TCP Loopback throughput is sufficient (~770 MB/s), but sequential serialization is the primary bottleneck for structural data.
-- Serialization: MessagePack is REJECTED for DOM/Metadata. FlatBuffers is MANDATORY to achieve $O(1)$ random access and zero-decode speeds.
+- Serialization: MessagePack is REJECTED for DOM/Metadata. FlatBuffers is MANDATORY to achieve O(1) random access and zero-decode speeds.
 - Header-Payload Separation: High-bandwidth data (Pixels) MUST be sent as raw bitstreams trailing the structural FlatBuffer to bypass builder/encoder overhead.
 - Memory Layout: Use `Arc<[u8]>` (boxed slices) instead of `Arc<Vec<u8>>` to eliminate double-pointer indirection and maximize CPU cache hits during ML inference.
 - Pipeline Synchronization: The system uses Hard-Synchronous Stop-and-Wait backpressure. The `Loader` is clocked to the `Renderer`. The `0x01` ACK MUST only be sent after `surface_texture.present()`.
@@ -25,5 +25,5 @@ Depends on: ARCH-REQ, LOG-DECISIONS
 - NO Model Network Access: The `MLProcessor` is physically isolated from networking crates to enforce security.
 
 ## Notes / Explanatory
-- [EXPLANATORY] The transition from "Independent Threads" to "Hard-Sync" was necessitated by the observation of unmanaged latency drift in Spike-03.
-- [EXPLANATORY] Performance metrics from Spike-05 serve as the rejection criteria for any proposed non-zero-copy serialization.
+- [EXPLANATORY] The transition from "Independent Threads" to "Hard-Sync" was necessitated by the observation of unmanaged latency drift in @EXP-SPIKE-03-VISUAL-WGPU.
+- [EXPLANATORY] Performance metrics from @EXP-SPIKE-05-DOM-STRESS serve as the rejection criteria for any proposed non-zero-copy serialization.
