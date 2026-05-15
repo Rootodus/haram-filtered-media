@@ -5,15 +5,14 @@ Depends on: @STD-DOC, @EXP-ARCH-BASELINE
 
 ## Decision: Read-only GET mode
 Statement: The system boundary allows GET requests ONLY.  
-Evidence: @EXP-ARCH-BASELINE.
+Evidence: @ARCH-REQ::NET-RESTRICT.
 
 Observed signals:
-- Lower variance in request-side state in Configuration A.
-- Reduced side-effect surface in constrained interaction model.
+- Structural requirement to minimize state complexity in the monolithic pipeline.
+- Reduced side-effect surface aligns with the "restricted execution runtime" goal.
 
 Relationship mapping:
-- Interaction surface restriction aligns with fewer observed state variation paths.
-- Reduced mutation surface aligns with reduced output variability under identical inputs.
+- Interaction surface restriction aligns with reduced implementation overhead.
 
 Rejected alternatives:
 - Allowing mixed HTTP methods with runtime filtering (higher observed divergence).
@@ -43,26 +42,25 @@ Statement: System uses a staged (does NOT mean separate processes) pipeline arch
 Evidence: @EXP-ARCH-BASELINE.
 
 Observed signals:
-- Configuration A shows higher scheduling overhead.
-- Configuration B shows lower overhead but reduced isolation between stages.
+- Qualitative failure of IPC-based stage isolation (browser extensions/localhost servers).
+- In-process multithreading avoids the serialization tax observed in initial prototypes.
 
 Relationship mapping:
-- Queue-based separation aligns with higher overhead AND stronger stage decoupling.
-- Single-stage execution aligns with lower overhead AND increased coupling.
+- Thread-based staging aligns with the Monolith requirement to eliminate IPC.
 
 Rejected alternatives:
 - Fully single-stage execution (loss of separation boundaries).
 
 ## Decision: Stateless MLProcessor
 Statement: `MLProcessor` MUST NOT maintain persistent state between invocations.  
-Evidence: @EXP-ARCH-BASELINE.
+Evidence: @ARCH-REQ::PIPE-MONOLITH.
 
 Observed signals:
-- Stateful retention correlates with higher run-to-run variance.
-- Stateless execution correlates with more consistent outputs.
+- Ensures predictable execution regardless of call history, simplifying Hard-Sync logic.
+- Aligns with standard ML inference patterns for frame-by-frame filtering.
 
 Relationship mapping:
-- Absence of cross-run state aligns with reduced variability.
+- Absence of cross-run state simplifies the Admission Control logic.
 
 Rejected alternatives:
 - Session-based state model (higher cross-run coupling observed).
@@ -89,14 +87,14 @@ Rejected alternatives:
 
 ## Decision: Buffer sharing
 Statement: Buffers use shared references where safe.  
-Evidence: @EXP-ARCH-BASELINE.
+Evidence: @ARCH-REQ::PIPE-MONOLITH.
 
 Observed signals:
-- Copy-based handling increases memory usage with payload size.
-- Shared references reduce allocation overhead in measured runs.
+- Qualitative observation that deep copies of high-bandwidth data cause UI stutter.
+- Shared references (`Arc<T>`) are required to meet the 16.6 ms frame budget.
 
 Relationship mapping:
-- Reduced copying aligns with lower memory usage in observed runs.
+- Reduced copying aligns with the zero-copy performance goal.
 
 Rejected alternatives:
 - Deep copy per stage boundary (higher allocation cost observed).
