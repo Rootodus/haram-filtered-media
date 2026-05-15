@@ -1,6 +1,7 @@
 # Experiment: Raw Pixel Pipe Throughput
 ID: EXP-SPIKE-02-PIXEL-PIPE  
-Status: SUCCESS
+Status: SUCCESS  
+Depends on: @STD-DOC, @EXP-RULES
 
 ## Hypothesis
 A TCP loopback pipe using Header-Payload separation can move 1080p RGBA8 frames at >60 FPS.

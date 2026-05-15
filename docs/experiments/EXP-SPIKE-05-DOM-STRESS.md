@@ -1,6 +1,7 @@
 # Experiment: DOM Stress Test (MessagePack)
 ID: EXP-SPIKE-05-DOM-STRESS  
-Status: FAILED
+Status: FAILED  
+Depends on: @STD-DOC, @EXP-RULES
 
 ## Hypothesis
 MessagePack can deserialize a 5,000-node DOM tree within a 16.6 ms frame budget.

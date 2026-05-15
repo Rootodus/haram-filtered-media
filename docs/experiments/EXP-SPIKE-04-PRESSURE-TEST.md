@@ -1,6 +1,7 @@
 # Experiment: Mock Inference Pressure Test
 ID: EXP-SPIKE-04-PRESSURE-TEST  
-Status: SUCCESS
+Status: SUCCESS  
+Depends on: @STD-DOC, @EXP-RULES
 
 ## Hypothesis
 The system can maintain stable output while performing a 10 ms CPU-bound inference simulation.

@@ -1,6 +1,7 @@
 # Experiment: WGPU Presentation & Backpressure
 ID: EXP-SPIKE-03-VISUAL-WGPU  
-Status: SUCCESS
+Status: SUCCESS  
+Depends on: @STD-DOC, @EXP-RULES
 
 ## Hypothesis
 A dedicated Renderer thread using `wgpu` can display pixel buffers with "Stop-and-Wait" backpressure to prevent buffer bloat.
