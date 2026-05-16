@@ -1,4 +1,7 @@
-struct Rect {
+namespace schema;
+
+// Note: Temporarily changed from struct to table because JS/TS has issues, but Rust not.
+table Rect {
     x: float;
     y: float;
     width: float;

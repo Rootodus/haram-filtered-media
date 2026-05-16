@@ -1,71 +1,31 @@
-use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use winit::event_loop::EventLoop;
 
-/// The binary contract for MessagePack synchronization
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Metadata {
+// FlatBuffers runtime and generated bindings
+use flatbuffers::root;
+// The generated types are in the `flatbuffers` module
+use ml_filtered_browser::Metadata;
+
+/// Shared frame data: FlatBuffer bytes + raw pixel data
+#[derive(Clone)] // Required for `lock.clone()`
+pub struct FrameState {
     pub timestamp: u64,
     pub width: u32,
     pub height: u32,
-    pub node_count: u32,
-}
-
-/// The internal representation used by MLProcessor and Renderer
-pub struct ContentBuffer<'a> {
-    pub meta: Metadata,
-    pub pixel_data: &'a [u8],
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DomNode {
-    pub id: u32,
-    pub tag: String,
-    pub text: Option<String>,
-    pub rect: [f32; 4],
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DomNodeBorrowed<'a> {
-    pub id: u32,
-    pub tag: &'a str,
-    pub text: Option<&'a str>,
-    pub rect: [f32; 4],
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct VisualAction {
-    pub action_type: u8,
-    pub rect: [f32; 4],
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProcessedBuffer {
-    pub instructions: Vec<VisualAction>,
-}
-
-/// Represents a single frame.
-/// Using Arc<\[u8\]> (a slice) instead of Arc<Vec<u8>> eliminates
-/// the secondary pointer indirection to the Vec's heap header.
-#[derive(Clone)]
-pub struct FrameState {
-    pub meta: Metadata,
+    pub buffer: Arc<[u8]>, // FlatBuffer bytes
     pub pixel_data: Arc<[u8]>,
-    pub nodes: Vec<DomNode>,
 }
 
-/// High-performance shared state for the native runtime.
-/// Designed to be wrapped in an Arc for thread-safe access.
+/// High-performance shared state
 pub struct SharedAppState {
     pub frame: Mutex<Option<FrameState>>,
     pub dirty: AtomicBool,
-    // Channel to wake up the IPC thread after a frame is displayed
     pub ack_sender: tokio::sync::mpsc::Sender<()>,
-    // Persistent color to prevent "White Window" during idle
     pub clear_color: Mutex<wgpu::Color>,
 }
 
@@ -84,44 +44,38 @@ impl SharedAppState {
         }
     }
 
-    /// Updates the frame data.
-    /// Converts Vec<u8> to Box<[u8]> then to Arc<[u8]> to ensure the
-    /// allocation is exactly the size of the data with no extra capacity overhead.
-    pub fn update_frame(&self, meta: Metadata, data: Vec<u8>, nodes: Vec<DomNode>) {
-        // Prepare the state before locking
+    pub fn update_frame(
+        &self,
+        timestamp: u64,
+        width: u32,
+        height: u32,
+        buffer: Arc<[u8]>,
+        pixel_data: Arc<[u8]>,
+    ) {
         let new_frame = FrameState {
-            meta,
-            // Convert Vec to Boxed slice then Arc to achieve Arc<[u8]>
-            pixel_data: Arc::from(data.into_boxed_slice()),
-            nodes,
+            timestamp,
+            width,
+            height,
+            buffer,
+            pixel_data,
         };
-
         if let Ok(mut lock) = self.frame.lock() {
             *lock = Some(new_frame);
-            // Store true to signal new data is available
             self.dirty.store(true, Ordering::Release);
         }
     }
 
-    /// Optimized check for the renderer.
-    /// Performs an atomic check before attempting to acquire the Mutex.
     pub fn get_frame_if_dirty(&self) -> Option<FrameState> {
-        // Atomic hint: if false, we avoid the Mutex lock entirely
         if !self.dirty.load(Ordering::Relaxed) {
             return None;
         }
-
-        // Lock and extract a clone of the Arc handle
         let lock = self.frame.lock().ok()?;
-
-        // Reset the flag
         self.dirty.store(false, Ordering::Relaxed);
-
-        // Return a clone of the FrameState (clones the Metadata and the Arc handle)
         lock.clone()
     }
 }
 
+// ---------- wgpu and winit rendering ----------
 use wgpu::{
     Color, CommandEncoderDescriptor, Device, Extent3d, Instance, LoadOp, Operations, Origin3d,
     Queue, RenderPassColorAttachment, RenderPassDescriptor, StoreOp, Surface, SurfaceConfiguration,
@@ -139,7 +93,6 @@ pub struct App {
     pub device: Option<Device>,
     pub queue: Option<Queue>,
     pub state: Arc<SharedAppState>,
-    // Persistent GPU texture storage
     pub frame_texture: Option<Texture>,
 }
 
@@ -224,19 +177,18 @@ impl ApplicationHandler for App {
 
                 let mut needs_ack = false;
 
-                // --- PHASE 1: Data Update (Conditional) ---
+                // --- PHASE 1: Data Update ---
                 if let Some(frame) = self.state.get_frame_if_dirty() {
-                    // --- MOCK INFERENCE STAGE ---
                     mock_inference(&frame);
 
                     let texture_size = Extent3d {
-                        width: frame.meta.width,
-                        height: frame.meta.height,
+                        width: frame.width,
+                        height: frame.height,
                         depth_or_array_layers: 1,
                     };
 
                     if self.frame_texture.as_ref().map_or(true, |t| {
-                        t.width() != frame.meta.width || t.height() != frame.meta.height
+                        t.width() != frame.width || t.height() != frame.height
                     }) {
                         self.frame_texture = Some(device.create_texture(&TextureDescriptor {
                             label: Some("Frame Texture"),
@@ -260,15 +212,14 @@ impl ApplicationHandler for App {
                         &frame.pixel_data,
                         TexelCopyBufferLayout {
                             offset: 0,
-                            bytes_per_row: Some(4 * frame.meta.width),
-                            rows_per_image: Some(frame.meta.height),
+                            bytes_per_row: Some(4 * frame.width),
+                            rows_per_image: Some(frame.height),
                         },
                         texture_size,
                     );
 
-                    // Update persistent color based on pulse
                     if let Ok(mut color) = self.state.clear_color.lock() {
-                        let pulse = (frame.meta.timestamp % 1000) as f64 / 1000.0;
+                        let pulse = (frame.timestamp % 1000) as f64 / 1000.0;
                         *color = Color {
                             r: 0.1,
                             g: pulse,
@@ -279,7 +230,7 @@ impl ApplicationHandler for App {
                     needs_ack = true;
                 }
 
-                // --- PHASE 2: Render Pass (Every Frame) ---
+                // --- PHASE 2: Render Pass ---
                 let surface_texture = match surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(t) => t,
                     wgpu::CurrentSurfaceTexture::Outdated
@@ -314,9 +265,7 @@ impl ApplicationHandler for App {
                 queue.submit(std::iter::once(encoder.finish()));
                 surface_texture.present();
 
-                // --- PHASE 3: End-to-End Signaling ---
                 if needs_ack {
-                    // Wake up the IPC thread only after present()
                     let _ = self.state.ack_sender.try_send(());
                 }
             }
@@ -331,6 +280,7 @@ impl ApplicationHandler for App {
     }
 }
 
+// ---------- Network Handling ----------
 async fn handle_connection(
     mut stream: TcpStream,
     state: Arc<SharedAppState>,
@@ -340,83 +290,78 @@ async fn handle_connection(
     let mut len_buf = [0u8; 4];
 
     loop {
+        // Read FlatBuffer length prefix
         if stream.read_exact(&mut len_buf).await.is_err() {
             break;
         }
-        let meta_len = u32::from_le_bytes(len_buf) as usize;
-        let mut meta_payload = vec![0u8; meta_len];
-        stream.read_exact(&mut meta_payload).await?;
-        let meta: Metadata = rmp_serde::from_slice(&meta_payload)?;
-
-        if stream.read_exact(&mut len_buf).await.is_err() {
+        let fb_len = u32::from_le_bytes(len_buf) as usize;
+        let mut fb_bytes = vec![0u8; fb_len];
+        if stream.read_exact(&mut fb_bytes).await.is_err() {
             break;
         }
-        let dom_len = u32::from_le_bytes(len_buf) as usize;
-        let mut dom_payload = vec![0u8; dom_len];
-        stream.read_exact(&mut dom_payload).await?;
 
-        // --- BENCHMARK START ---
-        // 1. Borrowed Deserialization (Zero-Allocation)
-        let start_borrowed = std::time::Instant::now();
-        let borrowed_nodes: Vec<DomNodeBorrowed> = rmp_serde::from_slice(&dom_payload)?;
-        let borrowed_dur = start_borrowed.elapsed();
-        std::hint::black_box(borrowed_nodes); // Prevent optimization
+        // --- FlatBuffers verification timing ---
+        let verify_start = Instant::now();
+        // SAFETY: The loader is trusted. FlatBuffer is built by the same system.
+        let metadata = unsafe { flatbuffers::root_unchecked::<Metadata>(&fb_bytes) };
+        let verify_dur = verify_start.elapsed();
 
-        // 2. Owned Deserialization (Standard Heap Allocations)
-        let start_owned = std::time::Instant::now();
-        let nodes: Vec<DomNode> = rmp_serde::from_slice(&dom_payload)?;
-        let owned_dur = start_owned.elapsed();
-        // --- BENCHMARK END ---
+        let timestamp = metadata.timestamp();
+        let width = metadata.width();
+        let height = metadata.height();
 
-        let current_ts = meta.timestamp;
-        let node_count = meta.node_count;
-        let pixel_bytes = (meta.width * meta.height * 4) as usize;
+        // --- Node vector length access (O(1), no iteration) ---
+        let node_len_start = Instant::now();
+        let nodes_opt = metadata.nodes();
+        let node_count = nodes_opt.map(|v| v.len()).unwrap_or(0);
+        let node_len_dur = node_len_start.elapsed();
+
+        // Read raw pixel data
+        let pixel_bytes = (width * height * 4) as usize;
         let mut pixel_vec = vec![0u8; pixel_bytes];
-        stream.read_exact(&mut pixel_vec).await?;
+        if stream.read_exact(&mut pixel_vec).await.is_err() {
+            break;
+        }
 
-        state.update_frame(meta, pixel_vec, nodes);
+        // Convert to Arc<[u8]>
+        let fb_arc = Arc::from(fb_bytes.into_boxed_slice());
+        let pixel_arc = Arc::from(pixel_vec.into_boxed_slice());
 
+        state.update_frame(timestamp, width, height, fb_arc, pixel_arc);
+
+        // Log every 100 frames
+        if timestamp % 100 == 0 {
+            println!(
+                "Rust: verify={:?}, node_count={}, node_len_access={:?}, fb_bytes={}",
+                verify_dur, node_count, node_len_dur, fb_len
+            );
+        }
+
+        // Wait for GPU ACK and reply
         if ack_receiver.recv().await.is_none() {
             break;
         }
-        stream.write_all(&[0x01]).await?;
-
-        if current_ts % 100 == 0 {
-            println!(
-                "DOM Race ({} nodes) | Borrowed (Zero-Alloc): {:?} | Owned (Heap-Alloc): {:?}",
-                node_count, borrowed_dur, owned_dur
-            );
+        if stream.write_all(&[0x01]).await.is_err() {
+            break;
         }
     }
     Ok(())
 }
 
 fn mock_inference(frame: &FrameState) {
-    // 1. Touch DOM Strings to force cache fills/memory access
-    for node in &frame.nodes {
-        std::hint::black_box(&node.tag);
-        if let Some(text) = &node.text {
-            std::hint::black_box(text);
-        }
-    }
-
-    // 2. Heavy Pixel Calculation
+    // Touch pixel data
     let mut sum: u64 = 0;
     for i in (0..frame.pixel_data.len()).step_by(100) {
         sum += frame.pixel_data[i] as u64;
     }
     std::hint::black_box(sum);
-
-    // 3. Simulated ML Latency
+    // Simulated ML latency
     std::thread::sleep(std::time::Duration::from_millis(10));
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Create the sync channel
     let (ack_tx, ack_rx) = tokio::sync::mpsc::channel::<()>(1);
-
-    // Initialize state with the sender
     let state = Arc::new(SharedAppState::new(ack_tx));
 
     let state_for_ipc = state.clone();
@@ -427,9 +372,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .expect("Failed to bind TCP listener");
         println!("Listening on {}...", addr);
 
-        // For this spike, we pass the single rx to the first connection
         let mut rx_holder = Some(ack_rx);
-
         while let Ok((stream, _)) = listener.accept().await {
             if let Some(rx) = rx_holder.take() {
                 let s_handle = state_for_ipc.clone();
@@ -442,7 +385,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let event_loop = EventLoop::new()?;
     let mut app = App::new(state);
-
     println!("Starting Window Event Loop...");
     event_loop.run_app(&mut app)?;
     Ok(())
