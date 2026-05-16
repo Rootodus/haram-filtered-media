@@ -14,13 +14,19 @@ The `ContentBuffer` is composed of a memory-mapped FlatBuffer and a trailing pix
 
 ### FlatBuffer Structure (`schema.fbs`)
 ```flatbuffers
-struct Vec4 { x: float; y: float; w: float; h: float; }
+struct Rect {
+    x: float;
+    y: float;
+    width: float;
+    height: float;
+}
 
 table DomNode {
     id: uint32;
     tag: string;
+    has_text: bool;
     text: string;
-    rect: Vec4;
+    rect: Rect;
 }
 
 table Metadata {
