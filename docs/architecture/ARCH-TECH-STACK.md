@@ -7,6 +7,7 @@ Depends on: @ARCH-REQ, @STD-DOC
 
 ### Loader and IPC (@DYN-SNAPSHOT, @IPC-FLATBUFFERS)
 - `chromiumoxide`: CDP integration and Headless Chrome orchestration.
+- Node.js + Puppeteer used only for spike testing. Production target: Rust + chromiumoxide.
 - `tokio`: Async runtime for I/O-bound acquisition tasks.
 - `flatbuffers`: Zero-copy serialization library for structural data access.
 - `flatc`: Schema compiler for generating Rust/JS data access code.
