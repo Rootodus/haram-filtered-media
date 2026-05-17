@@ -6,8 +6,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use winit::event_loop::EventLoop;
 
-// FlatBuffers runtime and generated bindings
-use flatbuffers::root;
 // The generated types are in the `flatbuffers` module
 use ml_filtered_browser::Metadata;
 
@@ -329,8 +327,9 @@ async fn handle_connection(
 
         state.update_frame(timestamp, width, height, fb_arc, pixel_arc);
 
-        // Log every 100 frames
-        if timestamp % 100 == 0 {
+        static LOG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let count = LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count == 0 || count % 100 == 0 {
             println!(
                 "Rust: verify={:?}, node_count={}, node_len_access={:?}, fb_bytes={}",
                 verify_dur, node_count, node_len_dur, fb_len
