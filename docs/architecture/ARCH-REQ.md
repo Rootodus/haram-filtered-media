@@ -53,8 +53,8 @@ Depends on: @STD-DOC
 - SPEC-INPUT-PROXY: Mechanical specification for coordinate-mapped event propagation via CDP is pending renderer stabilization.
 
 ### Resolved Gaps (Subsection of @GAPS)
-- DOM-MAPPING: Resolved. See @SPEC-PARSER-DOM for algorithm converting DOM nodes to fixed-width tensors.
-- SPEC-ML-CORE: Resolved. See @SPEC-ML-CORE for mechanical specification of `ort` (ONNX) session management and thread-pool isolation.
+- DOM-MAPPING: Resolved. See doc @SPEC-PARSER-DOM for algorithm converting DOM nodes to fixed-width tensors.
+- SPEC-ML-CORE: Resolved. See doc @SPEC-ML-CORE for mechanical specification of `ort` (ONNX) session management and thread-pool isolation.
 
 ## Implementation Criteria
 - NATIVE-OVER-EXTENSION: Rejection of browser extensions is based on IPC serialization bottlenecks and JS main-thread contention. Any proposed solution involving high-frequency data copying or JS-side logic is a regression.
