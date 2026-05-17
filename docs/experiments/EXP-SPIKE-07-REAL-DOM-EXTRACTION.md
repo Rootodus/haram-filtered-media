@@ -63,7 +63,7 @@ Real DOM extraction via Puppeteer `evaluate` is validated. The extracted data ca
 ### Triggered Decisions
 - Adopt `page.evaluate` with `querySelectorAll` as the extraction mechanism for the loader (to be formalized in `SPEC-FETCHER.md` after further performance characterization).
 - Truncate text content to 500 characters to limit payload size (configurable in future).
-- Use `getBoundingClientRect()` to supply absolute pixel coordinates for each node, resolving the coordinate ambiguity noted in `ARCH-REQ::GAPS::MAPPING`.
+- Use `getBoundingClientRect()` to supply absolute pixel coordinates for each node, resolving the coordinate ambiguity noted in ARCH-REQ::GAPS::DOM-MAPPING.
 
 ### Follow-up Items
 - Spike‑08: Performance measurement (extraction time, builder time, end‑to‑end latency over continuous snapshots).

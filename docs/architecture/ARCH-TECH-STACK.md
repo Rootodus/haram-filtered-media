@@ -17,7 +17,7 @@ Depends on: @ARCH-REQ, @STD-DOC
 - `rayon`: Work-stealing thread pool for compute-bound parsing and inference.
 - `Arc<T>`: Standard library atomic reference counting for zero-copy memory sharing.
 
-### Parsing and Mapping (@UNIT-CONTENTBUFFER, @MAPPING)
+### Parsing and Mapping (@UNIT-CONTENTBUFFER, @DOM-MAPPING)
 - `scraper`: HTML parsing and CSS selector execution.
 - `lightningcss`: High-performance CSS lexing and computed style resolution.
 

@@ -46,7 +46,7 @@ Depends on: @STD-DOC
 - ASYNC-ACQUISITION: The `Fetcher` and `Loader-Bridge` SHALL use `tokio` async tasks. Inference and Rendering SHALL use dedicated synchronous thread-pools to prevent executor starvation.
 
 ## Gaps (Active Blockers)
-- MAPPING: The specific algorithm for ordering, truncating, and encoding DOM nodes into fixed‑width tensor indices IS NOT defined. Absolute pixel coordinates are available via `Rect`.
+- DOM-MAPPING: Resolved. See @SPEC-PARSER-DOM for algorithm converting DOM nodes to fixed-width tensors.
 - THRESHOLD: The numerical trigger conditions for the system to override user-defined `ExecutionMode` preferences are NOT defined.
 - AUDIO-CAPTURE: The mechanism for capturing raw audio buffers from the `Loader` (Chrome) into the native `Stream Layer` is NOT defined.
 - RESOURCE-QUOTA: It is not defined how the system prevents a user-inserted model from consuming 100% of the System RAM or CPU.

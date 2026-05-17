@@ -5,7 +5,7 @@ Depends on: @ARCH-REQ, @SPEC-ML-PROC, @STD-DOC
 
 ## Purpose
 - Define the normative algorithm for converting user‑selected DOM nodes (from `Metadata.nodes`) into a fixed‑width 2D tensor suitable for ONNX model input.
-- Resolve the ARCH-REQ::GAPS::MAPPING ambiguity.
+- Resolve the ARCH-REQ::GAPS::DOM-MAPPING ambiguity.
 - This specification applies only to `ContentBuffer` instances containing DOM snapshots. For other media types (video frames, static images, audio data), the system uses direct pixel/stream manipulation without tensor conversion (see @ARCH-SYS-MAP::STREAM-LAYER).
 
 ## Inputs
