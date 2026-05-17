@@ -34,7 +34,7 @@ The system operates as an asynchronous multithreaded pipeline within a single mo
 
 ### 5. Finalization Stage - STAGE-RENDER
 - Composition: `Renderer` (wgpu) receives the original `Arc<ContentBuffer>` AND the `ProcessedBuffer`.
-- Stream Layer: Applies coordinate-based pixel masks AND temporal audio segments.
+- STREAM-LAYER: Applies coordinate-based pixel masks AND temporal audio segments.
 - Content Layer: Applies text replacements AND performs required DOM reflow.
 - Input Proxying: Captures user events (Clicks/Keys) and proxies them back to the `Loader` via `CDP`.
 
