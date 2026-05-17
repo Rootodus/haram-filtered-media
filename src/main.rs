@@ -1,3 +1,6 @@
+use ndarray;
+use ort::session::Session;
+use ort::value::Value;
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,6 +11,9 @@ use winit::event_loop::EventLoop;
 
 // The generated types are in the `flatbuffers` module
 use ml_filtered_browser::Metadata;
+
+static INFERENCE_RUNNING: AtomicBool = AtomicBool::new(false);
+static SKIP_NEXT_INFERENCE: AtomicBool = AtomicBool::new(false);
 
 /// Shared frame data: FlatBuffer bytes + raw pixel data
 #[derive(Clone)] // Required for `lock.clone()`
@@ -92,10 +98,11 @@ pub struct App {
     pub queue: Option<Queue>,
     pub state: Arc<SharedAppState>,
     pub frame_texture: Option<Texture>,
+    pub session: Option<Session>,
 }
 
 impl App {
-    pub fn new(state: Arc<SharedAppState>) -> Self {
+    pub fn new(state: Arc<SharedAppState>, session: Option<Session>) -> Self {
         Self {
             window: None,
             surface: None,
@@ -103,6 +110,7 @@ impl App {
             queue: None,
             state,
             frame_texture: None,
+            session,
         }
     }
 }
@@ -177,7 +185,16 @@ impl ApplicationHandler for App {
 
                 // --- PHASE 1: Data Update ---
                 if let Some(frame) = self.state.get_frame_if_dirty() {
-                    mock_inference(&frame);
+                    let should_skip = SKIP_NEXT_INFERENCE.swap(false, Ordering::AcqRel);
+                    if !should_skip {
+                        INFERENCE_RUNNING.store(true, Ordering::Relaxed);
+                        if let Some(ref mut session) = self.session {
+                            if let Err(e) = run_inference(session, &frame) {
+                                eprintln!("Inference error: {}", e);
+                            }
+                        }
+                        INFERENCE_RUNNING.store(false, Ordering::Relaxed);
+                    }
 
                     let texture_size = Extent3d {
                         width: frame.width,
@@ -327,6 +344,10 @@ async fn handle_connection(
 
         state.update_frame(timestamp, width, height, fb_arc, pixel_arc);
 
+        if INFERENCE_RUNNING.load(Ordering::Relaxed) {
+            SKIP_NEXT_INFERENCE.store(true, Ordering::Release);
+        }
+
         static LOG_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let count = LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if count == 0 || count % 100 == 0 {
@@ -347,15 +368,34 @@ async fn handle_connection(
     Ok(())
 }
 
-fn mock_inference(frame: &FrameState) {
-    // Touch pixel data
-    let mut sum: u64 = 0;
-    for i in (0..frame.pixel_data.len()).step_by(100) {
-        sum += frame.pixel_data[i] as u64;
-    }
-    std::hint::black_box(sum);
-    // Simulated ML latency
-    std::thread::sleep(std::time::Duration::from_millis(10));
+fn run_inference(session: &mut Session, _frame: &FrameState) -> Result<(), Box<dyn Error>> {
+    let start = Instant::now();
+    let max_nodes = 256;
+    let feature_dim = 410;
+    let expected_size = max_nodes * feature_dim;
+
+    let dummy_input: Vec<f32> = vec![0.0; expected_size];
+    let input_array = ndarray::Array2::from_shape_vec((max_nodes, feature_dim), dummy_input)?;
+
+    // Convert to ONNX-compatible value
+    let input_value = Value::from_array(input_array)?;
+
+    // Run the model
+    let outputs = session.run(ort::inputs!["input" => input_value])?;
+
+    // The method now returns (&Shape, &[f32])
+    let (_shape, data) = outputs[0].try_extract_tensor::<f32>()?;
+    let duration = start.elapsed();
+
+    // To get an ndarray::ArrayViewD if needed later:
+    // let view = ndarray::ArrayViewD::from_shape(shape, data)?;
+
+    println!(
+        "Inference completed in {:?}, output[0]={:?}",
+        duration,
+        data.first()
+    );
+    Ok(())
 }
 
 #[tokio::main]
@@ -382,8 +422,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
+    let session = Session::builder()?
+        .with_execution_providers([
+            ort::execution_providers::CPUExecutionProvider::default().build()
+        ])?
+        .commit_from_file("dummy_model.onnx")?;
+
     let event_loop = EventLoop::new()?;
-    let mut app = App::new(state);
+    let mut app = App::new(state, Some(session));
     println!("Starting Window Event Loop...");
     event_loop.run_app(&mut app)?;
     Ok(())

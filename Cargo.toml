@@ -10,6 +10,8 @@ wgpu = "29.0"
 raw-window-handle = "0.6.2"
 pollster = "0.4.0"
 flatbuffers = "25.12.19"
+ort = "2.0.0-rc.12"
+ndarray = "0.17.2"
 
 [build-dependencies]
 flatbuffers-build = "0.2.4"
