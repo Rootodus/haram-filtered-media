@@ -1,17 +1,16 @@
-use crate::protocol::SharedAppState;
+use crate::protocol::ACK_BYTE;
 use crate::schema::Metadata;
+use crate::state::SharedAppState;
+use crate::state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE};
 
 use std::error::Error;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 
-static INFERENCE_RUNNING: AtomicBool = AtomicBool::new(false);
-static SKIP_NEXT_INFERENCE: AtomicBool = AtomicBool::new(false);
-
-pub async fn handle_connection(
+async fn handle_connection(
     mut stream: TcpStream,
     state: Arc<SharedAppState>,
     mut ack_receiver: tokio::sync::mpsc::Receiver<()>,
@@ -76,8 +75,30 @@ pub async fn handle_connection(
         if ack_receiver.recv().await.is_none() {
             break;
         }
-        if stream.write_all(&[0x01]).await.is_err() {
+        if stream.write_all(&[ACK_BYTE]).await.is_err() {
             break;
+        }
+    }
+    Ok(())
+}
+
+pub async fn start_ipc_server(
+    state: Arc<SharedAppState>,
+    ack_rx: tokio::sync::mpsc::Receiver<()>,
+) -> Result<(), Box<dyn Error>> {
+    let addr = "127.0.0.1:8080";
+    let listener = TcpListener::bind(addr)
+        .await
+        .expect("Failed to bind TCP listener");
+    println!("Listening on {}...", addr);
+
+    let mut rx_holder = Some(ack_rx);
+    while let Ok((stream, _)) = listener.accept().await {
+        if let Some(rx) = rx_holder.take() {
+            let s_handle = state.clone();
+            tokio::spawn(async move {
+                let _ = handle_connection(stream, s_handle, rx).await;
+            });
         }
     }
     Ok(())

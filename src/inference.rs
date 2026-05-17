@@ -1,4 +1,4 @@
-use crate::protocol::FrameState;
+use crate::state::FrameState;
 
 use ort::session::Session;
 use ort::value::Value;

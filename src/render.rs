@@ -1,12 +1,9 @@
 use crate::inference::run_inference;
-use crate::protocol::SharedAppState;
+use crate::state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE, SharedAppState};
 
 use ort::session::Session;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-static INFERENCE_RUNNING: AtomicBool = AtomicBool::new(false);
-static SKIP_NEXT_INFERENCE: AtomicBool = AtomicBool::new(false);
+use std::sync::atomic::Ordering;
 
 use wgpu::{
     Color, CommandEncoderDescriptor, Device, Extent3d, Instance, LoadOp, Operations, Origin3d,

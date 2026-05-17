@@ -1,12 +1,10 @@
+use ml_filtered_browser::network::start_ipc_server;
+use ml_filtered_browser::render::App;
+use ml_filtered_browser::state::SharedAppState;
 use ort::session::Session;
 use std::error::Error;
 use std::sync::Arc;
-use tokio::net::TcpListener;
 use winit::event_loop::EventLoop;
-
-use ml_filtered_browser::network::handle_connection;
-use ml_filtered_browser::protocol::SharedAppState;
-use ml_filtered_browser::render::App;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -15,21 +13,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let state_for_ipc = state.clone();
     tokio::spawn(async move {
-        let addr = "127.0.0.1:8080";
-        let listener = TcpListener::bind(addr)
-            .await
-            .expect("Failed to bind TCP listener");
-        println!("Listening on {}...", addr);
-
-        let mut rx_holder = Some(ack_rx);
-        while let Ok((stream, _)) = listener.accept().await {
-            if let Some(rx) = rx_holder.take() {
-                let s_handle = state_for_ipc.clone();
-                tokio::spawn(async move {
-                    let _ = handle_connection(stream, s_handle, rx).await;
-                });
-            }
-        }
+        let _ = start_ipc_server(state_for_ipc, ack_rx).await;
     });
 
     let session = Session::builder()?
