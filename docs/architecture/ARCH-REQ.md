@@ -3,7 +3,7 @@ ID: ARCH-REQ
 Status: STABLE  
 Depends on: @STD-DOC
 
-## Facts (Hard Constraints & Observations)
+## Facts (Hard Constraints & Observations) - FACTS
 - ENV-EXT-LATENCY: ML execution in browser extensions introduces unacceptable overhead due to IPC serialization AND main-thread contention.
 - NET-GET-ONLY: Modern network interactions allow complex mutations, but this system environment is restricted to static retrieval to minimize state complexity.
 - DYN-WEB-JS: Modern websites REQUIRE JavaScript for functional content resolution, necessitating a high-fidelity engine for acquisition.
@@ -11,7 +11,7 @@ Depends on: @STD-DOC
 - PLATFORM-DESKTOP: Mobile operating systems prohibit the required sidecar process architecture; the system is restricted to Windows, Linux, and macOS.
 - GPU-CONTENTION: Simultaneous execution of the `Loader` (Chrome), `Renderer` (wgpu), and `MLProcessor` (ONNX) creates high VRAM pressure AND compute contention.
 
-## Decisions (Committed Architecture)
+## Decisions (Committed Architecture) - DECISIONS
 - HOST-NATIVE: The system SHALL run as a standalone native process to minimize environment-induced latency.
 - SCOPE-RESTRICTED: The system IS a restricted runtime; it IS NOT a full web browser.
 - UI-SINGLE-TAB: The interface IS a minimal single-tab shell containing an address bar, navigation (Back/Forward), and reload functionality ONLY.
@@ -45,7 +45,7 @@ Depends on: @STD-DOC
 - INFERENCE-BACKEND: The system SHALL utilize the `ONNX Runtime` with execution providers prioritized as: 1. GPU (CUDA/DirectML/CoreML) 2. CPU.
 - ASYNC-ACQUISITION: The `Fetcher` and `Loader-Bridge` SHALL use `tokio` async tasks. Inference and Rendering SHALL use dedicated synchronous thread-pools to prevent executor starvation.
 
-## Gaps (Active Blockers)
+## Gaps (Active Blockers) - GAPS
 - DOM-MAPPING: Resolved. See @SPEC-PARSER-DOM for algorithm converting DOM nodes to fixed-width tensors.
 - THRESHOLD: The numerical trigger conditions for the system to override user-defined `ExecutionMode` preferences are NOT defined.
 - AUDIO-CAPTURE: The mechanism for capturing raw audio buffers from the `Loader` (Chrome) into the native `Stream Layer` is NOT defined.
