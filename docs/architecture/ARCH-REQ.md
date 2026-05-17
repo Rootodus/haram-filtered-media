@@ -46,13 +46,15 @@ Depends on: @STD-DOC
 - ASYNC-ACQUISITION: The `Fetcher` and `Loader-Bridge` SHALL use `tokio` async tasks. Inference and Rendering SHALL use dedicated synchronous thread-pools to prevent executor starvation.
 
 ## Gaps (Active Blockers) - GAPS
-- DOM-MAPPING: Resolved. See @SPEC-PARSER-DOM for algorithm converting DOM nodes to fixed-width tensors.
 - THRESHOLD: The numerical trigger conditions for the system to override user-defined `ExecutionMode` preferences are NOT defined.
 - AUDIO-CAPTURE: The mechanism for capturing raw audio buffers from the `Loader` (Chrome) into the native `Stream Layer` is NOT defined.
 - RESOURCE-QUOTA: It is not defined how the system prevents a user-inserted model from consuming 100% of the System RAM or CPU.
 - SPEC-PARSER: Mechanical specification for tokenizing HTML/CSS into tensors is pending model selection.
 - SPEC-INPUT-PROXY: Mechanical specification for coordinate-mapped event propagation via CDP is pending renderer stabilization.
-- SPEC-ML-CORE: Mechanical specification for `ort` (ONNX) session management and thread-pool isolation is pending pipeline integration.
+
+### Resolved Gaps (Subsection of @GAPS)
+- DOM-MAPPING: Resolved. See @SPEC-PARSER-DOM for algorithm converting DOM nodes to fixed-width tensors.
+- SPEC-ML-CORE: Resolved. See @SPEC-ML-CORE for mechanical specification of `ort` (ONNX) session management and thread-pool isolation.
 
 ## Implementation Criteria
 - NATIVE-OVER-EXTENSION: Rejection of browser extensions is based on IPC serialization bottlenecks and JS main-thread contention. Any proposed solution involving high-frequency data copying or JS-side logic is a regression.
