@@ -30,3 +30,11 @@ Current IPC relies on TCP Loopback (Windows) or Unix Sockets (Linux).
 - Strategy: Use FlatBuffers Structs for fixed-width numerical data (e.g., coordinates, style indices).
 - Mechanism: The `Parser` stage reads aligned data directly from the memory-mapped buffer, matching the input shape of the `Inference Engine` without reshuffling.
 - Note: Apache Arrow is REJECTED as it introduces unnecessary columnar-to-row overhead for single-page inference units.
+
+## Parallel ML Execution - PERF-PARALLEL
+- Target: Avoid sequential latency accumulation when multiple ML models are active on the same frame.
+- Strategy: Execute each model in parallel on Tokio's blocking thread pool (`spawn_blocking`), one task per model.
+- Mechanism: The render thread waits for all tasks to complete before presenting. Outputs are concatenated.
+- Benefit: Total inference latency becomes `max(model_latencies)` instead of `sum(model_latencies)`, provided sufficient CPU cores.
+- Constraint: GPU‑bound models (DirectML/CUDA) cannot run in parallel due to device contention; they must be serialized or use CPU fallback.
+- Rationale: Parallelism leverages multi‑core CPUs while preserving hard‑sync ACK and zero‑copy data passing.

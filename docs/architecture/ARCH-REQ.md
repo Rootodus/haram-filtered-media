@@ -35,6 +35,7 @@ Depends on: @STD-DOC
     - Constraint: PROHIBITED from triggering DOM reflow.
   - Content Layer: Handles DOM/Text; PERMITTED to trigger reflow for semantic replacements.
 - GPU-PRIORITY: The `Renderer` SHALL have priority for VRAM AND GPU compute. If VRAM headroom is < 10% or latency spikes, the `MLProcessor` MUST throttle or fallback to CPU inference.
+- MULTI-MODEL-PARALLEL: The system SHALL support multiple ML models active on the same page in parallel. Models SHALL execute in parallel on Tokio's blocking thread pool, each with its own ONNX session. The renderer SHALL wait for all models to complete before presenting the frame.
 - INPUT-PROXYING: The `Renderer` SHALL capture mouse/keyboard events AND proxy them back to the `Loader` via `CDP` to maintain site interactivity.
 - SEC-NETWORK-ISOLATION: The `MLProcessor` module SHALL NOT have access to networking crates or system network interfaces to prevent data exfiltration.
 - SEC-OS-BOUNDARY: The primary security boundary IS the host OS process isolation; user-inserted models are executed at the user's own risk.
