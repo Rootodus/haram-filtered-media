@@ -12,7 +12,12 @@ pollster = "0.4.0"
 flatbuffers = "25.12.19"
 ort = "2.0.0-rc.12"
 ndarray = "0.17.2"
+futures = "0.3.32"
 
 [build-dependencies]
 flatbuffers-build = "0.2.4"
 which = "8.0.2"
+
+[dev-dependencies]
+criterion = "0.8.2"
+flamegraph = "0.6.13"

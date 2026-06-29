@@ -4,7 +4,7 @@ use ml_filtered_browser::state::SharedAppState;
 
 use ort::session::Session;
 use std::error::Error;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use winit::event_loop::EventLoop;
 
 #[tokio::main]
@@ -17,14 +17,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let _ = start_ipc_server(state_for_ipc, ack_rx).await;
     });
 
-    let session = Session::builder()?
-        .with_execution_providers([
-            ort::execution_providers::CPUExecutionProvider::default().build()
-        ])?
-        .commit_from_file("dummy_model.onnx")?;
+    // Load multiple models (hardcoded for spike)
+    let model_paths = vec!["dummy_model.onnx", "dummy_model2.onnx"];
+    let mut sessions = Vec::with_capacity(model_paths.len());
+    for path in model_paths {
+        let session = Session::builder()?
+            .with_execution_providers([
+                ort::execution_providers::CPUExecutionProvider::default().build()
+            ])?
+            .commit_from_file(path)?;
+        sessions.push(Arc::new(Mutex::new(session)));
+    }
 
     let event_loop = EventLoop::new()?;
-    let mut app = App::new(state, Some(session));
+    let mut app = App::new(state, sessions);
     println!("Starting Window Event Loop...");
     event_loop.run_app(&mut app)?;
     Ok(())

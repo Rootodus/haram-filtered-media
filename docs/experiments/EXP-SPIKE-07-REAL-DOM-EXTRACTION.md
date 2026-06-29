@@ -66,6 +66,6 @@ Real DOM extraction via Puppeteer `evaluate` is validated. The extracted data ca
 - Use `getBoundingClientRect()` to supply absolute pixel coordinates for each node, resolving the coordinate ambiguity noted in ARCH-REQ::GAPS::DOM-MAPPING.
 
 ### Follow-up Items
-- Spike‑08: Performance measurement (extraction time, builder time, end‑to‑end latency over continuous snapshots).
+- Performance measurement (extraction time, builder time, end‑to‑end latency over continuous snapshots).
 - Formalize selector passing via manifest (currently hardcoded for spike).
 - Add support for multiple selectors and regex text filtering (future spikes).

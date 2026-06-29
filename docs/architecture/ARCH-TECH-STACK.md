@@ -35,8 +35,9 @@ Depends on: @ARCH-REQ, @STD-DOC
 - `cpal`: Low-level audio I/O for temporal stream modifications.
 
 ## Other Potential Useful Crates
-- `smart_default`
-- `derivative`
+- `smart_default` and `derivative` (not necessary right now)
+- `cargo-flamegraph`
+- `criterion`
 
 ## Selection Rationale (@LOG-DECISIONS)
 - FlatBuffers over MessagePack: Adopted to eliminate the 11–124 ms sequential scanning overhead observed in @EXP-SPIKE-05-DOM-STRESS. FlatBuffers allows the `MLProcessor` to access DOM nodes via memory-mapped offsets with zero CPU parsing. MessagePack is relegated to non-critical R&D tasks only.

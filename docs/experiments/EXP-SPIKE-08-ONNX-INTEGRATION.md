@@ -87,5 +87,5 @@ ONNX Runtime integration is successful. The system can load a model, run inferen
 - Keep dummy input placeholder until @SPEC-PARSER-DOM is implemented.
 
 ### Follow‑up Items
-- Spike‑09: Performance measurement with a realistic MB‑sized ONNX model (e.g., DistilBERT) and GPU execution provider.
+- Performance measurement with a realistic MB‑sized ONNX model (e.g., DistilBERT) and GPU execution provider.
 - Implement @SPEC-PARSER-DOM to replace dummy input with real DOM‑derived tensors.

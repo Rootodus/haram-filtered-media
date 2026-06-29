@@ -1,9 +1,13 @@
 use crate::inference::run_inference;
+use crate::parser::dom_to_tensor;
+use crate::schema::Metadata;
 use crate::state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE, SharedAppState};
 
+use futures::future::join_all;
 use ort::session::Session;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
+use tokio::task::spawn_blocking;
 
 use wgpu::{
     Color, CommandEncoderDescriptor, Device, Extent3d, Instance, LoadOp, Operations, Origin3d,
@@ -23,11 +27,11 @@ pub struct App {
     pub queue: Option<Queue>,
     pub state: Arc<SharedAppState>,
     pub frame_texture: Option<Texture>,
-    pub session: Option<Session>,
+    pub sessions: Vec<Arc<Mutex<Session>>>, // multiple models, each in a mutex
 }
 
 impl App {
-    pub fn new(state: Arc<SharedAppState>, session: Option<Session>) -> Self {
+    pub fn new(state: Arc<SharedAppState>, sessions: Vec<Arc<Mutex<Session>>>) -> Self {
         Self {
             window: None,
             surface: None,
@@ -35,7 +39,7 @@ impl App {
             queue: None,
             state,
             frame_texture: None,
-            session,
+            sessions,
         }
     }
 }
@@ -111,16 +115,52 @@ impl ApplicationHandler for App {
                 // --- PHASE 1: Data Update ---
                 if let Some(frame) = self.state.get_frame_if_dirty() {
                     let should_skip = SKIP_NEXT_INFERENCE.swap(false, Ordering::AcqRel);
-                    if !should_skip {
+                    if !should_skip && !self.sessions.is_empty() {
                         INFERENCE_RUNNING.store(true, Ordering::Relaxed);
-                        if let Some(ref mut session) = self.session {
-                            if let Err(e) = run_inference(session, &frame) {
-                                eprintln!("Inference error: {}", e);
+
+                        // Parse DOM to tensor
+                        let metadata =
+                            unsafe { flatbuffers::root_unchecked::<Metadata>(&frame.buffer) };
+                        let max_nodes = 256;
+                        let feature_dim = 410;
+                        let tensor = dom_to_tensor(&metadata, max_nodes, feature_dim);
+
+                        // Spawn one task per model
+                        let mut handles = Vec::with_capacity(self.sessions.len());
+                        for session_arc in &self.sessions {
+                            let session_clone = Arc::clone(session_arc);
+                            let tensor_clone = Arc::clone(&tensor);
+                            let handle = spawn_blocking(move || {
+                                // Lock the mutex to get mutable session
+                                let mut session_guard = session_clone.lock().unwrap();
+                                run_inference(
+                                    &mut session_guard,
+                                    &tensor_clone,
+                                    (max_nodes, feature_dim),
+                                )
+                            });
+                            handles.push(handle);
+                        }
+
+                        // Wait for all tasks and collect results
+                        let mut all_actions = Vec::new();
+                        let results = pollster::block_on(join_all(handles));
+                        for res in results {
+                            match res {
+                                Ok(Ok(actions)) => all_actions.extend(actions),
+                                Ok(Err(e)) => eprintln!("Inference error: {}", e),
+                                Err(e) => eprintln!("Task panicked: {}", e),
                             }
                         }
+
+                        if !all_actions.is_empty() {
+                            println!("Total actions produced: {}", all_actions.len());
+                        }
+
                         INFERENCE_RUNNING.store(false, Ordering::Relaxed);
                     }
 
+                    // --- Texture upload ---
                     let texture_size = Extent3d {
                         width: frame.width,
                         height: frame.height,
@@ -170,7 +210,7 @@ impl ApplicationHandler for App {
                     needs_ack = true;
                 }
 
-                // --- PHASE 2: Render Pass ---
+                // --- PHASE 2: Render Pass (unchanged) ---
                 let surface_texture = match surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(t) => t,
                     wgpu::CurrentSurfaceTexture::Outdated
