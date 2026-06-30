@@ -5,6 +5,7 @@ use crate::state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE, SharedAppState};
 
 use futures::future::join_all;
 use ort::session::Session;
+use ort::value::{DynValue, Value};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use tokio::task::spawn_blocking;
@@ -28,10 +29,17 @@ pub struct App {
     pub state: Arc<SharedAppState>,
     pub frame_texture: Option<Texture>,
     pub sessions: Vec<Arc<Mutex<Session>>>, // multiple models, each in a mutex
+    pub input_ids: Option<Arc<DynValue>>,
+    pub attention_mask: Option<Arc<DynValue>>,
 }
 
 impl App {
-    pub fn new(state: Arc<SharedAppState>, sessions: Vec<Arc<Mutex<Session>>>) -> Self {
+    pub fn new(
+        state: Arc<SharedAppState>,
+        sessions: Vec<Arc<Mutex<Session>>>,
+        input_ids: Option<Arc<DynValue>>,
+        attention_mask: Option<Arc<DynValue>>,
+    ) -> Self {
         Self {
             window: None,
             surface: None,
@@ -40,6 +48,8 @@ impl App {
             state,
             frame_texture: None,
             sessions,
+            input_ids,
+            attention_mask,
         }
     }
 }
@@ -130,19 +140,12 @@ impl ApplicationHandler for App {
                         for session_arc in &self.sessions {
                             let session_clone = Arc::clone(session_arc);
                             let tensor_clone = Arc::clone(&tensor);
-                            // For large model, we ignore the tensor; we'll test with dummy input.
-                            // If you want to feed the parser's tensor, you would reshape it.
+                            let ids_arc = self.input_ids.clone().expect("Input IDs not set");
+                            let mask_arc =
+                                self.attention_mask.clone().expect("Attention mask not set");
                             let handle = spawn_blocking(move || {
                                 let mut session_guard = session_clone.lock().unwrap();
-                                // Choose which inference function to call:
-                                // For large model, use run_inference_large
-                                run_inference_large(&mut session_guard)
-                                // For small model, keep old call:
-                                // run_inference(
-                                //     &mut session_guard,
-                                //     &tensor_clone,
-                                //     (max_nodes, feature_dim),
-                                // )
+                                run_inference_large(&mut session_guard, &ids_arc, &mask_arc)
                             });
                             handles.push(handle);
                         }

@@ -2,7 +2,9 @@ use ml_filtered_browser::network::start_ipc_server;
 use ml_filtered_browser::render::App;
 use ml_filtered_browser::state::SharedAppState;
 
+use ort::logging::LogLevel;
 use ort::session::Session;
+use ort::value::{DynValue, Value};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use winit::event_loop::EventLoop;
@@ -17,30 +19,92 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let _ = start_ipc_server(state_for_ipc, ack_rx).await;
     });
 
+    let _ = ort::init().commit();
+
     // Load large model
     let model_paths = vec!["model.onnx"];
     let mut sessions = Vec::with_capacity(model_paths.len());
+
     for path in model_paths {
-        let session = Session::builder()?
-            .with_profiling("onnx_profile")?
+        // Attempt to create a session with DirectML explicitly
+        let session = match Session::builder()?
+            .with_intra_threads(1)?
+            .with_inter_threads(1)?
             .with_execution_providers([
-                ort::execution_providers::CPUExecutionProvider::default().build()
+                ort::execution_providers::DirectMLExecutionProvider::default().build(),
             ])?
-            .commit_from_file(path)?;
+            .commit_from_file(path)
+        {
+            Ok(s) => {
+                println!(
+                    "SUCCESS: DirectML execution provider active for model: {}",
+                    path
+                );
+                s
+            }
+            Err(e) => {
+                eprintln!(
+                    "DirectML failed to initialize: {}. Falling back to standard CPU...",
+                    e
+                );
+                Session::builder()?
+                    .with_intra_threads(1)?
+                    .with_inter_threads(1)?
+                    .with_execution_providers([
+                        ort::execution_providers::CPUExecutionProvider::default().build(),
+                    ])?
+                    .commit_from_file(path)?
+            }
+        };
         sessions.push(Arc::new(Mutex::new(session)));
     }
 
     // Clone the sessions vector before moving it into App
     let sessions_for_profiling = sessions.clone();
 
+    // Pre‑allocate tensors once (batch=1, seq_len=128)
+    const BATCH: usize = 1;
+    const SEQ_LEN: usize = 128;
+
+    let ids_array = ndarray::Array2::<i64>::zeros((BATCH, SEQ_LEN));
+    let mask_array = ndarray::Array2::<i64>::zeros((BATCH, SEQ_LEN));
+
+    let input_ids_value: DynValue = Value::from_array(ids_array)?.into_dyn();
+    let attention_mask_value: DynValue = Value::from_array(mask_array)?.into_dyn();
+
+    let input_ids_arc = Arc::new(input_ids_value);
+    let attention_mask_arc = Arc::new(attention_mask_value);
+
+    // Benchmark: run 20 dummy inferences to measure steady‑state latency
+    println!("Running benchmark: 20 dummy inferences...");
+    for i in 0..20 {
+        let start = std::time::Instant::now();
+        for session_arc in &sessions {
+            let mut session_guard = session_arc.lock().unwrap();
+            let _ = ml_filtered_browser::inference::run_inference_large(
+                &mut session_guard,
+                &input_ids_arc,
+                &attention_mask_arc,
+            );
+        }
+        let dur = start.elapsed();
+        println!("Frame {}: {:?}", i, dur);
+    }
+    println!("Benchmark complete. Starting real pipeline...");
+
     let event_loop = EventLoop::new()?;
-    let mut app = App::new(state, sessions);
+    let mut app = App::new(
+        state,
+        sessions,
+        Some(input_ids_arc),
+        Some(attention_mask_arc),
+    );
     println!("Starting Window Event Loop...");
     event_loop.run_app(&mut app)?;
 
     // End profiling for all sessions after the event loop exits
     for session_arc in &sessions_for_profiling {
-        let mut session_guard = session_arc.lock().unwrap(); // mutable lock for end_profiling
+        let mut session_guard = session_arc.lock().unwrap();
         if let Ok(filename) = session_guard.end_profiling() {
             println!("Profiling data written to: {}", filename);
         } else {
