@@ -62,9 +62,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Clone the sessions vector before moving it into App
     let sessions_for_profiling = sessions.clone();
 
-    // Pre‑allocate tensors once (batch=1, seq_len=128)
+    // Pre‑allocate tensors once (batch=1, seq_len=64)
     const BATCH: usize = 1;
-    const SEQ_LEN: usize = 128;
+    const SEQ_LEN: usize = 64;
 
     let ids_array = ndarray::Array2::<i64>::zeros((BATCH, SEQ_LEN));
     let mask_array = ndarray::Array2::<i64>::zeros((BATCH, SEQ_LEN));
