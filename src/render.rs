@@ -1,4 +1,4 @@
-use crate::inference::run_inference;
+use crate::inference::{run_inference, run_inference_large};
 use crate::parser::dom_to_tensor;
 use crate::schema::Metadata;
 use crate::state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE, SharedAppState};
@@ -130,14 +130,19 @@ impl ApplicationHandler for App {
                         for session_arc in &self.sessions {
                             let session_clone = Arc::clone(session_arc);
                             let tensor_clone = Arc::clone(&tensor);
+                            // For large model, we ignore the tensor; we'll test with dummy input.
+                            // If you want to feed the parser's tensor, you would reshape it.
                             let handle = spawn_blocking(move || {
-                                // Lock the mutex to get mutable session
                                 let mut session_guard = session_clone.lock().unwrap();
-                                run_inference(
-                                    &mut session_guard,
-                                    &tensor_clone,
-                                    (max_nodes, feature_dim),
-                                )
+                                // Choose which inference function to call:
+                                // For large model, use run_inference_large
+                                run_inference_large(&mut session_guard)
+                                // For small model, keep old call:
+                                // run_inference(
+                                //     &mut session_guard,
+                                //     &tensor_clone,
+                                //     (max_nodes, feature_dim),
+                                // )
                             });
                             handles.push(handle);
                         }
