@@ -75,10 +75,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let input_ids_arc = Arc::new(input_ids_value);
     let attention_mask_arc = Arc::new(attention_mask_value);
 
-    // Benchmark: run 20 dummy inferences to measure steady‑state latency
-    println!("Running benchmark: 20 dummy inferences...");
-    for i in 0..20 {
-        let start = std::time::Instant::now();
+    // Warmup: compile shaders
+    for _ in 0..5 {
         for session_arc in &sessions {
             let mut session_guard = session_arc.lock().unwrap();
             let _ = ml_filtered_browser::inference::run_inference_large(
@@ -87,10 +85,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 &attention_mask_arc,
             );
         }
-        let dur = start.elapsed();
-        println!("Frame {}: {:?}", i, dur);
     }
-    println!("Benchmark complete. Starting real pipeline...");
 
     let event_loop = EventLoop::new()?;
     let mut app = App::new(
