@@ -2,6 +2,7 @@ use ml_filtered_browser::network::start_ipc_server;
 use ml_filtered_browser::render::App;
 use ml_filtered_browser::state::SharedAppState;
 
+use anyhow::Result;
 use ort::logging::LogLevel;
 use ort::session::Session;
 use ort::value::{DynValue, Value};
@@ -20,6 +21,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let _ = ort::init().commit();
+
+    ml_filtered_browser::tokenizer::init_tokenizer("tokenizer.json")?;
 
     // Load large model
     let model_paths = vec!["model.onnx"];
@@ -83,17 +86,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 &mut session_guard,
                 &input_ids_arc,
                 &attention_mask_arc,
+                None,
             );
         }
     }
 
     let event_loop = EventLoop::new()?;
-    let mut app = App::new(
-        state,
-        sessions,
-        Some(input_ids_arc),
-        Some(attention_mask_arc),
-    );
+    let mut app = App::new(state, sessions);
     println!("Starting Window Event Loop...");
     event_loop.run_app(&mut app)?;
 

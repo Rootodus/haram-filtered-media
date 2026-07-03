@@ -1,4 +1,5 @@
 use crate::protocol::VisualAction;
+use crate::schema::Metadata;
 use ort::session::Session;
 // In v2.0.0-rc.12, these variants live directly inside the value submodule
 use ort::value::{DynValue, TensorElementType, Value, ValueType};
@@ -42,6 +43,7 @@ pub fn run_inference_large(
     session: &mut Session,
     input_ids: &DynValue,
     attention_mask: &DynValue,
+    metadata: Option<&Metadata>, // now optional
 ) -> Result<Vec<VisualAction>, Box<dyn Error + Send + Sync>> {
     let start = Instant::now();
 
@@ -50,12 +52,44 @@ pub fn run_inference_large(
         "attention_mask" => attention_mask
     ])?;
 
+    let (_shape, logits) = outputs[0].try_extract_tensor::<f32>()?;
+    let neg = logits.get(0).copied().unwrap_or(0.0);
+    let pos = logits.get(1).copied().unwrap_or(0.0);
+
     let duration = start.elapsed();
     println!(
-        "Large model inference completed in {:?}. Output tensors: {}",
+        "Large model inference completed in {:?}. Output tensors: {}. Logits: neg={:.3}, pos={:.3}",
         duration,
-        outputs.len()
+        outputs.len(),
+        neg,
+        pos
     );
 
-    Ok(Vec::new())
+    let mut actions = Vec::new();
+
+    // Only generate actions if metadata is provided (i.e., real inference)
+    if let Some(meta) = metadata {
+        if neg > pos {
+            let nodes = meta.nodes().unwrap_or_default();
+            for i in 0..nodes.len() {
+                let node = nodes.get(i);
+                if let Some(rect) = node.rect() {
+                    actions.push(VisualAction {
+                        action_type: 0,
+                        rect: [rect.x(), rect.y(), rect.width(), rect.height()],
+                    });
+                }
+            }
+            println!(
+                "Blur applied to {} nodes (negative sentiment)",
+                actions.len()
+            );
+        } else {
+            println!("Positive sentiment – no actions applied");
+        }
+    } else {
+        println!("Warmup inference – no actions generated (metadata absent)");
+    }
+
+    Ok(actions)
 }

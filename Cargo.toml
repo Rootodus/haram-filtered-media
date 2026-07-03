@@ -13,6 +13,8 @@ flatbuffers = "25.12.19"
 ort = { version = "2.0.0-rc.12", features = ["directml"] }
 ndarray = "0.17.2"
 futures = "0.3.32"
+tokenizers = "0.23.1"
+anyhow = "1.0.103"
 
 [build-dependencies]
 flatbuffers-build = "0.2.4"
@@ -21,3 +23,42 @@ which = "8.0.2"
 [dev-dependencies]
 criterion = "0.8.2"
 flamegraph = "0.6.13"
+
+# =========================================================================
+# DAILY DEVELOPMENT
+# =========================================================================
+[profile.dev]
+opt-level = 0
+lto = "thin"
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.build-override]
+opt-level = 3
+
+# =========================================================================
+# BENCHMARKING
+# =========================================================================
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+# =========================================================================
+# LOCAL PROFILING / TESTING
+# =========================================================================
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# =========================================================================
+# FINAL USER DISTRIBUTION (Uncomment ONLY when shipping to users)
+# =========================================================================
+# [profile.release]
+# opt-level = 3
+# lto = "fat"
+# codegen-units = 1
+# panic = "abort"
+# strip = true

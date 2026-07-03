@@ -2,8 +2,10 @@ use crate::inference::{run_inference, run_inference_large};
 use crate::parser::dom_to_tensor;
 use crate::schema::Metadata;
 use crate::state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE, SharedAppState};
+use crate::tokenizer::tokenize;
 
 use futures::future::join_all;
+use ndarray::Array2;
 use ort::session::Session;
 use ort::value::{DynValue, Value};
 use std::sync::atomic::Ordering;
@@ -29,17 +31,10 @@ pub struct App {
     pub state: Arc<SharedAppState>,
     pub frame_texture: Option<Texture>,
     pub sessions: Vec<Arc<Mutex<Session>>>, // multiple models, each in a mutex
-    pub input_ids: Option<Arc<DynValue>>,
-    pub attention_mask: Option<Arc<DynValue>>,
 }
 
 impl App {
-    pub fn new(
-        state: Arc<SharedAppState>,
-        sessions: Vec<Arc<Mutex<Session>>>,
-        input_ids: Option<Arc<DynValue>>,
-        attention_mask: Option<Arc<DynValue>>,
-    ) -> Self {
+    pub fn new(state: Arc<SharedAppState>, sessions: Vec<Arc<Mutex<Session>>>) -> Self {
         Self {
             window: None,
             surface: None,
@@ -48,8 +43,6 @@ impl App {
             state,
             frame_texture: None,
             sessions,
-            input_ids,
-            attention_mask,
         }
     }
 }
@@ -128,24 +121,66 @@ impl ApplicationHandler for App {
                     if !should_skip && !self.sessions.is_empty() {
                         INFERENCE_RUNNING.store(true, Ordering::Relaxed);
 
-                        // Parse DOM to tensor
+                        // Extract text from DOM nodes
                         let metadata =
                             unsafe { flatbuffers::root_unchecked::<Metadata>(&frame.buffer) };
-                        let max_nodes = 256;
-                        let feature_dim = 410;
-                        let tensor = dom_to_tensor(&metadata, max_nodes, feature_dim);
+                        let nodes = metadata.nodes().unwrap_or_default();
+                        let mut full_text = String::new();
+                        for i in 0..nodes.len() {
+                            let node = nodes.get(i);
+                            if let Some(text) = node.text() {
+                                if !text.is_empty() {
+                                    full_text.push_str(text);
+                                    full_text.push(' ');
+                                }
+                            }
+                        }
+                        if full_text.is_empty() {
+                            full_text.push_str("empty");
+                        }
+
+                        // Tokenize
+                        const SEQ_LEN: usize = 64;
+                        let (input_ids_vec, attention_mask_vec) = tokenize(&full_text, SEQ_LEN);
+
+                        // Create ONNX Values
+                        let ids_array = Array2::from_shape_vec((1, SEQ_LEN), input_ids_vec)
+                            .expect("Failed to create input_ids array");
+                        let mask_array = Array2::from_shape_vec((1, SEQ_LEN), attention_mask_vec)
+                            .expect("Failed to create attention_mask array");
+                        let ids_value = Value::from_array(ids_array)
+                            .expect("Failed to create input_ids Value")
+                            .into_dyn();
+                        let mask_value = Value::from_array(mask_array)
+                            .expect("Failed to create attention_mask Value")
+                            .into_dyn();
+
+                        // Wrap in Arc for sharing across tasks
+                        let ids_arc = Arc::new(ids_value);
+                        let mask_arc = Arc::new(mask_value);
+
+                        // Clone the Arc<[u8]> buffer so we can parse metadata inside the task
+                        let buffer_arc = Arc::clone(&frame.buffer);
 
                         // Spawn one task per model
                         let mut handles = Vec::with_capacity(self.sessions.len());
                         for session_arc in &self.sessions {
                             let session_clone = Arc::clone(session_arc);
-                            let tensor_clone = Arc::clone(&tensor);
-                            let ids_arc = self.input_ids.clone().expect("Input IDs not set");
-                            let mask_arc =
-                                self.attention_mask.clone().expect("Attention mask not set");
+                            let ids_clone = Arc::clone(&ids_arc);
+                            let mask_clone = Arc::clone(&mask_arc);
+                            let buffer_clone = Arc::clone(&buffer_arc);
+
                             let handle = spawn_blocking(move || {
+                                let metadata = unsafe {
+                                    flatbuffers::root_unchecked::<Metadata>(&buffer_clone)
+                                };
                                 let mut session_guard = session_clone.lock().unwrap();
-                                run_inference_large(&mut session_guard, &ids_arc, &mask_arc)
+                                run_inference_large(
+                                    &mut session_guard,
+                                    &ids_clone,
+                                    &mask_clone,
+                                    Some(&metadata),
+                                )
                             });
                             handles.push(handle);
                         }
