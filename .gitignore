@@ -3,3 +3,6 @@ node_modules/
 
 temp.txt
 _temp.txt
+
+.cargo/*
+!.cargo/config.toml
