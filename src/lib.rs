@@ -3,7 +3,7 @@ pub mod network;
 pub mod parser;
 pub mod protocol;
 pub mod render;
-pub mod state;
+pub mod shared_state;
 pub mod tokenizer;
 
 // Include generated FlatBuffer bindings

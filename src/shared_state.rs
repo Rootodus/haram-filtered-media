@@ -17,6 +17,7 @@ pub struct SharedAppState {
     pub dirty: AtomicBool,
     pub ack_sender: tokio::sync::mpsc::Sender<()>,
     pub clear_color: Mutex<wgpu::Color>,
+    pub actions: Mutex<Vec<crate::protocol::VisualAction>>,
 }
 
 impl SharedAppState {
@@ -31,6 +32,7 @@ impl SharedAppState {
                 b: 0.1,
                 a: 1.0,
             }),
+            actions: Mutex::new(Vec::new()),
         }
     }
 
@@ -62,6 +64,12 @@ impl SharedAppState {
         let lock = self.frame.lock().ok()?;
         self.dirty.store(false, Ordering::Relaxed);
         lock.clone()
+    }
+
+    pub fn set_actions(&self, actions: Vec<crate::protocol::VisualAction>) {
+        if let Ok(mut lock) = self.actions.lock() {
+            *lock = actions;
+        }
     }
 }
 

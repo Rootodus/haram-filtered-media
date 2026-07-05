@@ -2,7 +2,7 @@ use crate::protocol::VisualAction;
 use crate::schema::Metadata;
 use ort::session::Session;
 // In v2.0.0-rc.12, these variants live directly inside the value submodule
-use ort::value::{DynValue, TensorElementType, Value, ValueType};
+use ort::value::{DynValue, Value};
 use std::error::Error;
 use std::time::Instant;
 

@@ -4,21 +4,33 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tokio = { version = "1.52.3", features = ["full"] }
+tokio = { version = "1.52.3", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "sync",
+    "io-util",
+] }
 winit = "0.30"
-wgpu = "29.0"
+wgpu = { version = "30.0", default-features = false, features = [
+    "dx12",
+    "wgsl",
+] }
 raw-window-handle = "0.6.2"
 pollster = "0.4.0"
 flatbuffers = "25.12.19"
 ort = { version = "2.0.0-rc.12", features = ["directml"] }
 ndarray = "0.17.2"
 futures = "0.3.32"
-tokenizers = "0.23.1"
+tokenizers = { version = "0.23.1", default-features = false, features = [
+    "onig",
+] }
 anyhow = "1.0.103"
+bytemuck = { version = "1.25.0", features = ["derive"] }
 
 [build-dependencies]
 flatbuffers-build = "0.2.4"
-which = "8.0.2"
+which = "8.0.4"
 
 [dev-dependencies]
 criterion = "0.8.2"
@@ -29,8 +41,6 @@ flamegraph = "0.6.13"
 # =========================================================================
 [profile.dev]
 opt-level = 0
-lto = "thin"
-incremental = true
 
 [profile.dev.package."*"]
 opt-level = 3
@@ -52,7 +62,7 @@ codegen-units = 1
 [profile.release]
 opt-level = 3
 lto = "thin"
-
+#
 # =========================================================================
 # FINAL USER DISTRIBUTION (Uncomment ONLY when shipping to users)
 # =========================================================================

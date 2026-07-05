@@ -1,9 +1,6 @@
 use crate::schema::Metadata;
 
-use ndarray::Array2;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 /// Common HTML tags for one‑hot encoding (order defines index)
 const TAG_LIST: &[&str] = &[

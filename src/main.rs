@@ -1,9 +1,9 @@
 use ml_filtered_browser::network::start_ipc_server;
+use ml_filtered_browser::protocol::SEQ_LEN;
 use ml_filtered_browser::render::App;
-use ml_filtered_browser::state::SharedAppState;
+use ml_filtered_browser::shared_state::SharedAppState;
 
 use anyhow::Result;
-use ort::logging::LogLevel;
 use ort::session::Session;
 use ort::value::{DynValue, Value};
 use std::error::Error;
@@ -67,7 +67,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Pre‑allocate tensors once (batch=1, seq_len=64)
     const BATCH: usize = 1;
-    const SEQ_LEN: usize = 64;
 
     let ids_array = ndarray::Array2::<i64>::zeros((BATCH, SEQ_LEN));
     let mask_array = ndarray::Array2::<i64>::zeros((BATCH, SEQ_LEN));

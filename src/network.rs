@@ -1,7 +1,7 @@
 use crate::protocol::ACK_BYTE;
 use crate::schema::Metadata;
-use crate::state::SharedAppState;
-use crate::state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE};
+use crate::shared_state::SharedAppState;
+use crate::shared_state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE};
 
 use std::error::Error;
 use std::sync::Arc;
