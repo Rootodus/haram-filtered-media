@@ -64,6 +64,40 @@ pub fn upload_frame_texture(
     );
 
     println!("Uploaded frame texture: {}x{}", width, height);
+
+    let final_bind_group =
+        app.device
+            .as_ref()
+            .unwrap()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Final Dynamic Bind Group"),
+                layout: app.bind_group_layout.as_ref().unwrap(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(
+                            app.frame_texture_view.as_ref().unwrap(),
+                        ), // Real Frame Texture
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(app.sampler.as_ref().unwrap()),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(
+                            app.mask_texture_view.as_ref().unwrap(),
+                        ), // Real Mask Texture
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: app.uniform_buffer.as_ref().unwrap().as_entire_binding(),
+                    },
+                ],
+            });
+
+    // Assign the updated bind group block over the old placeholder struct handle
+    app.bind_group = Some(final_bind_group);
 }
 
 pub fn run_mask_pass(
