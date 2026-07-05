@@ -386,11 +386,11 @@ impl ApplicationHandler for App {
                 draw::run_mask_pass(&mut encoder, &queue, self, &actions);
 
                 // --- Pass 2: Final composition ---
-                println!(
-                    "About to run final pass, pipeline: {:?}, bind_group: {:?}",
-                    self.pipeline.is_some(),
-                    self.bind_group.is_some()
-                );
+                // println!(
+                //     "About to run final pass, pipeline: {:?}, bind_group: {:?}",
+                //     self.pipeline.is_some(),
+                //     self.bind_group.is_some()
+                // );
 
                 let output_view = surface_texture
                     .texture
@@ -417,7 +417,7 @@ impl ApplicationHandler for App {
 
                 // ---------- Submit and present ----------
                 queue.submit(std::iter::once(encoder.finish()));
-                println!("Submitted encoder");
+                // println!("Submitted encoder");
                 queue.present(surface_texture);
 
                 if needs_ack {

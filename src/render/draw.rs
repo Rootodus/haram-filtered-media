@@ -215,20 +215,7 @@ pub fn run_final_pass(
         screenshot_size.1 as f32
     };
 
-    let window_aspect = window_w / window_h;
-    let texture_aspect = texture_w / texture_h;
-
-    let (scale, offset) = if window_aspect > texture_aspect {
-        let s = texture_aspect / window_aspect;
-        (glam::vec2(s, 1.0), glam::vec2((1.0 - s) * 0.5, 0.0))
-    } else {
-        let s = window_aspect / texture_aspect;
-        (glam::vec2(1.0, s), glam::vec2(0.0, (1.0 - s) * 0.5))
-    };
-
     let final_uniform = FinalUniforms {
-        uv_scale: scale,
-        uv_offset: offset,
         texture_size: glam::vec2(texture_w, texture_h),
         viewport_size: glam::vec2(window_w, window_h),
     };

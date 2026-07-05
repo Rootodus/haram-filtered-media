@@ -56,8 +56,6 @@ fn fs_mask(in: MaskVertexOutput) -> @location(0) f32 {
 // ============================================================================
 
 struct FinalUniforms {
-    uv_scale: vec2<f32>,
-    uv_offset: vec2<f32>,
     texture_size: vec2<f32>,
     viewport_size: vec2<f32>,
 }
@@ -76,24 +74,24 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<
 
 @fragment
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    let screen_uv = pos.xy / uniforms.viewport_size;
-    let tex_uv = (screen_uv - uniforms.uv_offset) / uniforms.uv_scale;
+    // Convert current absolute pixel position into a direct, unscaled window UV (0.0 to 1.0)
+    let tex_uv = pos.xy / uniforms.viewport_size;
 
-    if tex_uv.x < 0.0 || tex_uv.x > 1.0 || tex_uv.y < 0.0 || tex_uv.y > 1.0 {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    }
-
+    // Direct sampling with no boundary padding or letterbox truncation
     let raw_color = textureSample(tex, samp, tex_uv);
     let mask_val = textureSample(mask_tex, samp, tex_uv).r;
 
+    // Fast-path: no mask targeting active
     if mask_val < 0.1 {
         return raw_color;
     }
 
+    // Blackbox Action applied
     if mask_val > 0.8 {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
 
+    // 9-tap blur alignment
     let offset_px = 1.5 / uniforms.texture_size;
     var sum = vec4<f32>(0.0);
     let grid = array<vec2<f32>, 9>(

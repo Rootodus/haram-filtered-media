@@ -29,8 +29,6 @@ pub struct MaskUniforms {
 
 #[derive(Clone, Copy, ShaderType)]
 pub struct FinalUniforms {
-    pub uv_scale: Vec2,
-    pub uv_offset: Vec2,
     pub texture_size: Vec2,
     pub viewport_size: Vec2,
 }
