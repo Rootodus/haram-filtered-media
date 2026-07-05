@@ -29,9 +29,8 @@ anyhow = "1.0.103"
 bytemuck = { version = "1.25.0", features = ["derive"] }
 encase = "0.12.0"
 glam = { version = "0.33.2", features = ["bytemuck", "encase"] }
+renderdoc = "0.12.1"
 
-# renderdoc = "0.12.1"
-#
 [build-dependencies]
 flatbuffers-build = "0.2.4"
 which = "8.0.4"

@@ -7,6 +7,62 @@ use wgpu::{
     RenderPassDescriptor, StoreOp, TextureFormat,
 };
 
+// ============================================================================
+// SELF-CONTAINED RENDERDOC HOTKEY AND LIFE-CYCLE CONTROLLER
+// ============================================================================
+
+/// Tracks whether RenderDoc is actively recording a frame.
+static IS_RECORDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Thread-safe type wrapper to hold the RenderDoc instance inside a global static OnceLock.
+/// Wrapping it in a Mutex provides interior mutability and satisfies the Sync constraint safely.
+struct RenderDocCell(pub std::sync::Mutex<renderdoc::RenderDoc<renderdoc::V141>>);
+unsafe impl Send for RenderDocCell {}
+unsafe impl Sync for RenderDocCell {}
+
+/// Checks if a programmatic frame capture should be initiated.
+pub fn manage_renderdoc_capture() {
+    use std::sync::atomic::Ordering;
+
+    // Global safe cell container
+    static RD_INSTANCE: std::sync::OnceLock<Option<RenderDocCell>> = std::sync::OnceLock::new();
+    let rd = RD_INSTANCE.get_or_init(|| {
+        renderdoc::RenderDoc::new()
+            .ok()
+            .map(|api| RenderDocCell(std::sync::Mutex::new(api)))
+    });
+
+    if let Some(RenderDocCell(mutex)) = rd {
+        if !IS_RECORDING.load(Ordering::Acquire) {
+            // Lock the mutex to get safe mutable access to the RenderDoc API handle
+            if let Ok(mut rd_api) = mutex.lock() {
+                if rd_api.is_target_control_connected() {
+                    return;
+                }
+
+                println!("[RenderDoc] Triggering programmatic capture frame block start...");
+                rd_api.start_frame_capture(std::ptr::null(), std::ptr::null());
+                IS_RECORDING.store(true, Ordering::Release);
+            }
+        }
+    }
+}
+
+/// Closes out the frame session trace and launches the replay view immediately.
+pub fn finalize_renderdoc_capture() {
+    use std::sync::atomic::Ordering;
+
+    if IS_RECORDING.swap(false, Ordering::AcqRel) {
+        if let Ok(mut rd_api) = renderdoc::RenderDoc::<renderdoc::V141>::new() {
+            rd_api.end_frame_capture(std::ptr::null(), std::ptr::null());
+            println!("[RenderDoc] Frame trace written successfully!");
+
+            // Bring up the replay monitor overlay window pane
+            let _ = rd_api.launch_replay_ui(true, None);
+        }
+    }
+}
+
 pub fn upload_frame_texture(
     queue: &Queue,
     app: &mut App,
@@ -106,6 +162,8 @@ pub fn run_mask_pass(
     app: &mut App,
     actions: &[VisualAction],
 ) {
+    manage_renderdoc_capture();
+
     if app.mask_texture_view.is_none()
         || app.mask_pipeline.is_none()
         || app.mask_bind_group.is_none()
@@ -256,4 +314,6 @@ pub fn run_final_pass(
     }
 
     queue.submit(std::iter::once(encoder.finish()));
+
+    finalize_renderdoc_capture();
 }

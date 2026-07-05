@@ -80,6 +80,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // Direct sampling with no boundary padding or letterbox truncation
     let raw_color = textureSample(tex, samp, tex_uv);
     let mask_val = textureSample(mask_tex, samp, tex_uv).r;
+    if mask_val > 0.1 {
+        return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+    }
+    return raw_color;
 
     // Fast-path: no mask targeting active
     if mask_val < 0.1 {
