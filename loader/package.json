@@ -13,6 +13,7 @@
     "license": "ISC",
     "dependencies": {
         "flatbuffers": "^25.9.23",
+        "pngjs": "^7.0.0",
         "puppeteer": "^24.42.0"
     },
     "devDependencies": {

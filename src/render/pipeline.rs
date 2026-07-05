@@ -1,3 +1,6 @@
+use super::context::FinalUniforms;
+
+use encase::ShaderType;
 use wgpu::{
     BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType,
     BufferBindingType, ColorTargetState, ColorWrites, Device, FrontFace, MultisampleState,
@@ -26,7 +29,8 @@ pub fn create_pipelines(device: &Device) -> Pipelines {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    // FIX: Enforce compile-time safety bounds computed by encase
+                    min_binding_size: Some(super::context::MaskUniforms::min_size()),
                 },
                 count: None,
             },
@@ -79,7 +83,7 @@ pub fn create_pipelines(device: &Device) -> Pipelines {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: Some(FinalUniforms::min_size()),
                 },
                 count: None,
             },

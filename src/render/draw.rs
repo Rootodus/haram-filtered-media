@@ -14,6 +14,9 @@ pub fn upload_frame_texture(
     height: u32,
     pixel_data: &[u8],
 ) {
+    app.last_frame_width = width;
+    app.last_frame_height = height;
+
     let texture_size = wgpu::Extent3d {
         width,
         height,
@@ -59,6 +62,8 @@ pub fn upload_frame_texture(
         },
         texture_size,
     );
+
+    println!("Uploaded frame texture: {}x{}", width, height);
 }
 
 pub fn run_mask_pass(
@@ -74,15 +79,22 @@ pub fn run_mask_pass(
         return;
     }
 
-    // Update mask uniform
+    // FIX: Pack directly into our newly refactored glam matrix layout
     let mask_uniform = MaskUniforms {
-        viewport_width: app.viewport_size.0 as f32,
-        viewport_height: app.viewport_size.1 as f32,
+        texture_size: glam::vec2(app.last_frame_width as f32, app.last_frame_height as f32),
     };
+
+    // FIX: Clear and re-use our high-performance scratch pad vector
+    app.uniform_scratch_pad.clear();
+    let mut buffer_worker = encase::UniformBuffer::new(&mut app.uniform_scratch_pad);
+    buffer_worker
+        .write(&mask_uniform)
+        .expect("Mask serialization failed");
+
     queue.write_buffer(
         app.mask_uniform_buffer.as_ref().unwrap(),
         0,
-        bytemuck::cast_slice(&[mask_uniform]),
+        &app.uniform_scratch_pad,
     );
 
     // Prepare action storage (remap: 0->1 blur, 1->2 blackbox)
@@ -92,9 +104,7 @@ pub fn run_mask_pass(
         width: 0.0,
         height: 0.0,
         action_type: 0,
-        _pad1: 0,
-        _pad2: 0,
-        _pad3: 0,
+        _pad: [0; 3],
     }; MAX_ACTIONS];
     for (i, act) in actions.iter().enumerate().take(MAX_ACTIONS) {
         raw_actions[i] = ActionInstance {
@@ -103,9 +113,7 @@ pub fn run_mask_pass(
             width: act.rect[2],
             height: act.rect[3],
             action_type: if act.action_type == 0 { 1 } else { 2 },
-            _pad1: 0,
-            _pad2: 0,
-            _pad3: 0,
+            _pad: [0; 3],
         };
     }
     queue.write_buffer(
@@ -124,8 +132,8 @@ pub fn run_mask_pass(
                     r: 0.0,
                     g: 0.0,
                     b: 0.0,
-                    a: 1.0,
-                }),
+                    a: 0.0,
+                }), // Clean clear alpha base
                 store: StoreOp::Store,
             },
             depth_slice: None,
@@ -142,80 +150,89 @@ pub fn run_mask_pass(
 }
 
 pub fn run_final_pass(
-    encoder: &mut CommandEncoder,
-    queue: &Queue,
-    app: &mut App,
-    surface_texture: &wgpu::SurfaceTexture,
-) -> Result<(), ()> {
-    let view = surface_texture.texture.create_view(&Default::default());
-
-    // Update final bind group with current textures
-    let frame_view = app.frame_texture_view.as_ref().unwrap();
-    let mask_view = app.mask_texture_view.as_ref().unwrap();
-    let sampler = app.sampler.as_ref().unwrap();
-    let uniform = app.uniform_buffer.as_ref().unwrap();
-
-    let final_bind_group =
-        app.device
-            .as_ref()
-            .unwrap()
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Final Bind Group"),
-                layout: app.bind_group_layout.as_ref().unwrap(),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(frame_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(mask_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: uniform.as_entire_binding(),
-                    },
-                ],
-            });
-    app.bind_group = Some(final_bind_group);
-
-    // Update final uniform (viewport)
-    let final_uniform = FinalUniforms {
-        viewport_width: app.viewport_size.0 as f32,
-        viewport_height: app.viewport_size.1 as f32,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    render_pipeline: &wgpu::RenderPipeline,
+    bind_group: &wgpu::BindGroup,
+    uniform_buffer: &wgpu::Buffer,
+    output_view: &wgpu::TextureView,
+    viewport_size: (u32, u32),
+    screenshot_size: (u32, u32),
+    scratch_pad: &mut Vec<u8>, // FIX: Accept the unified scratchpad parameter channel
+) {
+    let window_w = if viewport_size.0 == 0 {
+        800.0
+    } else {
+        viewport_size.0 as f32
     };
-    queue.write_buffer(
-        app.uniform_buffer.as_ref().unwrap(),
-        0,
-        bytemuck::cast_slice(&[final_uniform]),
-    );
+    let window_h = if viewport_size.1 == 0 {
+        600.0
+    } else {
+        viewport_size.1 as f32
+    };
+    let texture_w = if screenshot_size.0 == 0 {
+        1280.0
+    } else {
+        screenshot_size.0 as f32
+    };
+    let texture_h = if screenshot_size.1 == 0 {
+        720.0
+    } else {
+        screenshot_size.1 as f32
+    };
 
-    let mut final_pass = encoder.begin_render_pass(&RenderPassDescriptor {
-        label: Some("Final Pass"),
-        color_attachments: &[Some(RenderPassColorAttachment {
-            view: &view,
-            resolve_target: None,
-            ops: Operations {
-                load: LoadOp::Clear(Color {
-                    r: 0.1,
-                    g: 0.1,
-                    b: 0.1,
-                    a: 1.0,
-                }),
-                store: StoreOp::Store,
-            },
-            depth_slice: None,
-        })],
-        ..Default::default()
+    let window_aspect = window_w / window_h;
+    let texture_aspect = texture_w / texture_h;
+
+    let (scale, offset) = if window_aspect > texture_aspect {
+        let s = texture_aspect / window_aspect;
+        (glam::vec2(s, 1.0), glam::vec2((1.0 - s) * 0.5, 0.0))
+    } else {
+        let s = window_aspect / texture_aspect;
+        (glam::vec2(1.0, s), glam::vec2(0.0, (1.0 - s) * 0.5))
+    };
+
+    let final_uniform = FinalUniforms {
+        uv_scale: scale,
+        uv_offset: offset,
+        texture_size: glam::vec2(texture_w, texture_h),
+        viewport_size: glam::vec2(window_w, window_h),
+    };
+
+    scratch_pad.clear();
+    let mut buffer_worker = encase::UniformBuffer::new(&mut *scratch_pad);
+    buffer_worker
+        .write(&final_uniform)
+        .expect("Final layout serialization failed");
+
+    queue.write_buffer(uniform_buffer, 0, scratch_pad);
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Final Composite Encoder"),
     });
 
-    final_pass.set_pipeline(app.pipeline.as_ref().unwrap());
-    final_pass.set_bind_group(0, app.bind_group.as_ref().unwrap(), &[]);
-    final_pass.draw(0..4, 0..1);
+    {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Final Composite Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
 
-    Ok(())
+        render_pass.set_pipeline(render_pipeline);
+        render_pass.set_bind_group(0, bind_group, &[]);
+        render_pass.draw(0..4, 0..1);
+    }
+
+    queue.submit(std::iter::once(encoder.finish()));
 }

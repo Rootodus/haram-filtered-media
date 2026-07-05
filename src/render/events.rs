@@ -5,6 +5,7 @@ use crate::schema::Metadata;
 use crate::shared_state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE};
 use crate::tokenizer::tokenize;
 
+use encase::ShaderType;
 use futures::future::join_all;
 use ndarray::Array2;
 use ort::value::Value;
@@ -114,7 +115,7 @@ impl ApplicationHandler for App {
 
         let mask_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Mask Uniform Buffer"),
-            size: std::mem::size_of::<context::MaskUniforms>() as u64,
+            size: context::MaskUniforms::min_size().get(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -146,7 +147,7 @@ impl ApplicationHandler for App {
         // ---------- Final uniform buffer (Keep local) ----------
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Final Uniform Buffer"),
-            size: std::mem::size_of::<context::FinalUniforms>() as u64,
+            size: context::FinalUniforms::min_size().get(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -230,51 +231,55 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
                 // 1. Extract and immediately CLONE the device and queue handles to free up self fields.
-                // We also grab the viewport size locally so we don't borrow self inside the error blocks.
-                let (device, queue, viewport_width, viewport_height) = {
+                let (device, queue) = {
                     let (Some(d), Some(q)) = (&self.device, &self.queue) else {
                         return;
                     };
-                    (
-                        d.clone(),
-                        q.clone(),
-                        self.viewport_size.0,
-                        self.viewport_size.1,
-                    )
+                    (d.clone(), q.clone())
                 };
 
                 // 2. Fetch the current surface texture in an isolated short-lived block.
                 // This immediately ends the immutable borrow on self.surface so that downstream
                 // functions can mutably borrow self safely.
-                let surface_texture = {
-                    let Some(surf) = &self.surface else {
-                        return;
-                    };
-                    match surf.get_current_texture() {
-                        wgpu::CurrentSurfaceTexture::Success(t) => t,
-                        wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-                        wgpu::CurrentSurfaceTexture::Timeout
-                        | wgpu::CurrentSurfaceTexture::Outdated => {
-                            eprintln!("Surface state non-optimal: Outdated or Timeout");
-                            return;
-                        }
-                        wgpu::CurrentSurfaceTexture::Lost => {
-                            eprintln!("Surface critical failure: Lost! Reconfiguring...");
-                            let cfg = SurfaceConfiguration {
-                                usage: TextureUsages::RENDER_ATTACHMENT,
-                                format: TextureFormat::Rgba8UnormSrgb,
-                                width: viewport_width,
-                                height: viewport_height,
-                                present_mode: PresentMode::Immediate,
-                                alpha_mode: CompositeAlphaMode::Auto,
+                let surface_texture = match self.surface.as_ref().unwrap().get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(tex) => tex,
+                    wgpu::CurrentSurfaceTexture::Suboptimal(tex) => tex,
+                    wgpu::CurrentSurfaceTexture::Outdated => {
+                        eprintln!(
+                            "Surface state non-optimal: Outdated. Reconfiguring surface context..."
+                        );
+                        if self.viewport_size.0 > 0 && self.viewport_size.1 > 0 {
+                            let config = wgpu::SurfaceConfiguration {
+                                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                                width: self.viewport_size.0,
+                                height: self.viewport_size.1,
+                                present_mode: wgpu::PresentMode::Fifo,
+                                alpha_mode: wgpu::CompositeAlphaMode::Auto,
                                 view_formats: vec![],
                                 desired_maximum_frame_latency: 2,
-                                color_space: SurfaceColorSpace::Srgb,
+                                color_space: wgpu::SurfaceColorSpace::Srgb,
                             };
-                            surf.configure(&device, &cfg);
-                            return;
+                            self.surface
+                                .as_ref()
+                                .unwrap()
+                                .configure(self.device.as_ref().unwrap(), &config);
                         }
-                        _ => return,
+                        self.window.as_ref().unwrap().request_redraw();
+                        return;
+                    }
+                    wgpu::CurrentSurfaceTexture::Timeout => {
+                        self.window.as_ref().unwrap().request_redraw();
+                        return;
+                    }
+                    wgpu::CurrentSurfaceTexture::Lost => {
+                        self.window.as_ref().unwrap().request_redraw();
+                        return;
+                    }
+                    wgpu::CurrentSurfaceTexture::Occluded => return,
+                    wgpu::CurrentSurfaceTexture::Validation => {
+                        eprintln!("Internal Driver Surface Validation Error encountered.");
+                        return;
                     }
                 };
 
@@ -381,13 +386,38 @@ impl ApplicationHandler for App {
                 draw::run_mask_pass(&mut encoder, &queue, self, &actions);
 
                 // --- Pass 2: Final composition ---
-                if let Err(e) = draw::run_final_pass(&mut encoder, &queue, self, &surface_texture) {
-                    eprintln!("Final pass error: {:?}", e);
-                    return;
-                }
+                println!(
+                    "About to run final pass, pipeline: {:?}, bind_group: {:?}",
+                    self.pipeline.is_some(),
+                    self.bind_group.is_some()
+                );
+
+                let output_view = surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+
+                // Safely pull the references out of your Option wrappers and match your exact field names
+                draw::run_final_pass(
+                    self.device.as_ref().expect("Device must be initialized"),
+                    self.queue.as_ref().expect("Queue must be initialized"),
+                    self.pipeline
+                        .as_ref()
+                        .expect("Compositing pipeline must be initialized"),
+                    self.bind_group
+                        .as_ref()
+                        .expect("Compositing bind group must be initialized"),
+                    self.uniform_buffer
+                        .as_ref()
+                        .expect("Uniform buffer must be initialized"),
+                    &output_view,
+                    self.viewport_size,
+                    (self.last_frame_width, self.last_frame_height),
+                    &mut self.uniform_scratch_pad, // FIX: Pass mutable reference down to drawing loop
+                );
 
                 // ---------- Submit and present ----------
                 queue.submit(std::iter::once(encoder.finish()));
+                println!("Submitted encoder");
                 queue.present(surface_texture);
 
                 if needs_ack {
