@@ -35,7 +35,15 @@ impl ApplicationHandler for App {
         );
         self.window = Some(window.clone());
 
-        let instance = Instance::default();
+        // 1. Create a mutable instance descriptor with default env properties loaded
+        let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+
+        // 2. Hardcode the DirectX 12 driver directly onto the struct field mask
+        instance_descriptor.backends = wgpu::Backends::DX12;
+
+        // 3. Instantiate your pipeline with the finished descriptor properties
+        let instance = wgpu::Instance::new(instance_descriptor);
+
         let surface = instance.create_surface(window.clone()).unwrap();
         let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
             power_preference: PowerPreference::HighPerformance,
@@ -379,8 +387,9 @@ impl ApplicationHandler for App {
                     return;
                 }
 
-                let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Unified Frame Encoder"),
+                });
 
                 // --- Pass 1: Mask generation ---
                 draw::run_mask_pass(&mut encoder, &queue, self, &actions);
@@ -398,6 +407,7 @@ impl ApplicationHandler for App {
 
                 // Safely pull the references out of your Option wrappers and match your exact field names
                 draw::run_final_pass(
+                    &mut encoder,
                     self.device.as_ref().expect("Device must be initialized"),
                     self.queue.as_ref().expect("Queue must be initialized"),
                     self.pipeline
@@ -414,6 +424,44 @@ impl ApplicationHandler for App {
                     (self.last_frame_width, self.last_frame_height),
                     &mut self.uniform_scratch_pad, // FIX: Pass mutable reference down to drawing loop
                 );
+
+                // Professional Conditional Toggle Hook
+                #[cfg(feature = "debug_captures")]
+                {
+                    // Check if the runtime toggle environment variable is activated
+                    if std::env::var("CAPTURE_HEADLESS")
+                        .map_or(false, |v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    {
+                        // Trigger only if actions are actually active to capture a meaningful frame
+                        if !actions.is_empty() {
+                            println!(
+                                "[Debug Toggle] Capturing headless frame dump (Actions Count: {})...",
+                                actions.len()
+                            );
+
+                            draw::debug_dump_frame_headless(
+                                self.device.as_ref().expect("Device uninitialized"),
+                                self.queue.as_ref().expect("Queue uninitialized"),
+                                self.pipeline
+                                    .as_ref()
+                                    .expect("Compositing pipeline uninitialized"),
+                                self.bind_group
+                                    .as_ref()
+                                    .expect("Compositing bind group uninitialized"),
+                                self.uniform_buffer
+                                    .as_ref()
+                                    .expect("Uniform buffer uninitialized"),
+                                (self.last_frame_width, self.last_frame_height),
+                                &mut self.uniform_scratch_pad,
+                            );
+
+                            println!(
+                                "[Debug Toggle] Frame dump saved successfully. Terminating execution path."
+                            );
+                            std::process::exit(0);
+                        }
+                    }
+                }
 
                 // ---------- Submit and present ----------
                 queue.submit(std::iter::once(encoder.finish()));

@@ -13,8 +13,9 @@ struct ActionInstance {
     width: f32,
     height: f32,
     action_type: u32, // 1 = Blur, 2 = Blackbox
-    _pad: vec3<u32>,
+    _pad: array<u32, 3>,
 }
+
 @group(0) @binding(1) var<storage, read> actions: array<ActionInstance>;
 
 struct MaskVertexOutput {
@@ -74,28 +75,27 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<
 
 @fragment
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    // Convert current absolute pixel position into a direct, unscaled window UV (0.0 to 1.0)
-    let tex_uv = pos.xy / uniforms.viewport_size;
-
-    // Direct sampling with no boundary padding or letterbox truncation
-    let raw_color = textureSample(tex, samp, tex_uv);
-    let mask_val = textureSample(mask_tex, samp, tex_uv).r;
-    if mask_val > 0.1 {
-        return vec4<f32>(1.0, 0.0, 0.0, 1.0);
-    }
-    return raw_color;
+    let window_uv = pos.xy / uniforms.viewport_size;
+    let raw_color = textureSample(tex, samp, window_uv);
+    let mask_uv = (window_uv * uniforms.viewport_size) / uniforms.texture_size;
+    let mask_val = textureSample(mask_tex, samp, mask_uv).r;
 
     // Fast-path: no mask targeting active
     if mask_val < 0.1 {
         return raw_color;
     }
 
-    // Blackbox Action applied
+    // ============================================================================
+    // DEBUG TOGGLE: Uncomment the line below to turn masked regions bright red
+    // ============================================================================
+    // return vec4<f32>(1.0, 0.0, 0.0, 1.0); 
+
+    // Blackbox Action applied (mask clear value = 1.0)
     if mask_val > 0.8 {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
 
-    // 9-tap blur alignment
+    // 9-tap blur alignment (mask clear value = 0.5)
     let offset_px = 1.5 / uniforms.texture_size;
     var sum = vec4<f32>(0.0);
     let grid = array<vec2<f32>, 9>(
@@ -105,7 +105,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     );
 
     for (var i = 0u; i < 9u; i = i + 1u) {
-        let sample_uv = tex_uv + offset_px * grid[i];
+        let sample_uv = mask_uv + offset_px * grid[i];
         sum = sum + textureSampleLevel(tex, samp, sample_uv, 0.0);
     }
 
