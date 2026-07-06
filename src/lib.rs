@@ -1,3 +1,4 @@
+pub mod debug_config;
 pub mod inference;
 pub mod network;
 pub mod parser;

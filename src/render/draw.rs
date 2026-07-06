@@ -2,6 +2,7 @@ use super::context::{ActionInstance, App, FinalUniforms, MaskUniforms};
 use crate::protocol::{MAX_ACTIONS, VisualAction};
 
 use bytemuck;
+use std::sync::atomic::Ordering;
 use wgpu::{
     Color, CommandEncoder, LoadOp, Operations, Queue, RenderPassColorAttachment,
     RenderPassDescriptor, StoreOp, TextureFormat,
@@ -22,7 +23,10 @@ unsafe impl Sync for RenderDocCell {}
 
 /// Checks if a programmatic frame capture should be initiated.
 pub fn manage_renderdoc_capture() {
-    use std::sync::atomic::Ordering;
+    let debug = crate::debug_config::DebugConfig::get();
+    if !debug.renderdoc_capture {
+        return;
+    }
 
     // Global safe cell container
     static RD_INSTANCE: std::sync::OnceLock<Option<RenderDocCell>> = std::sync::OnceLock::new();
@@ -50,8 +54,6 @@ pub fn manage_renderdoc_capture() {
 
 /// Closes out the frame session trace and launches the replay view immediately.
 pub fn finalize_renderdoc_capture() {
-    use std::sync::atomic::Ordering;
-
     if IS_RECORDING.swap(false, Ordering::AcqRel) {
         if let Ok(mut rd_api) = renderdoc::RenderDoc::<renderdoc::V141>::new() {
             rd_api.end_frame_capture(std::ptr::null(), std::ptr::null());
@@ -64,8 +66,6 @@ pub fn finalize_renderdoc_capture() {
 }
 
 /// Saves the compiled composited screen frame directly to a data file on disk.
-/// This configuration is safely stripped from compilation completely unless explicitly requested.
-#[cfg(feature = "debug_captures")]
 pub fn debug_dump_frame_headless(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

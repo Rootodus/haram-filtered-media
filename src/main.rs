@@ -1,3 +1,4 @@
+use ml_filtered_browser::debug_config::DebugConfig;
 use ml_filtered_browser::network::start_ipc_server;
 use ml_filtered_browser::protocol::SEQ_LEN;
 use ml_filtered_browser::render::App;
@@ -12,6 +13,7 @@ use winit::event_loop::EventLoop;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let _ = DebugConfig::init();
     let (ack_tx, ack_rx) = tokio::sync::mpsc::channel::<()>(1);
     let state = Arc::new(SharedAppState::new(ack_tx));
 
@@ -95,13 +97,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting Window Event Loop...");
     event_loop.run_app(&mut app)?;
 
-    // End profiling for all sessions after the event loop exits
-    for session_arc in &sessions_for_profiling {
-        let mut session_guard = session_arc.lock().unwrap();
-        if let Ok(filename) = session_guard.end_profiling() {
-            println!("Profiling data written to: {}", filename);
-        } else {
-            eprintln!("Failed to end profiling for a session");
+    // End profiling for all sessions after the event loop exits (if enabled)
+    if DebugConfig::get().inference_profiling {
+        for session_arc in &sessions_for_profiling {
+            let mut session_guard = session_arc.lock().unwrap();
+            if let Ok(filename) = session_guard.end_profiling() {
+                println!("Profiling data written to: {}", filename);
+            } else {
+                eprintln!("Failed to end profiling for a session");
+            }
         }
     }
 

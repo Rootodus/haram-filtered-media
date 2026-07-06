@@ -425,41 +425,34 @@ impl ApplicationHandler for App {
                     &mut self.uniform_scratch_pad, // FIX: Pass mutable reference down to drawing loop
                 );
 
-                // Professional Conditional Toggle Hook
-                #[cfg(feature = "debug_captures")]
-                {
-                    // Check if the runtime toggle environment variable is activated
-                    if std::env::var("CAPTURE_HEADLESS")
-                        .map_or(false, |v| v == "1" || v.eq_ignore_ascii_case("true"))
-                    {
-                        // Trigger only if actions are actually active to capture a meaningful frame
-                        if !actions.is_empty() {
-                            println!(
-                                "[Debug Toggle] Capturing headless frame dump (Actions Count: {})...",
-                                actions.len()
-                            );
+                // Debug: headless frame dump (controlled by DUMP_FRAMES_HEADLESS env var)
+                if crate::debug_config::DebugConfig::get().dump_frames_headless {
+                    if !actions.is_empty() {
+                        println!(
+                            "[Debug Toggle] Capturing headless frame dump (Actions Count: {})...",
+                            actions.len()
+                        );
 
-                            draw::debug_dump_frame_headless(
-                                self.device.as_ref().expect("Device uninitialized"),
-                                self.queue.as_ref().expect("Queue uninitialized"),
-                                self.pipeline
-                                    .as_ref()
-                                    .expect("Compositing pipeline uninitialized"),
-                                self.bind_group
-                                    .as_ref()
-                                    .expect("Compositing bind group uninitialized"),
-                                self.uniform_buffer
-                                    .as_ref()
-                                    .expect("Uniform buffer uninitialized"),
-                                (self.last_frame_width, self.last_frame_height),
-                                &mut self.uniform_scratch_pad,
-                            );
+                        draw::debug_dump_frame_headless(
+                            self.device.as_ref().expect("Device uninitialized"),
+                            self.queue.as_ref().expect("Queue uninitialized"),
+                            self.pipeline
+                                .as_ref()
+                                .expect("Compositing pipeline uninitialized"),
+                            self.bind_group
+                                .as_ref()
+                                .expect("Compositing bind group uninitialized"),
+                            self.uniform_buffer
+                                .as_ref()
+                                .expect("Uniform buffer uninitialized"),
+                            (self.last_frame_width, self.last_frame_height),
+                            &mut self.uniform_scratch_pad,
+                        );
 
-                            println!(
-                                "[Debug Toggle] Frame dump saved successfully. Terminating execution path."
-                            );
-                            std::process::exit(0);
-                        }
+                        println!(
+                            "[Debug Toggle] Frame dump saved successfully. Terminating execution path."
+                        );
+                        std::process::exit(0);
                     }
                 }
 
