@@ -2,7 +2,9 @@ import net from "net";
 import * as flatbuffers from "flatbuffers";
 import puppeteer from "puppeteer";
 import { PNG } from "pngjs";
-import { Metadata, DomNode, Rect } from "./generated/schema.js";
+import { Metadata } from "./generated/schema/metadata.js";
+import { DomNode } from "./generated/schema/dom-node.js";
+import { Rect } from "./generated/schema/rect.js";
 
 const ADDR = "127.0.0.1";
 const PORT = 8080;
@@ -30,19 +32,27 @@ function buildFlatBuffer(
     for (const node of nodesArray) {
         const tagOffset = builder.createString(node.tag);
         const textOffset = node.text ? builder.createString(node.text) : null;
-        const rectOffset = Rect.createRect(
-            builder,
-            node.rect.x,
-            node.rect.y,
-            node.rect.width,
-            node.rect.height
-        );
+
+        // 1. Start the parent table first
         DomNode.startDomNode(builder);
         DomNode.addId(builder, node.id);
         DomNode.addTag(builder, tagOffset);
         DomNode.addHasText(builder, node.has_text);
         if (textOffset !== null) DomNode.addText(builder, textOffset);
-        DomNode.addRect(builder, rectOffset);
+
+        // 2. FIXED: Pass createRect DIRECTLY as an inline parameter!
+        // This allows the builder to peel the fields straight into the active struct slot.
+        DomNode.addRect(
+            builder,
+            Rect.createRect(
+                builder,
+                node.rect.x,
+                node.rect.y,
+                node.rect.width,
+                node.rect.height
+            )
+        );
+
         nodeOffsets.push(DomNode.endDomNode(builder));
     }
     const nodesVector = Metadata.createNodesVector(builder, nodeOffsets);
@@ -110,7 +120,7 @@ async function runSpike(): Promise<void> {
         encoding: "binary",
         type: "png",
     });
-    const png = PNG.sync.read(screenshotBuffer);
+    const png = PNG.sync.read(Buffer.from(screenshotBuffer));
     const pixelBuffer = png.data; // Uint8Array of RGBA
     const actualWidth = png.width;
     const actualHeight = png.height;

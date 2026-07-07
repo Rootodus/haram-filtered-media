@@ -13,7 +13,7 @@ use winit::window::Window;
 
 // Uniform structs matching shader
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ActionInstance {
     pub x: f32,
     pub y: f32,

@@ -71,6 +71,22 @@ pub fn run_inference_large(
     if let Some(meta) = metadata {
         if neg > pos {
             let nodes = meta.nodes().unwrap_or_default();
+
+            // Let's inspect the very first node extracted from the FlatBuffer network packet
+            if nodes.len() > 0 {
+                let first_node = nodes.get(0); // This directly returns DomNode safely!
+
+                // DBG PRINT: Let's print the basic fields to see if the rest of the node parses cleanly!
+                dbg!(first_node.id(), first_node.tag());
+
+                if let Some(rect) = first_node.rect() {
+                    // DBG PRINT: Let's see if the flatbuffer reader evaluates to zero on the CPU side!
+                    dbg!(rect.x(), rect.y(), rect.width(), rect.height());
+                } else {
+                    println!("DBG: First node has no rect table data available.");
+                }
+            }
+
             for i in 0..nodes.len() {
                 let node = nodes.get(i);
                 if let Some(rect) = node.rect() {

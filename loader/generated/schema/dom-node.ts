@@ -51,7 +51,7 @@ text(optionalEncoding?:any):string|Uint8Array|null {
 
 rect(obj?:Rect):Rect|null {
   const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? (obj || new Rect()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+  return offset ? (obj || new Rect()).__init(this.bb_pos + offset, this.bb!) : null;
 }
 
 static startDomNode(builder:flatbuffers.Builder) {
@@ -75,7 +75,7 @@ static addText(builder:flatbuffers.Builder, textOffset:flatbuffers.Offset) {
 }
 
 static addRect(builder:flatbuffers.Builder, rectOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, rectOffset, 0);
+  builder.addFieldStruct(4, rectOffset, 0);
 }
 
 static endDomNode(builder:flatbuffers.Builder):flatbuffers.Offset {

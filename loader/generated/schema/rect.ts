@@ -13,66 +13,33 @@ export class Rect {
   return this;
 }
 
-static getRootAsRect(bb:flatbuffers.ByteBuffer, obj?:Rect):Rect {
-  return (obj || new Rect()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-static getSizePrefixedRootAsRect(bb:flatbuffers.ByteBuffer, obj?:Rect):Rect {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Rect()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
 x():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+  return this.bb!.readFloat32(this.bb_pos);
 }
 
 y():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+  return this.bb!.readFloat32(this.bb_pos + 4);
 }
 
 width():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+  return this.bb!.readFloat32(this.bb_pos + 8);
 }
 
 height():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+  return this.bb!.readFloat32(this.bb_pos + 12);
 }
 
-static startRect(builder:flatbuffers.Builder) {
-  builder.startObject(4);
+static sizeOf():number {
+  return 16;
 }
 
-static addX(builder:flatbuffers.Builder, x:number) {
-  builder.addFieldFloat32(0, x, 0.0);
+static createRect(builder:flatbuffers.Builder, x: number, y: number, width: number, height: number):flatbuffers.Offset {
+  builder.prep(4, 16);
+  builder.writeFloat32(height);
+  builder.writeFloat32(width);
+  builder.writeFloat32(y);
+  builder.writeFloat32(x);
+  return builder.offset();
 }
 
-static addY(builder:flatbuffers.Builder, y:number) {
-  builder.addFieldFloat32(1, y, 0.0);
-}
-
-static addWidth(builder:flatbuffers.Builder, width:number) {
-  builder.addFieldFloat32(2, width, 0.0);
-}
-
-static addHeight(builder:flatbuffers.Builder, height:number) {
-  builder.addFieldFloat32(3, height, 0.0);
-}
-
-static endRect(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
-
-static createRect(builder:flatbuffers.Builder, x:number, y:number, width:number, height:number):flatbuffers.Offset {
-  Rect.startRect(builder);
-  Rect.addX(builder, x);
-  Rect.addY(builder, y);
-  Rect.addWidth(builder, width);
-  Rect.addHeight(builder, height);
-  return Rect.endRect(builder);
-}
 }

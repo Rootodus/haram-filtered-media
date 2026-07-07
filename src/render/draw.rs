@@ -330,6 +330,11 @@ pub fn run_mask_pass(
     );
 
     // Prepare action storage (remap: 0->1 blur, 1->2 blackbox)
+    let active_source = if !actions.is_empty() {
+        actions
+    } else {
+        &app.cached_actions
+    };
     let mut raw_actions = [ActionInstance {
         x: 0.0,
         y: 0.0,
@@ -338,31 +343,21 @@ pub fn run_mask_pass(
         action_type: 0,
         _pad: [0; 3],
     }; MAX_ACTIONS];
-    let active_source = if !actions.is_empty() {
-        actions
-    } else {
-        &app.cached_actions
-    };
-    // for (i, act) in active_source.iter().enumerate().take(MAX_ACTIONS) {
-    //     raw_actions[i] = ActionInstance {
-    //         x: act.rect[0],
-    //         y: act.rect[1],
-    //         width: act.rect[2],
-    //         height: act.rect[3],
-    //         action_type: if act.action_type == 0 { 1 } else { 2 },
-    //         _pad: [0; 3],
-    //     };
-    // }
-    // Temporary diagnostic override in src/render/draw.rs (Page 9)
-    // Force index 0 to contain a valid test rectangle manually!
-    raw_actions[0] = ActionInstance {
-        x: 0.1,
-        y: 0.1,
-        width: 0.5,
-        height: 0.5,
-        action_type: 1,
-        _pad: [0; 3],
-    };
+    for (i, act) in active_source.iter().enumerate().take(MAX_ACTIONS) {
+        // Direct layout assignment matching inference.rs array layout!
+        raw_actions[i] = ActionInstance {
+            x: act.rect[0],      // Raw X percentage position
+            y: act.rect[1],      // Raw Y percentage position
+            width: act.rect[2],  // Raw Width percentage scale
+            height: act.rect[3], // Raw Height percentage scale
+            action_type: if act.action_type == 0 { 1 } else { 2 },
+            _pad: [0; 3],
+        };
+        if i == 0 && !active_source.is_empty() {
+            dbg!(&raw_actions[0]); // This prints the first rectangle to your console!
+        }
+    }
+
     queue.write_buffer(
         app.mask_storage_buffer.as_ref().unwrap(),
         0,

@@ -387,6 +387,7 @@ impl ApplicationHandler for App {
                         }
                         if !all_actions.is_empty() {
                             println!("Total actions produced: {}", all_actions.len());
+                            dbg!(&all_actions[0]);
                             self.cached_actions = all_actions.clone();
                             self.state.set_actions(all_actions.clone());
                         } else {
@@ -416,6 +417,49 @@ impl ApplicationHandler for App {
                 if !actions.is_empty() {
                     draw::manage_renderdoc_capture();
                 }
+
+                // ============================================================================
+                // DYNAMIC UPDATE: Re-bind the live data buffer continuously on every loop pass
+                // ============================================================================
+                let updated_final_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Live Diagnostic Bind Group"),
+                    layout: self.bind_group_layout.as_ref().unwrap(),
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(
+                                self.frame_texture_view.as_ref().unwrap(),
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(
+                                self.sampler.as_ref().unwrap(),
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(
+                                self.mask_texture_view.as_ref().unwrap(),
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: self.uniform_buffer.as_ref().unwrap().as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            // FORCE the real live mask data buffer to link to the fragment shader pass continuously!
+                            resource: self
+                                .mask_storage_buffer
+                                .as_ref()
+                                .unwrap()
+                                .as_entire_binding(),
+                        },
+                    ],
+                });
+                self.bind_group = Some(updated_final_group);
+                // ============================================================================
 
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Unified Frame Encoder"),

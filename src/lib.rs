@@ -9,3 +9,4 @@ pub mod tokenizer;
 
 // Include generated FlatBuffer bindings
 include!(concat!(env!("OUT_DIR"), "/flatbuffers/mod.rs"));
+// Fake comment to force cargo to update the flatbuffer cache macro
