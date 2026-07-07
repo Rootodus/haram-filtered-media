@@ -1,3 +1,4 @@
+use crate::protocol::VisualAction;
 use crate::shared_state::SharedAppState;
 
 use encase::ShaderType;
@@ -49,6 +50,7 @@ pub struct App {
     pub bind_group: Option<BindGroup>,
     pub viewport_size: (u32, u32),
     pub uniform_scratch_pad: Vec<u8>,
+    pub cached_actions: Vec<VisualAction>,
 
     // Mask rendering resources
     pub mask_texture: Option<Texture>,
@@ -81,6 +83,7 @@ impl App {
             bind_group: None,
             viewport_size: (1, 1),
             uniform_scratch_pad: Vec::with_capacity(64),
+            cached_actions: Vec::new(),
             mask_texture: None,
             mask_texture_view: None,
             mask_pipeline: None,

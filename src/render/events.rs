@@ -112,11 +112,13 @@ impl ApplicationHandler for App {
         self.sampler = Some(sampler.clone());
 
         // ---------- Mask resources (Keep in local variables first!) ----------
+        let mask_width = 1280u32;
+        let mask_height = 720u32;
         let mask_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Mask Texture"),
             size: wgpu::Extent3d {
-                width: size.width.max(1),
-                height: size.height.max(1),
+                width: mask_width,
+                height: mask_height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -370,6 +372,7 @@ impl ApplicationHandler for App {
                         }
                         if !all_actions.is_empty() {
                             println!("Total actions produced: {}", all_actions.len());
+                            self.cached_actions = all_actions.clone();
                             self.state.set_actions(all_actions.clone());
                         } else {
                             self.state.set_actions(Vec::new());
@@ -404,7 +407,7 @@ impl ApplicationHandler for App {
                 });
 
                 // --- Pass 1: Mask generation ---
-                draw::run_mask_pass(&mut encoder, &queue, self, &actions);
+                draw::run_mask_pass(&mut encoder, &queue, self, &self.cached_actions.clone());
 
                 // --- Pass 2: Final composition ---
                 // println!(

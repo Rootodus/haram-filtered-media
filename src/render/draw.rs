@@ -305,7 +305,10 @@ pub fn run_mask_pass(
 
     // FIX: Pack directly into our newly refactored glam matrix layout
     let mask_uniform = MaskUniforms {
-        texture_size: glam::vec2(app.last_frame_width as f32, app.last_frame_height as f32),
+        texture_size: glam::vec2(
+            app.mask_texture.as_ref().unwrap().width() as f32,
+            app.mask_texture.as_ref().unwrap().height() as f32,
+        ),
     };
 
     // FIX: Clear and re-use our high-performance scratch pad vector
