@@ -40,9 +40,13 @@ impl ApplicationHandler for App {
         let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         instance_descriptor.backends = wgpu::Backends::DX12;
 
+        // Clear default flags out so it doesn't try to create a debugging factory context
+        instance_descriptor.flags = wgpu::InstanceFlags::empty();
+
         if debug.gpu_validation {
-            instance_descriptor.flags =
-                wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG;
+            // Only pass validation; do NOT include the base .DEBUG flag
+            // because RenderDoc handles driver debugging layers on its own!
+            instance_descriptor.flags = wgpu::InstanceFlags::VALIDATION;
         }
 
         let instance = wgpu::Instance::new(instance_descriptor);
