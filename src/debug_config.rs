@@ -7,6 +7,7 @@ pub struct DebugConfig {
     pub renderdoc_max_frames: u32,
     pub dump_frames_headless: bool, // formerly #[cfg(feature = "debug_captures")]
     pub inference_profiling: bool,  // to control ort session profiling
+    pub gpu_validation: bool,
     pub log_level: LogLevel,
 }
 
@@ -30,6 +31,7 @@ impl DebugConfig {
             renderdoc_max_frames: env_parse("RENDERDOC_MAX_FRAMES", 1).max(1),
             dump_frames_headless: env_bool("DUMP_FRAMES_HEADLESS", false),
             inference_profiling: env_bool("PROFILE_INFERENCE", false),
+            gpu_validation: env_bool("GPU_VALIDATION", false),
             log_level: match std::env::var("LOG_LEVEL")
                 .unwrap_or_default()
                 .to_lowercase()

@@ -35,13 +35,16 @@ impl ApplicationHandler for App {
         );
         self.window = Some(window.clone());
 
-        // 1. Create a mutable instance descriptor with default env properties loaded
-        let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        let debug = crate::debug_config::DebugConfig::get();
 
-        // 2. Hardcode the DirectX 12 driver directly onto the struct field mask
+        let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         instance_descriptor.backends = wgpu::Backends::DX12;
 
-        // 3. Instantiate your pipeline with the finished descriptor properties
+        if debug.gpu_validation {
+            instance_descriptor.flags =
+                wgpu::InstanceFlags::VALIDATION | wgpu::InstanceFlags::DEBUG;
+        }
+
         let instance = wgpu::Instance::new(instance_descriptor);
 
         let surface = instance.create_surface(window.clone()).unwrap();

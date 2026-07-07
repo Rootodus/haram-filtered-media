@@ -13,6 +13,7 @@ use winit::event_loop::EventLoop;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let _ = DebugConfig::init();
     let (ack_tx, ack_rx) = tokio::sync::mpsc::channel::<()>(1);
     let state = Arc::new(SharedAppState::new(ack_tx));
