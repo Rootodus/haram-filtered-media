@@ -87,6 +87,19 @@ pub fn create_pipelines(device: &Device) -> Pipelines {
                 },
                 count: None,
             },
+            // ====================================================================
+            // ADD THIS ENTRY AT THE END: Binding 4 for storage data inspection
+            // ====================================================================
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
         ],
     });
 

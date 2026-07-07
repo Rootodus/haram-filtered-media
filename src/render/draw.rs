@@ -283,6 +283,15 @@ pub fn upload_frame_texture(
                         binding: 3,
                         resource: app.uniform_buffer.as_ref().unwrap().as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        // Safely reads from the active app struct parameter available in this scope!
+                        resource: app
+                            .mask_storage_buffer
+                            .as_ref()
+                            .unwrap()
+                            .as_entire_binding(),
+                    },
                 ],
             });
 
@@ -303,12 +312,8 @@ pub fn run_mask_pass(
         return;
     }
 
-    // FIX: Pack directly into our newly refactored glam matrix layout
     let mask_uniform = MaskUniforms {
-        texture_size: glam::vec2(
-            app.mask_texture.as_ref().unwrap().width() as f32,
-            app.mask_texture.as_ref().unwrap().height() as f32,
-        ),
+        texture_size: glam::vec2(1280.0, 720.0),
     };
 
     // FIX: Clear and re-use our high-performance scratch pad vector
@@ -333,16 +338,31 @@ pub fn run_mask_pass(
         action_type: 0,
         _pad: [0; 3],
     }; MAX_ACTIONS];
-    for (i, act) in actions.iter().enumerate().take(MAX_ACTIONS) {
-        raw_actions[i] = ActionInstance {
-            x: act.rect[0],
-            y: act.rect[1],
-            width: act.rect[2],
-            height: act.rect[3],
-            action_type: if act.action_type == 0 { 1 } else { 2 },
-            _pad: [0; 3],
-        };
-    }
+    let active_source = if !actions.is_empty() {
+        actions
+    } else {
+        &app.cached_actions
+    };
+    // for (i, act) in active_source.iter().enumerate().take(MAX_ACTIONS) {
+    //     raw_actions[i] = ActionInstance {
+    //         x: act.rect[0],
+    //         y: act.rect[1],
+    //         width: act.rect[2],
+    //         height: act.rect[3],
+    //         action_type: if act.action_type == 0 { 1 } else { 2 },
+    //         _pad: [0; 3],
+    //     };
+    // }
+    // Temporary diagnostic override in src/render/draw.rs (Page 9)
+    // Force index 0 to contain a valid test rectangle manually!
+    raw_actions[0] = ActionInstance {
+        x: 0.1,
+        y: 0.1,
+        width: 0.5,
+        height: 0.5,
+        action_type: 1,
+        _pad: [0; 3],
+    };
     queue.write_buffer(
         app.mask_storage_buffer.as_ref().unwrap(),
         0,

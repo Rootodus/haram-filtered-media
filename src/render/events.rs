@@ -204,7 +204,15 @@ impl ApplicationHandler for App {
             })
             .create_view(&Default::default());
 
-        // Create final bind group using the local variables safely
+        // 1. Create a quick, temporary dummy buffer to satisfy binding layout requirements at boot
+        let dummy_inspect_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Dummy Inspect Buffer"),
+            size: 64, // Small placeholder size
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        // 2. Create final bind group using the local variables safely
         let final_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Final Bind Group"),
             layout: &pipelines.final_bind_group_layout,
@@ -224,6 +232,13 @@ impl ApplicationHandler for App {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: uniform_buffer.as_entire_binding(),
+                },
+                // ====================================================================
+                // FIXED ENTRY: Safely bind the temporary dummy layout buffer
+                // ====================================================================
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: dummy_inspect_buffer.as_entire_binding(),
                 },
             ],
         });
