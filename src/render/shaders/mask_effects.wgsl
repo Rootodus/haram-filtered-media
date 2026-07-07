@@ -29,8 +29,8 @@ fn vs_mask(
     @builtin(instance_index) instance_index: u32
 ) -> MaskVertexOutput {
     let act = actions[instance_index];
-    let tx = f32(vertex_index & 1u);
-    let ty = f32((vertex_index >> 1u) & 1u);
+    let tx = f32(vertex_index == 1u || vertex_index == 3u);
+    let ty = f32(vertex_index >= 2u);
 
     let px = act.x + (tx * act.width);
     let py = act.y + (ty * act.height);

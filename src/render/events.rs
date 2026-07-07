@@ -394,6 +394,11 @@ impl ApplicationHandler for App {
                     return;
                 }
 
+                // Start RenderDoc capture NOW, before any GPU commands, if we have actions
+                if !actions.is_empty() {
+                    draw::manage_renderdoc_capture();
+                }
+
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Unified Frame Encoder"),
                 });
@@ -467,6 +472,9 @@ impl ApplicationHandler for App {
                 queue.submit(std::iter::once(encoder.finish()));
                 // println!("Submitted encoder");
                 queue.present(surface_texture);
+
+                // End RenderDoc capture AFTER present, only if one was started
+                draw::finalize_renderdoc_capture();
 
                 if needs_ack {
                     let _ = self.state.ack_sender.try_send(());

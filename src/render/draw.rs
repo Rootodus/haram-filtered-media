@@ -2,6 +2,7 @@ use super::context::{ActionInstance, App, FinalUniforms, MaskUniforms};
 use crate::protocol::{MAX_ACTIONS, VisualAction};
 
 use bytemuck;
+use std::sync::Once;
 use std::sync::atomic::Ordering;
 use wgpu::{
     Color, CommandEncoder, LoadOp, Operations, Queue, RenderPassColorAttachment,
@@ -54,13 +55,17 @@ pub fn manage_renderdoc_capture() {
 
 /// Closes out the frame session trace and launches the replay view immediately.
 pub fn finalize_renderdoc_capture() {
+    static LAUNCH_UI: Once = Once::new();
+
     if IS_RECORDING.swap(false, Ordering::AcqRel) {
         if let Ok(mut rd_api) = renderdoc::RenderDoc::<renderdoc::V141>::new() {
             rd_api.end_frame_capture(std::ptr::null(), std::ptr::null());
             println!("[RenderDoc] Frame trace written successfully!");
 
-            // Bring up the replay monitor overlay window pane
-            let _ = rd_api.launch_replay_ui(true, None);
+            // Launch the replay UI only once, even if called multiple times
+            LAUNCH_UI.call_once(|| {
+                let _ = rd_api.launch_replay_ui(true, None);
+            });
         }
     }
 }
@@ -291,8 +296,6 @@ pub fn run_mask_pass(
     app: &mut App,
     actions: &[VisualAction],
 ) {
-    manage_renderdoc_capture();
-
     if app.mask_texture_view.is_none()
         || app.mask_pipeline.is_none()
         || app.mask_bind_group.is_none()
@@ -368,6 +371,7 @@ pub fn run_mask_pass(
         mask_pass.set_bind_group(0, app.mask_bind_group.as_ref().unwrap(), &[]);
         mask_pass.draw(0..4, 0..action_count);
     }
+    drop(mask_pass);
 }
 
 pub fn run_final_pass(
@@ -438,6 +442,4 @@ pub fn run_final_pass(
         render_pass.set_bind_group(0, bind_group, &[]);
         render_pass.draw(0..4, 0..1);
     }
-
-    finalize_renderdoc_capture();
 }
