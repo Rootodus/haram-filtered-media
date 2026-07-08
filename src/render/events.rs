@@ -1,4 +1,4 @@
-use super::{App, context, draw, pipeline};
+use super::{App, CustomAppEvent, context, draw, pipeline};
 use crate::inference::run_inference_large;
 use crate::protocol::{MAX_ACTIONS, SEQ_LEN};
 use crate::schema::Metadata;
@@ -22,7 +22,22 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId};
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<CustomAppEvent> for App {
+    fn user_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        event: CustomAppEvent,
+    ) {
+        match event {
+            CustomAppEvent::RequestShutdown => {
+                println!(
+                    "[Winit] Shutdown request received from background signal thread. Exiting window event loop..."
+                );
+                event_loop.exit();
+            }
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -317,87 +332,15 @@ impl ApplicationHandler for App {
 
                 // ---------- Data update (inference) ----------
                 let mut needs_ack = false;
-                let mut actions = Vec::new();
+                let mut actions: Vec<crate::protocol::VisualAction> = Vec::new();
 
                 if let Some(frame) = self.state.get_frame_if_dirty() {
-                    let should_skip = SKIP_NEXT_INFERENCE.swap(false, Ordering::AcqRel);
-                    let has_active_sessions = !self.sessions.is_empty();
+                    // Skip inference for now (Phase 2: only display screenshot)
+                    let actions = Vec::new();
+                    self.cached_actions = actions.clone();
+                    self.state.set_actions(actions);
 
-                    if !should_skip && has_active_sessions {
-                        INFERENCE_RUNNING.store(true, Ordering::Relaxed);
-                        let metadata =
-                            unsafe { flatbuffers::root_unchecked::<Metadata>(&frame.buffer) };
-                        let nodes = metadata.nodes().unwrap_or_default();
-                        let mut full_text = String::new();
-                        for i in 0..nodes.len() {
-                            let node = nodes.get(i);
-                            if let Some(text) = node.text() {
-                                if !text.is_empty() {
-                                    full_text.push_str(text);
-                                    full_text.push(' ');
-                                }
-                            }
-                        }
-                        if full_text.is_empty() {
-                            full_text.push_str("empty");
-                        }
-                        let (input_ids_vec, attention_mask_vec) = tokenize(&full_text, SEQ_LEN);
-                        let ids_array = Array2::from_shape_vec((1, SEQ_LEN), input_ids_vec)
-                            .expect("Failed to create input_ids array");
-                        let mask_array = Array2::from_shape_vec((1, SEQ_LEN), attention_mask_vec)
-                            .expect("Failed to create attention_mask array");
-                        let ids_value = Value::from_array(ids_array)
-                            .expect("Failed to create input_ids Value")
-                            .into_dyn();
-                        let mask_value = Value::from_array(mask_array)
-                            .expect("Failed to create attention_mask Value")
-                            .into_dyn();
-                        let ids_arc = Arc::new(ids_value);
-                        let mask_arc = Arc::new(mask_value);
-                        let buffer_arc = Arc::clone(&frame.buffer);
-                        let mut handles = Vec::with_capacity(self.sessions.len());
-
-                        for session_arc in &self.sessions {
-                            let session_clone = Arc::clone(session_arc);
-                            let ids_clone = Arc::clone(&ids_arc);
-                            let mask_clone = Arc::clone(&mask_arc);
-                            let buffer_clone = Arc::clone(&buffer_arc);
-                            let handle = spawn_blocking(move || {
-                                let metadata = unsafe {
-                                    flatbuffers::root_unchecked::<Metadata>(&buffer_clone)
-                                };
-                                let mut session_guard = session_clone.lock().unwrap();
-                                run_inference_large(
-                                    &mut session_guard,
-                                    &ids_clone,
-                                    &mask_clone,
-                                    Some(&metadata),
-                                )
-                            });
-                            handles.push(handle);
-                        }
-                        let mut all_actions = Vec::new();
-                        let results = pollster::block_on(join_all(handles));
-                        for res in results {
-                            match res {
-                                Ok(Ok(actions)) => all_actions.extend(actions),
-                                Ok(Err(e)) => eprintln!("Inference error: {}", e),
-                                Err(e) => eprintln!("Task panicked: {}", e),
-                            }
-                        }
-                        if !all_actions.is_empty() {
-                            println!("Total actions produced: {}", all_actions.len());
-                            dbg!(&all_actions[0]);
-                            self.cached_actions = all_actions.clone();
-                            self.state.set_actions(all_actions.clone());
-                        } else {
-                            self.state.set_actions(Vec::new());
-                        }
-                        actions = all_actions;
-                        INFERENCE_RUNNING.store(false, Ordering::Relaxed);
-                    }
-
-                    // Upload frame texture - completely safe now!
+                    // Upload frame texture - unchanged
                     draw::upload_frame_texture(
                         &queue,
                         self,
@@ -407,6 +350,95 @@ impl ApplicationHandler for App {
                     );
                     needs_ack = true;
                 }
+
+                // if let Some(frame) = self.state.get_frame_if_dirty() {
+                //     let should_skip = SKIP_NEXT_INFERENCE.swap(false, Ordering::AcqRel);
+                //     let has_active_sessions = !self.sessions.is_empty();
+
+                //     if !should_skip && has_active_sessions {
+                //         INFERENCE_RUNNING.store(true, Ordering::Relaxed);
+                //         let metadata =
+                //             unsafe { flatbuffers::root_unchecked::<Metadata>(&frame.buffer) };
+                //         let nodes = metadata.nodes().unwrap_or_default();
+                //         let mut full_text = String::new();
+                //         for i in 0..nodes.len() {
+                //             let node = nodes.get(i);
+                //             if let Some(text) = node.text() {
+                //                 if !text.is_empty() {
+                //                     full_text.push_str(text);
+                //                     full_text.push(' ');
+                //                 }
+                //             }
+                //         }
+                //         if full_text.is_empty() {
+                //             full_text.push_str("empty");
+                //         }
+                //         let (input_ids_vec, attention_mask_vec) = tokenize(&full_text, SEQ_LEN);
+                //         let ids_array = Array2::from_shape_vec((1, SEQ_LEN), input_ids_vec)
+                //             .expect("Failed to create input_ids array");
+                //         let mask_array = Array2::from_shape_vec((1, SEQ_LEN), attention_mask_vec)
+                //             .expect("Failed to create attention_mask array");
+                //         let ids_value = Value::from_array(ids_array)
+                //             .expect("Failed to create input_ids Value")
+                //             .into_dyn();
+                //         let mask_value = Value::from_array(mask_array)
+                //             .expect("Failed to create attention_mask Value")
+                //             .into_dyn();
+                //         let ids_arc = Arc::new(ids_value);
+                //         let mask_arc = Arc::new(mask_value);
+                //         let buffer_arc = Arc::clone(&frame.buffer);
+                //         let mut handles = Vec::with_capacity(self.sessions.len());
+
+                //         for session_arc in &self.sessions {
+                //             let session_clone = Arc::clone(session_arc);
+                //             let ids_clone = Arc::clone(&ids_arc);
+                //             let mask_clone = Arc::clone(&mask_arc);
+                //             let buffer_clone = Arc::clone(&buffer_arc);
+                //             let handle = spawn_blocking(move || {
+                //                 let metadata = unsafe {
+                //                     flatbuffers::root_unchecked::<Metadata>(&buffer_clone)
+                //                 };
+                //                 let mut session_guard = session_clone.lock().unwrap();
+                //                 run_inference_large(
+                //                     &mut session_guard,
+                //                     &ids_clone,
+                //                     &mask_clone,
+                //                     Some(&metadata),
+                //                 )
+                //             });
+                //             handles.push(handle);
+                //         }
+                //         let mut all_actions = Vec::new();
+                //         let results = pollster::block_on(join_all(handles));
+                //         for res in results {
+                //             match res {
+                //                 Ok(Ok(actions)) => all_actions.extend(actions),
+                //                 Ok(Err(e)) => eprintln!("Inference error: {}", e),
+                //                 Err(e) => eprintln!("Task panicked: {}", e),
+                //             }
+                //         }
+                //         if !all_actions.is_empty() {
+                //             println!("Total actions produced: {}", all_actions.len());
+                //             dbg!(&all_actions[0]);
+                //             self.cached_actions = all_actions.clone();
+                //             self.state.set_actions(all_actions.clone());
+                //         } else {
+                //             self.state.set_actions(Vec::new());
+                //         }
+                //         actions = all_actions;
+                //         INFERENCE_RUNNING.store(false, Ordering::Relaxed);
+                //     }
+
+                //     // Upload frame texture - completely safe now!
+                //     draw::upload_frame_texture(
+                //         &queue,
+                //         self,
+                //         frame.width,
+                //         frame.height,
+                //         &frame.pixel_data,
+                //     );
+                //     needs_ack = true;
+                // }
 
                 // ---------- Begin rendering ----------
                 if self.frame_texture_view.is_none() || self.mask_texture_view.is_none() {

@@ -34,6 +34,11 @@ pub struct FinalUniforms {
     pub viewport_size: Vec2,
 }
 
+#[derive(Debug)]
+pub enum CustomAppEvent {
+    RequestShutdown,
+}
+
 pub struct App {
     pub window: Option<Arc<Window>>,
     pub surface: Option<Surface<'static>>,

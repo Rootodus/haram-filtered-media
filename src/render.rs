@@ -3,4 +3,4 @@ mod draw;
 mod events;
 mod pipeline;
 
-pub use context::App;
+pub use context::{App, CustomAppEvent};

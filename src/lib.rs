@@ -1,12 +1,13 @@
+pub mod browser;
 pub mod debug_config;
 pub mod inference;
-pub mod network;
-pub mod parser;
+//pub mod network;
+//pub mod parser;
 pub mod protocol;
 pub mod render;
 pub mod shared_state;
 pub mod tokenizer;
+pub mod types;
 
 // Include generated FlatBuffer bindings
 include!(concat!(env!("OUT_DIR"), "/flatbuffers/mod.rs"));
-// Fake comment to force cargo to update the flatbuffer cache macro

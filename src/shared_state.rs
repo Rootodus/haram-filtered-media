@@ -1,13 +1,14 @@
+use crate::types::DomNode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Shared frame data: FlatBuffer bytes + raw pixel data
-#[derive(Clone)] // Required for `lock.clone()`
+/// Shared frame data: DOM nodes + raw pixel data
+#[derive(Clone)]
 pub struct FrameState {
     pub timestamp: u64,
     pub width: u32,
     pub height: u32,
-    pub buffer: Arc<[u8]>, // FlatBuffer bytes
+    pub nodes: Vec<DomNode>, // replaced buffer: Arc<[u8]>
     pub pixel_data: Arc<[u8]>,
 }
 
@@ -41,14 +42,14 @@ impl SharedAppState {
         timestamp: u64,
         width: u32,
         height: u32,
-        buffer: Arc<[u8]>,
+        nodes: Vec<DomNode>,
         pixel_data: Arc<[u8]>,
     ) {
         let new_frame = FrameState {
             timestamp,
             width,
             height,
-            buffer,
+            nodes,
             pixel_data,
         };
         if let Ok(mut lock) = self.frame.lock() {
