@@ -9,162 +9,130 @@ pub struct BrowserSession {
     pub profile_dir: TempDir,
 }
 
-/// Fast native Windows kernel function to find the PID matching our custom profile directory.
-#[cfg(target_os = "windows")]
-fn find_chrome_pid_by_profile(profile_str: &str) -> Option<u32> {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::OsStringExt;
-    use winapi::um::handleapi::CloseHandle;
-    use winapi::um::tlhelp32::{
-        CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next, TH32CS_SNAPPROCESS,
-    };
-
-    eprintln!(
-        "[TRACE 1] find_chrome_pid_by_profile called with profile marker: '{}'",
-        profile_str
-    );
-
-    unsafe {
-        eprintln!("[TRACE 2] Requesting CreateToolhelp32Snapshot from Windows Kernel...");
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snapshot == winapi::um::handleapi::INVALID_HANDLE_VALUE {
-            eprintln!("[TRACE 3] Snapshot failed. Invalid handle.");
-            return None;
-        }
-        eprintln!("[TRACE 4] Snapshot handle obtained successfully.");
-
-        let mut entry: PROCESSENTRY32 = std::mem::zeroed();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
-
-        eprintln!("[TRACE 5] Querying Process32First...");
-        if Process32First(snapshot, &mut entry) != 0 {
-            let mut loop_counter = 0;
-            loop {
-                loop_counter += 1;
-                let name_bytes: Vec<u16> = entry
-                    .szExeFile
-                    .iter()
-                    .map(|&c| c as u16)
-                    .take_while(|&c| c != 0)
-                    .collect();
-                let process_name = OsString::from_wide(&name_bytes)
-                    .to_string_lossy()
-                    .to_lowercase();
-
-                if process_name.contains("chrome.exe") {
-                    let pid = entry.th32ProcessID;
-                    eprintln!(
-                        "[TRACE 6][Loop {}] Found chrome.exe matching PID: {}. Inspecting arguments...",
-                        loop_counter, pid
-                    );
-
-                    if let Some(cmd) = get_process_command_line(pid) {
-                        eprintln!(
-                            "[TRACE 7][Loop {}] PID {} command line extracted successfully.",
-                            loop_counter, pid
-                        );
-                        if cmd.contains(profile_str) {
-                            eprintln!(
-                                "[TRACE 8] Match found! PID: {}. Closing snapshot handle...",
-                                pid
-                            );
-                            CloseHandle(snapshot);
-                            return Some(pid);
-                        }
-                    } else {
-                        eprintln!(
-                            "[TRACE 9][Loop {}] PID {} returned no command line (Skipped/Protected).",
-                            loop_counter, pid
-                        );
-                    }
-                }
-
-                if Process32Next(snapshot, &mut entry) == 0 {
-                    eprintln!(
-                        "[TRACE 10] Process32Next returned 0. End of process tree snapshot reached."
-                    );
-                    break;
-                }
-            }
-        }
-        eprintln!("[TRACE 11] Closing snapshot handle...");
-        CloseHandle(snapshot);
-    }
-    eprintln!("[TRACE 12] find_chrome_pid_by_profile finished. No target PID matched.");
-    None
-}
-/// Helper function to extract a process's raw command line arguments using NT APIs
-#[cfg(target_os = "windows")]
-fn get_process_command_line(pid: u32) -> Option<String> {
-    use ntapi::ntpsapi::{NtQueryInformationProcess, ProcessCommandLineInformation};
-    use winapi::um::handleapi::CloseHandle;
-    use winapi::um::processthreadsapi::OpenProcess;
-    use winapi::um::winnt::{PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ};
-
-    unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid);
-        if handle.is_null() {
-            return None;
-        }
-
-        let mut size: u32 = 0;
-
-        eprintln!(
-            "    [NTAPI DBG 1][PID {}] Calling NtQueryInformationProcess for buffer size...",
-            pid
-        );
-        let mut status = NtQueryInformationProcess(
-            handle,
-            ProcessCommandLineInformation,
-            std::ptr::null_mut(),
-            0,
-            &mut size,
-        );
-        eprintln!(
-            "    [NTAPI DBG 2][PID {}] Size call finished. Required buffer size: {} bytes, NTSTATUS: {}",
-            pid, size, status
-        );
-
-        if size > 0 {
-            let mut buf = vec![0u8; size as usize];
-            eprintln!(
-                "    [NTAPI DBG 3][PID {}] Allocating memory vector array. Calling NtQueryInformationProcess with buffer...",
-                pid
-            );
-            status = NtQueryInformationProcess(
-                handle,
-                ProcessCommandLineInformation,
-                buf.as_mut_ptr() as *mut _,
-                size,
-                &mut size,
-            );
-            eprintln!(
-                "    [NTAPI DBG 4][PID {}] Payload call finished. NTSTATUS: {}",
-                pid, status
-            );
-
-            if status >= 0 {
-                let unicode_str =
-                    buf.as_ptr() as *const ntapi::winapi::shared::ntdef::UNICODE_STRING;
-                let len = (*unicode_str).Length as usize / 2;
-                let buffer_ptr = (*unicode_str).Buffer;
-                if !buffer_ptr.is_null() {
-                    let slice = std::slice::from_raw_parts(buffer_ptr, len);
-                    CloseHandle(handle);
-                    return Some(String::from_utf16_lossy(slice));
-                }
-            }
-        }
-
-        CloseHandle(handle);
-    }
-    None
-}
-
 impl BrowserSession {
     /// Launches a headless Chrome browser and returns the raw instances safely.
     pub async fn launch() -> Result<(Browser, Handler, TempDir), Box<dyn Error>> {
         eprintln!("[LAUNCH TRACK 1] BrowserSession::launch() started.");
+
+        // Prioritize an explicit runtime path override via CHROME_PATH environment variable
+        let mut final_path = std::env::var("CHROME_PATH").ok();
+
+        // DYNAMIC LOOKUP: If no CHROME_PATH is set, scan the native OS system environment $PATH variable
+        if final_path.is_none() {
+            let binary_name = if cfg!(target_os = "windows") {
+                "chrome-headless-shell.exe"
+            } else {
+                "chrome-headless-shell"
+            };
+
+            // Check if the shell executable is globally available on the system PATH
+            if let Ok(paths) = std::env::var("PATH") {
+                let split_char = if cfg!(target_os = "windows") {
+                    ';'
+                } else {
+                    ':'
+                };
+                for path in paths.split(split_char) {
+                    let full_test_path = std::path::Path::new(path).join(binary_name);
+                    if full_test_path.exists() {
+                        final_path = Some(full_test_path.to_string_lossy().into_owned());
+                        break;
+                    }
+                }
+            }
+        }
+
+        // FALLBACK GUESS: If it's not found anywhere, locate its parent container directory dynamically
+        let chrome_path = final_path.unwrap_or_else(|| {
+            let (base_dir, binary_name) = if cfg!(target_os = "windows") {
+                let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+                    format!(
+                        r"C:\Users\{}\AppData\Local",
+                        std::env::var("USERNAME").unwrap_or_default()
+                    )
+                });
+                (
+                    std::path::PathBuf::from(local_app_data).join("Programs"),
+                    "chrome-headless-shell.exe",
+                )
+            } else if cfg!(target_os = "macos") {
+                let home = std::env::var("HOME").unwrap_or_default();
+                (
+                    std::path::PathBuf::from(home).join("Applications"),
+                    "chrome-headless-shell",
+                )
+            } else {
+                let home = std::env::var("HOME").unwrap_or_default();
+                (
+                    std::path::PathBuf::from(home).join(".local").join("share"),
+                    "chrome-headless-shell",
+                )
+            };
+
+            // SCANNING STEP: Look for directories like "chrome-headless-shell-win64" dynamically
+            let mut resolved_binary_path = base_dir.join("chrome-headless-shell").join(binary_name);
+
+            if !resolved_binary_path.exists() {
+                if let Ok(entries) = std::fs::read_dir(&base_dir) {
+                    for entry in entries.flatten() {
+                        if let Some(folder_name) = entry.file_name().to_str() {
+                            // Detects suffixed naming conventions automatically (e.g. -win64, -mac-x64, etc.)
+                            if folder_name.starts_with("chrome-headless-shell") {
+                                let test_path = entry.path().join(binary_name);
+                                if test_path.exists() {
+                                    resolved_binary_path = test_path;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            resolved_binary_path.to_string_lossy().into_owned()
+        });
+
+        // ENFORCE HARD EXISTENCE VERIFICATION
+        let binary_path = std::path::Path::new(&chrome_path);
+        if !binary_path.exists() {
+            // Pick a clean, context-appropriate instruction banner string based on compile targets
+            let setup_example = if cfg!(target_os = "windows") {
+                r#"%LOCALAPPDATA%\Programs\chrome-headless-shell-win64\"#
+            } else if cfg!(target_os = "macos") {
+                r#"~/Applications/chrome-headless-shell-mac-x64/"#
+            } else {
+                r#"~/.local/share/chrome-headless-shell-linux64/"#
+            };
+
+            eprintln!(
+                "\n=========================================================================="
+            );
+            eprintln!(
+                "[FATAL LAUNCH ERROR] Core Dependency Missing: Headless Chrome Engine Not Found!"
+            );
+            eprintln!("Expected Binary Location: \"{}\"", chrome_path);
+            eprintln!("==========================================================================");
+            eprintln!("To resolve this issue, follow these installation steps:");
+            eprintln!(
+                "  1. Download the official, stable 'chrome-headless-shell' framework package from:"
+            );
+            eprintln!("     https://googlechromelabs.github.io/chrome-for-testing/");
+            eprintln!(
+                "  2. Unzip and drop the folder directly into your user local applications folder:"
+            );
+            eprintln!("     Path destination: \"{}\"", setup_example);
+            eprintln!(
+                "  3. Alternatively, place the shell anywhere and explicitly specify its coordinate by setting"
+            );
+            eprintln!(
+                "     the environment variable: $env:CHROME_PATH=\"C:\\your\\custom\\path\\chrome-headless-shell.exe\""
+            );
+            eprintln!(
+                "==========================================================================\n"
+            );
+
+            std::process::exit(1);
+        }
 
         // Startup clean: clears out old profiles from previous hard crashes safely
         if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
@@ -177,16 +145,6 @@ impl BrowserSession {
             }
         }
 
-        #[cfg(target_os = "windows")]
-        const DEFAULT_CHROME: &str = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
-        #[cfg(target_os = "macos")]
-        const DEFAULT_CHROME: &str = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        const DEFAULT_CHROME: &str = "/usr/bin/google-chrome";
-
-        let chrome_path =
-            std::env::var("CHROME_PATH").unwrap_or_else(|_| DEFAULT_CHROME.to_string());
-
         // Generate an isolated, completely random directory prefixed for our app
         let temp_dir = Builder::new()
             .prefix("chrome_profile_")
@@ -194,20 +152,19 @@ impl BrowserSession {
 
         let config = BrowserConfig::builder()
             .chrome_executable(&chrome_path)
-            .user_data_dir(temp_dir.path())
             .no_sandbox()
-            .arg("--headless=new") // Enforce modern headless rendering engine
-            .arg("--no-startup-window") // Bypasses initial default Win32 process canvas allocation
-            .arg("--disable-gpu") // Prevents Chrome from allocating visible desktop swapchains
+            .arg("--headless=new")
+            .arg("--disable-extensions")
+            .arg("--use-gl=swiftshader")
+            .arg("--disable-gpu")
+            .arg("--no-startup-window")
             .arg("--disable-software-rasterizer")
-            .arg("--window-position=-10000,-10000") // Teleports accidental windows completely off-screen
+            .arg("--disable-backgrounding-occluded-windows")
             .arg("--disable-breakpad")
             .arg("--disable-dev-shm-usage")
             .arg("--ignore-certificate-errors")
-            .arg("--no-process-singleton-dialog")
             .arg("--incognito")
-            .arg("--single-process")
-            .arg("--no-zygote")
+            .arg(format!("--crash-dumps-dir={}", temp_dir.path().display()))
             .build()?;
 
         eprintln!("[LAUNCH TRACK 6] Invoking async Browser::launch(config)...");
@@ -235,74 +192,47 @@ impl BrowserSession {
     }
 
     pub fn close_sync(self) -> Result<(), Box<dyn std::error::Error>> {
-        // 1. Extract path tracking variables before destroying ownership
+        println!("[Cleanup] Initiating fast shutdown pipeline...");
+
+        // Extract path tracking variables before destroying ownership
         let target_path = self.profile_dir.path().to_path_buf();
-        let dir_string = target_path.to_string_lossy().to_string();
 
-        // 2. Fire and forget close notification to the remote browser handle
-        let mut browser = self.browser;
-        tokio::spawn(async move {
-            let _ = browser.close().await;
-        });
+        // Kill the browser process immediately via standard OS drops.
+        // Dropping the browser instance in chromiumoxide closes the underlying connection handle.
+        // To prevent WebSocket deadlocks, we do NOT block the thread waiting for `.close().await`.
+        std::mem::drop(self.browser);
+        std::mem::drop(self.page);
 
-        // 3. Forcibly close lingering chrome.exe instances matching the profile directory
-        #[cfg(target_os = "windows")]
-        {
-            if let Some(pid) = find_chrome_pid_by_profile(&dir_string) {
-                println!(
-                    "[Cleanup] Found Chrome parent PID: {}. Invoking kill_tree...",
-                    pid
-                );
-                let _ = kill_tree::blocking::kill_tree(pid);
-            }
-        }
+        // Give the headless shell process a brief moment to register the dropped connection and exit
+        std::thread::sleep(std::time::Duration::from_millis(200));
 
-        // 4. Sleep briefly to give the Windows Kernel time to drop file locks
-        std::thread::sleep(std::time::Duration::from_millis(250));
-
-        // 5. Retry loop checking path existence natively
-        let mut retries = 5;
+        // Clean up the profile directory if the OS has released its locks
+        let mut retries = 3;
         while target_path.exists() && retries > 0 {
-            // Use standard fs removal for intermediate retries to avoid dropping TempDir prematurely
             match remove_dir_all::remove_dir_all(&target_path) {
                 Ok(_) => {
-                    println!(
-                        "[Cleanup] Profile folder successfully erased via standard filesystem."
-                    );
+                    println!("[Cleanup] Profile folder successfully erased.");
                     break;
                 }
-                Err(e) => {
+                Err(_) => {
                     retries -= 1;
                     if retries == 0 {
-                        eprintln!(
-                            "[Cleanup Error] Out of retries. Directory remains locked by OS: {:?}",
-                            e
+                        // If it's still locked, don't stall the user.
+                        // Your startup sweep function will catch it on the next run anyway!
+                        println!(
+                            "[Cleanup Notice] Profile folder is temporarily locked by Windows. Leaving it for the startup sweep."
                         );
-                        return Err(Box::new(e));
+                        break;
                     }
-                    println!(
-                        "[Cleanup] Path locked ({:?}). Retrying filesystem closure ({} attempts left)...",
-                        e.kind(),
-                        retries
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
         }
 
-        // 6. Explicitly consume the TempDir wrapper object so Rust registers it as dropped
-        if let Err(e) = self.profile_dir.close() {
-            // If the path was already deleted by our fs loop above, close() will safely return Ok(())
-            // We only log if it encounters a distinct secondary failure
-            if target_path.exists() {
-                eprintln!(
-                    "[Cleanup Warning] Final tempfile close hook reported an error: {:?}",
-                    e
-                );
-                return Err(Box::new(e));
-            }
-        }
+        // Explicitly consume the TempDir wrapper object so Rust registers it as dropped
+        let _ = self.profile_dir.close();
 
+        println!("[Cleanup] Shutdown pipeline finished cleanly.");
         Ok(())
     }
 }

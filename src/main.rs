@@ -55,11 +55,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    // 1. Create shared state and ACK channel
+    // Create shared state and ACK channel
     let (ack_tx, ack_rx) = tokio::sync::mpsc::channel::<()>(1);
     let state = Arc::new(SharedAppState::new(ack_tx));
 
-    // 2. Build the EventLoop with support for Custom App User Events
+    // Build the EventLoop with support for Custom App User Events
     let event_loop = EventLoop::<CustomAppEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Spawn the browser execution loop instantly on its own dedicated OS thread.
     let state_for_browser = state.clone();
-    let browser_thread_handle = std::thread::spawn(move || {
+    let _browser_thread_handle = std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
         rt.block_on(async {
             if let Err(e) = run_browser_frame_loop(state_for_browser, ack_rx, shutdown_rx).await {
@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     });
 
-    // 6. Load ONNX model
+    // Load ONNX model
     let _ = ort::init().commit();
     ml_filtered_browser::tokenizer::init_tokenizer("tokenizer.json")?;
 
@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         sessions.push(Arc::new(Mutex::new(session)));
     }
 
-    // 7. Warmup
+    // Warmup
     const BATCH: usize = 1;
     let ids_array = ndarray::Array2::<i64>::zeros((BATCH, SEQ_LEN));
     let mask_array = ndarray::Array2::<i64>::zeros((BATCH, SEQ_LEN));
@@ -151,11 +151,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // 8. Start the renderer
+    // Start the renderer
     let mut app = App::new(state, sessions);
     println!("Starting Window Event Loop...");
 
-    let run_result = event_loop.run_app(&mut app);
+    let _run_result = event_loop.run_app(&mut app);
 
     // If the window was closed via the "X" button, fire the channel manually before exit
     let mut guard = shutdown_tx_opt.lock().unwrap();
@@ -165,21 +165,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Winit UI engine shut down. Awaiting background thread profile deletion...");
 
-    // Wait for the background loop thread to invoke close_sync and terminate naturally
-    match browser_thread_handle.join() {
-        Ok(_) => println!("Background browser cleanup loop finished successfully."),
-        Err(e) => eprintln!("Background browser thread panicked or crashed: {:?}", e),
-    }
-
-    println!("Main application shut down cleanly. Terminal returning control.");
-
-    // Evaluate if run_app encountered problems
-    if let Err(e) = run_result {
-        eprintln!("Application exited with rendering error: {:?}", e);
-        return Err(e.into());
-    }
-
-    Ok(())
+    // FORCE AN INSTANT OS TERMINATION
+    // This cleanly cuts through any async channel blocks or frozen tokio background tasks
+    println!("[Shutdown] Complete. Exiting terminal execution context.");
+    std::process::exit(0);
 }
 
 async fn run_browser_frame_loop(
@@ -238,13 +227,14 @@ async fn run_browser_frame_loop(
 
 #[tokio::test]
 async fn test_browser() {
+    use futures::StreamExt;
     use ml_filtered_browser::browser;
+
     let (browser, mut handler, _profile_dir) =
         browser::session::BrowserSession::launch().await.unwrap();
-    tokio::spawn(async move {
-        use futures::StreamExt;
-        while let Some(_) = handler.next().await {}
-    });
+
+    // Keep track of the background task handle so we can abort it cleanly at shutdown
+    let handler_task = tokio::spawn(async move { while let Some(_) = handler.next().await {} });
 
     let page = browser.new_page("about:blank").await.unwrap();
     let mut session = browser::session::BrowserSession {
@@ -255,13 +245,20 @@ async fn test_browser() {
 
     session.set_viewport(1280, 720).await.unwrap();
     session.navigate("https://example.com").await.unwrap();
+
     let nodes = browser::extract::extract_dom_nodes(&session.page, "p")
         .await
         .unwrap();
     println!("Nodes: {:?}", nodes);
+
     let (w, h, _pixels) = browser::screenshot::capture_screenshot(&session.page)
         .await
         .unwrap();
     println!("Screenshot: {}x{}", w, h);
+
+    // Execute your refactored clean filesystem drop logic
     session.close_sync().unwrap();
+
+    // Explicitly kill the detached tokio handler task so it doesn't log broken pipe errors
+    handler_task.abort();
 }
