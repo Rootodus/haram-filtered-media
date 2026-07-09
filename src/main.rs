@@ -19,6 +19,12 @@ const VIEWPORT_HEIGHT: u32 = 720;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    std::panic::set_hook(Box::new(|panic_info| {
+        eprintln!("CRITICAL PANIC ENCOUNTERED: {}", panic_info);
+        // The OS will clean up memory, and because we removed process::exit,
+        // standard stack unwinding will still attempt to drop local variables!
+    }));
+
     let debug = DebugConfig::init();
     if debug.renderdoc_capture {
         unsafe {

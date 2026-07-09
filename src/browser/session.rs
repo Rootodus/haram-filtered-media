@@ -234,19 +234,18 @@ impl BrowserSession {
         Ok(())
     }
 
-    // session.rs (Line 242 onwards)
     pub fn close_sync(self) -> Result<(), Box<dyn std::error::Error>> {
-        // 1. Get the path string out of our TempDir object safely
+        // 1. Extract path tracking variables before destroying ownership
         let target_path = self.profile_dir.path().to_path_buf();
         let dir_string = target_path.to_string_lossy().to_string();
 
-        // 2. Fire and forget the close command to the websocket
+        // 2. Fire and forget close notification to the remote browser handle
         let mut browser = self.browser;
         tokio::spawn(async move {
             let _ = browser.close().await;
         });
 
-        // 3. CRATE-DRIVEN PROCESS TREE CLOSURE
+        // 3. Forcibly close lingering chrome.exe instances matching the profile directory
         #[cfg(target_os = "windows")]
         {
             if let Some(pid) = find_chrome_pid_by_profile(&dir_string) {
@@ -258,39 +257,50 @@ impl BrowserSession {
             }
         }
 
-        // 4. Sleep briefly to give the OS kernel time to tear down handles
+        // 4. Sleep briefly to give the Windows Kernel time to drop file locks
         std::thread::sleep(std::time::Duration::from_millis(250));
 
-        // 5. Explicitly consume the TempDir to trigger deletion with an automatic retry block
+        // 5. Retry loop checking path existence natively
         let mut retries = 5;
-        let deletion_result = self.profile_dir.close();
-
-        while deletion_result.is_err() && retries > 0 {
-            retries -= 1;
-            println!(
-                "[Cleanup] Path locked by OS. Retrying folder elimination ({} attempts left)...",
-                retries
-            );
-            std::thread::sleep(std::time::Duration::from_millis(100));
-
-            // Attempt a manual fallback deletion if the tempfile closer is stubborn
-            if target_path.exists() {
-                if remove_dir_all::remove_dir_all(&target_path).is_ok() {
+        while target_path.exists() && retries > 0 {
+            // Use standard fs removal for intermediate retries to avoid dropping TempDir prematurely
+            match remove_dir_all::remove_dir_all(&target_path) {
+                Ok(_) => {
                     println!(
-                        "[Cleanup] Profile folder successfully erased via fallback backoff engine."
+                        "[Cleanup] Profile folder successfully erased via standard filesystem."
                     );
-                    return Ok(());
+                    break;
+                }
+                Err(e) => {
+                    retries -= 1;
+                    if retries == 0 {
+                        eprintln!(
+                            "[Cleanup Error] Out of retries. Directory remains locked by OS: {:?}",
+                            e
+                        );
+                        return Err(Box::new(e));
+                    }
+                    println!(
+                        "[Cleanup] Path locked ({:?}). Retrying filesystem closure ({} attempts left)...",
+                        e.kind(),
+                        retries
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(150));
                 }
             }
         }
 
-        if deletion_result.is_ok() {
-            println!("[Cleanup] Profile folder successfully erased via tempfile engine.");
-        } else {
-            eprintln!(
-                "[Cleanup Error] Could not auto-delete folder structure: {:?}",
-                deletion_result.err()
-            );
+        // 6. Explicitly consume the TempDir wrapper object so Rust registers it as dropped
+        if let Err(e) = self.profile_dir.close() {
+            // If the path was already deleted by our fs loop above, close() will safely return Ok(())
+            // We only log if it encounters a distinct secondary failure
+            if target_path.exists() {
+                eprintln!(
+                    "[Cleanup Warning] Final tempfile close hook reported an error: {:?}",
+                    e
+                );
+                return Err(Box::new(e));
+            }
         }
 
         Ok(())
