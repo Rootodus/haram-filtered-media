@@ -1453,15 +1453,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flatbuffers-build"
-version = "0.2.4+flatc-25.12.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2859e0a9c8f4ea7ba413bb92c799559b78215976bb74dad2f5f618fad8fce50"
-dependencies = [
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2487,7 +2478,6 @@ dependencies = [
  "env_logger",
  "flamegraph",
  "flatbuffers",
- "flatbuffers-build",
  "futures",
  "glam",
  "image",
@@ -2505,7 +2495,6 @@ dependencies = [
  "tokenizers",
  "tokio",
  "wgpu",
- "which",
  "winit",
 ]
 

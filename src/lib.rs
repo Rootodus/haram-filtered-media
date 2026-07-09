@@ -8,6 +8,3 @@ pub mod render;
 pub mod shared_state;
 pub mod tokenizer;
 pub mod types;
-
-// Include generated FlatBuffer bindings
-include!(concat!(env!("OUT_DIR"), "/flatbuffers/mod.rs"));

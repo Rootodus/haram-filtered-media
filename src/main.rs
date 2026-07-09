@@ -3,6 +3,7 @@ use ml_filtered_browser::debug_config::DebugConfig;
 use ml_filtered_browser::protocol::SEQ_LEN;
 use ml_filtered_browser::render::{App, CustomAppEvent};
 use ml_filtered_browser::shared_state::SharedAppState;
+use ml_filtered_browser::types::DomNode;
 
 use anyhow::Result;
 use ort::session::Session;
@@ -138,15 +139,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let attention_mask_value: DynValue = Value::from_array(mask_array)?.into_dyn();
     let input_ids_arc = Arc::new(input_ids_value);
     let attention_mask_arc = Arc::new(attention_mask_value);
+    let empty_nodes: Vec<DomNode> = Vec::new(); // no real nodes for warmup
+    let dummy_w = 1.0;
+    let dummy_h = 1.0;
 
     for _ in 0..5 {
         for session_arc in &sessions {
             let mut session_guard = session_arc.lock().unwrap();
-            let _ = ml_filtered_browser::inference::run_inference_large(
+            let _ = ml_filtered_browser::inference::run_inference(
                 &mut session_guard,
                 &input_ids_arc,
                 &attention_mask_arc,
-                None,
+                &empty_nodes,
+                dummy_w,
+                dummy_h,
             );
         }
     }
