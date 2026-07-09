@@ -225,6 +225,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.89"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "async-tungstenite"
 version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -784,6 +795,18 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "command-group"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a68fa787550392a9d58f44c21a3022cfb3ea3e2458b7f85d3b399d0ceeccf409"
+dependencies = [
+ "async-trait",
+ "nix",
+ "tokio",
+ "winapi",
 ]
 
 [[package]]
@@ -2469,6 +2492,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "chromiumoxide",
+ "command-group",
  "criterion",
  "encase",
  "env_logger",
@@ -2481,6 +2505,7 @@ dependencies = [
  "libloading 0.9.0",
  "log",
  "ndarray",
+ "ntapi",
  "ort",
  "pollster",
  "raw-window-handle",
@@ -2492,6 +2517,7 @@ dependencies = [
  "tokio",
  "wgpu",
  "which",
+ "winapi",
  "winit",
 ]
 
@@ -2631,6 +2657,17 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nix"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+dependencies = [
+ "bitflags 2.13.0",
+ "cfg-if",
+ "libc",
+]
 
 [[package]]
 name = "no_std_io2"
