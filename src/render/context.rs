@@ -1,5 +1,5 @@
-use crate::protocol::VisualAction;
 use crate::shared_state::SharedAppState;
+use crate::types::VisualAction;
 
 use encase::ShaderType;
 use glam::Vec2;

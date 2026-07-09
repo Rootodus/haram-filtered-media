@@ -1,8 +1,8 @@
 use super::{App, CustomAppEvent, context, draw, pipeline};
 use crate::inference::run_inference;
-use crate::protocol::{MAX_ACTIONS, SEQ_LEN};
 use crate::shared_state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE};
 use crate::tokenizer::tokenize;
+use crate::types::{MAX_ACTIONS, SEQ_LEN, VisualAction};
 
 use encase::ShaderType;
 use futures::future::join_all;
@@ -331,7 +331,7 @@ impl ApplicationHandler<CustomAppEvent> for App {
 
                 // ---------- Data update (inference) ----------
                 let mut needs_ack = false;
-                let mut actions: Vec<crate::protocol::VisualAction> = Vec::new();
+                let mut actions: Vec<VisualAction> = Vec::new();
 
                 if let Some(frame) = self.state.get_frame_if_dirty() {
                     // Skip inference for now (Phase 2: only display screenshot)

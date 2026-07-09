@@ -19,7 +19,6 @@ wgpu = { version = "30.0", default-features = false, features = [
 ] }
 raw-window-handle = "0.6.2"
 pollster = "0.4.0"
-flatbuffers = "25.12.19"
 ort = { version = "2.0.0-rc.12", features = ["directml"] }
 ndarray = "0.17.2"
 futures = "0.3.32"

@@ -1,9 +1,8 @@
 use ml_filtered_browser::browser::{BrowserSession, capture_screenshot, extract_dom_nodes};
 use ml_filtered_browser::debug_config::DebugConfig;
-use ml_filtered_browser::protocol::SEQ_LEN;
 use ml_filtered_browser::render::{App, CustomAppEvent};
 use ml_filtered_browser::shared_state::SharedAppState;
-use ml_filtered_browser::types::DomNode;
+use ml_filtered_browser::types::{DomNode, SEQ_LEN};
 
 use anyhow::Result;
 use ort::session::Session;

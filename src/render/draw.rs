@@ -1,5 +1,5 @@
 use super::context::{ActionInstance, App, FinalUniforms, MaskUniforms};
-use crate::protocol::{MAX_ACTIONS, VisualAction};
+use crate::types::{MAX_ACTIONS, VisualAction};
 
 use bytemuck;
 use std::sync::Once;

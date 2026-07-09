@@ -1,4 +1,4 @@
-use crate::types::DomNode;
+use crate::types::{DomNode, VisualAction};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -18,7 +18,7 @@ pub struct SharedAppState {
     pub dirty: AtomicBool,
     pub ack_sender: tokio::sync::mpsc::Sender<()>,
     pub clear_color: Mutex<wgpu::Color>,
-    pub actions: Mutex<Vec<crate::protocol::VisualAction>>,
+    pub actions: Mutex<Vec<VisualAction>>,
 }
 
 impl SharedAppState {
@@ -67,7 +67,7 @@ impl SharedAppState {
         lock.clone()
     }
 
-    pub fn set_actions(&self, actions: Vec<crate::protocol::VisualAction>) {
+    pub fn set_actions(&self, actions: Vec<VisualAction>) {
         if let Ok(mut lock) = self.actions.lock() {
             *lock = actions;
         }
