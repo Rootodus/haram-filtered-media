@@ -59,17 +59,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
+    // Shared reference to allow window destruction hooks to fire down the line
+    let shutdown_tx_opt = Arc::new(Mutex::new(Some(shutdown_tx)));
+    let shutdown_tx_ctrlc = shutdown_tx_opt.clone();
+
     tokio::spawn(async move {
         if let Ok(_) = tokio::signal::ctrl_c().await {
             println!("\n[Ctrl+C] Signal detected! Initiating instant shutdown pipeline...");
-            let _ = shutdown_tx.send(());
+            let mut guard = shutdown_tx_ctrlc.lock().unwrap();
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(());
+            }
             let _ = proxy.send_event(CustomAppEvent::RequestShutdown);
         }
     });
 
     // Spawn the browser execution loop instantly on its own dedicated OS thread.
     let state_for_browser = state.clone();
-    let browser_thread = std::thread::spawn(move || {
+    let browser_thread_handle = std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
         rt.block_on(async {
             if let Err(e) = run_browser_frame_loop(state_for_browser, ack_rx, shutdown_rx).await {
@@ -144,13 +151,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let run_result = event_loop.run_app(&mut app);
 
-    if let Err(e) = run_result {
-        eprintln!("Application exited with error: {:?}", e);
-        std::process::exit(1);
+    // If the window was closed via the "X" button, fire the channel manually before exit
+    let mut guard = shutdown_tx_opt.lock().unwrap();
+    if let Some(tx) = guard.take() {
+        let _ = tx.send(());
     }
 
-    let _ = browser_thread.join();
-    println!("Main application shut down cleanly. Exiting process.");
+    println!("Winit UI engine shut down. Awaiting background thread profile deletion...");
+
+    // Wait for the background loop thread to invoke close_sync and terminate naturally
+    match browser_thread_handle.join() {
+        Ok(_) => println!("Background browser cleanup loop finished successfully."),
+        Err(e) => eprintln!("Background browser thread panicked or crashed: {:?}", e),
+    }
+
+    println!("Main application shut down cleanly. Terminal returning control.");
+
+    // Evaluate if run_app encountered problems
+    if let Err(e) = run_result {
+        eprintln!("Application exited with rendering error: {:?}", e);
+        return Err(e.into());
+    }
+
     Ok(())
 }
 
@@ -203,7 +225,7 @@ async fn run_browser_frame_loop(
         }
     }
 
-    let _ = session.close().await?;
+    let _ = session.close_sync();
     println!("Browser frame processing loop completed cleanup successfully.");
     Ok(())
 }
@@ -211,7 +233,6 @@ async fn run_browser_frame_loop(
 #[tokio::test]
 async fn test_browser() {
     use ml_filtered_browser::browser;
-    // FIXED: Adjusted tuple destructuring signature match
     let (browser, mut handler, _profile_dir) =
         browser::session::BrowserSession::launch().await.unwrap();
     tokio::spawn(async move {
@@ -236,5 +257,5 @@ async fn test_browser() {
         .await
         .unwrap();
     println!("Screenshot: {}x{}", w, h);
-    session.close().await.unwrap();
+    session.close_sync().unwrap();
 }

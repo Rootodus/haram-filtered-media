@@ -1,12 +1,14 @@
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::{Browser, BrowserConfig, Handler, Page};
 use std::error::Error;
-use std::path::PathBuf;
+use tempfile::{Builder, TempDir};
+
 pub struct BrowserSession {
     pub browser: Browser,
     pub page: Page,
-    pub profile_dir: PathBuf,
+    pub profile_dir: TempDir,
 }
+
 /// Fast native Windows kernel function to find the PID matching our custom profile directory.
 #[cfg(target_os = "windows")]
 fn find_chrome_pid_by_profile(profile_str: &str) -> Option<u32> {
@@ -158,16 +160,18 @@ fn get_process_command_line(pid: u32) -> Option<String> {
     }
     None
 }
+
 impl BrowserSession {
     /// Launches a headless Chrome browser and returns the raw instances safely.
-    pub async fn launch() -> Result<(Browser, Handler, PathBuf), Box<dyn Error>> {
+    pub async fn launch() -> Result<(Browser, Handler, TempDir), Box<dyn Error>> {
         eprintln!("[LAUNCH TRACK 1] BrowserSession::launch() started.");
 
+        // Startup clean: clears out old profiles from previous hard crashes safely
         if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
                     if name.starts_with("chrome_profile_") {
-                        let _ = std::fs::remove_dir_all(entry.path());
+                        let _ = remove_dir_all::remove_dir_all(entry.path());
                     }
                 }
             }
@@ -183,19 +187,20 @@ impl BrowserSession {
         let chrome_path =
             std::env::var("CHROME_PATH").unwrap_or_else(|_| DEFAULT_CHROME.to_string());
 
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let profile_dir = std::env::temp_dir().join(format!("chrome_profile_{}", timestamp));
-        std::fs::create_dir_all(&profile_dir)?;
+        // Generate an isolated, completely random directory prefixed for our app
+        let temp_dir = Builder::new()
+            .prefix("chrome_profile_")
+            .tempdir_in(std::env::temp_dir())?;
 
         let config = BrowserConfig::builder()
             .chrome_executable(&chrome_path)
-            .user_data_dir(&profile_dir)
+            .user_data_dir(temp_dir.path())
             .no_sandbox()
-            .arg("--disable-gpu")
-            .arg("--no-startup-window")
+            .arg("--headless=new") // Enforce modern headless rendering engine
+            .arg("--no-startup-window") // Bypasses initial default Win32 process canvas allocation
+            .arg("--disable-gpu") // Prevents Chrome from allocating visible desktop swapchains
+            .arg("--disable-software-rasterizer")
+            .arg("--window-position=-10000,-10000") // Teleports accidental windows completely off-screen
             .arg("--disable-breakpad")
             .arg("--disable-dev-shm-usage")
             .arg("--ignore-certificate-errors")
@@ -209,22 +214,16 @@ impl BrowserSession {
         let (browser, handler) = Browser::launch(config).await?;
         eprintln!("[LAUNCH TRACK 7] Core processes successfully initialized.");
 
-        Ok((browser, handler, profile_dir))
+        Ok((browser, handler, temp_dir))
     }
 
     pub async fn navigate(&self, url: &str) -> Result<(), Box<dyn Error>> {
-        eprintln!("[NAV TRACK] Navigating to URL: '{}'...", url);
         self.page.goto(url).await?;
         self.page.wait_for_navigation().await?;
-        eprintln!("[NAV TRACK] Navigation finished cleanly.");
         Ok(())
     }
 
     pub async fn set_viewport(&mut self, width: u32, height: u32) -> Result<(), Box<dyn Error>> {
-        eprintln!(
-            "[VIEWPORT TRACK] Resizing layout viewport dimensions to {}x{}...",
-            width, height
-        );
         let params = SetDeviceMetricsOverrideParams::builder()
             .width(width as i64)
             .height(height as i64)
@@ -235,38 +234,65 @@ impl BrowserSession {
         Ok(())
     }
 
-    /// Forcibly kills the browser process tree and erases profile folder structures instantly.
-    pub async fn close(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let dir_string = self.profile_dir.to_string_lossy().to_string();
-        eprintln!("(CLOSE TRACK 1) Triggering graceful async browser channel shutdown...");
-        let _ = self.browser.close().await;
+    // session.rs (Line 242 onwards)
+    pub fn close_sync(self) -> Result<(), Box<dyn std::error::Error>> {
+        // 1. Get the path string out of our TempDir object safely
+        let target_path = self.profile_dir.path().to_path_buf();
+        let dir_string = target_path.to_string_lossy().to_string();
 
-        eprintln!(
-            "(CLOSE TRACK 2) Initiating native Win32 process search for profile folder token..."
-        );
+        // 2. Fire and forget the close command to the websocket
+        let mut browser = self.browser;
+        tokio::spawn(async move {
+            let _ = browser.close().await;
+        });
+
+        // 3. CRATE-DRIVEN PROCESS TREE CLOSURE
         #[cfg(target_os = "windows")]
         {
             if let Some(pid) = find_chrome_pid_by_profile(&dir_string) {
-                eprintln!(
-                    "(CLOSE TRACK 3) Target PID matched: {}. Issuing surgical taskkill /T process tree termination...",
+                println!(
+                    "[Cleanup] Found Chrome parent PID: {}. Invoking kill_tree...",
                     pid
                 );
-                // ✅ FIXED: Enclosed arguments using square brackets array slice &[...]
-                let _ = std::process::Command::new("taskkill")
-                    .args(&["/F", "/PID", &pid.to_string(), "/T"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
+                let _ = kill_tree::blocking::kill_tree(pid);
             }
         }
 
-        // Give the OS kernel a quick microsecond to drop file locks
-        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+        // 4. Sleep briefly to give the OS kernel time to tear down handles
+        std::thread::sleep(std::time::Duration::from_millis(250));
 
-        if self.profile_dir.exists() {
-            let _ = std::fs::remove_dir_all(&self.profile_dir);
-            println!("[Cleanup] Profile folder erased cleanly.");
+        // 5. Explicitly consume the TempDir to trigger deletion with an automatic retry block
+        let mut retries = 5;
+        let deletion_result = self.profile_dir.close();
+
+        while deletion_result.is_err() && retries > 0 {
+            retries -= 1;
+            println!(
+                "[Cleanup] Path locked by OS. Retrying folder elimination ({} attempts left)...",
+                retries
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            // Attempt a manual fallback deletion if the tempfile closer is stubborn
+            if target_path.exists() {
+                if remove_dir_all::remove_dir_all(&target_path).is_ok() {
+                    println!(
+                        "[Cleanup] Profile folder successfully erased via fallback backoff engine."
+                    );
+                    return Ok(());
+                }
+            }
         }
+
+        if deletion_result.is_ok() {
+            println!("[Cleanup] Profile folder successfully erased via tempfile engine.");
+        } else {
+            eprintln!(
+                "[Cleanup Error] Could not auto-delete folder structure: {:?}",
+                deletion_result.err()
+            );
+        }
+
         Ok(())
     }
 }
