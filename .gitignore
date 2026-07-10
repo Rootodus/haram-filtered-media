@@ -6,3 +6,5 @@ _temp.txt
 
 .cargo/*
 !.cargo/config.toml
+
+.compiler-diagnostics.json
