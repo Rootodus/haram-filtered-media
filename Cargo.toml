@@ -2,6 +2,7 @@
 name = "ml_filtered_browser"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
 tokio = { version = "1.52.3", features = [
