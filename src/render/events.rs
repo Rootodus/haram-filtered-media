@@ -44,7 +44,11 @@ impl ApplicationHandler<CustomAppEvent> for App {
 
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("ML Filtered Browser"))
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("ML Filtered Browser")
+                        .with_inner_size(winit::dpi::PhysicalSize::new(1280, 720)),
+                )
                 .unwrap(),
         );
         self.window = Some(window.clone());
