@@ -214,6 +214,7 @@ async fn run_browser_frame_loop(
         let nodes: Vec<DomNode> = nodes
             .into_iter()
             .filter(|n| n.rect.width > 0.0 && n.rect.height > 0.0)
+            .filter(|n| n.rect.y + n.rect.height <= 720.0)
             .collect();
         let (width, height, pixel_data) = capture_screenshot(&session.page).await?;
 

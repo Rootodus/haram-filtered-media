@@ -56,9 +56,9 @@ fn vs_mask(
 // FIXED: Reverted output signature back to f32 to match your exact pipeline channel targets!
 @fragment
 fn fs_mask(in: MaskVertexOutput) -> @location(0) f32 {
-    // if in.action_type == 1u {
-    //     return 0.5; // Red channel target value for Blur
-    // }
+    if in.action_type == 1u {
+        return 0.5; // Red channel target value for Blur
+    }
     return 1.0; // Red channel target value for Blackbox
 }
 
