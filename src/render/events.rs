@@ -334,23 +334,6 @@ impl ApplicationHandler<CustomAppEvent> for App {
                 let mut actions: Vec<VisualAction> = Vec::new();
 
                 if let Some(frame) = self.state.get_frame_if_dirty() {
-                    // Skip inference for now (Phase 2: only display screenshot)
-                    let actions = Vec::new();
-                    self.cached_actions = actions.clone();
-                    self.state.set_actions(actions);
-
-                    // Upload frame texture - unchanged
-                    draw::upload_frame_texture(
-                        &queue,
-                        self,
-                        frame.width,
-                        frame.height,
-                        &frame.pixel_data,
-                    );
-                    needs_ack = true;
-                }
-
-                if let Some(frame) = self.state.get_frame_if_dirty() {
                     let should_skip = SKIP_NEXT_INFERENCE.swap(false, Ordering::AcqRel);
                     if !should_skip && !self.sessions.is_empty() {
                         INFERENCE_RUNNING.store(true, Ordering::Relaxed);

@@ -344,18 +344,24 @@ pub fn run_mask_pass(
         _pad: [0; 3],
     }; MAX_ACTIONS];
     for (i, act) in active_source.iter().enumerate().take(MAX_ACTIONS) {
-        // Direct layout assignment matching inference.rs array layout!
+        // Normalize pixel coordinates to [0, 1]
+        let norm_x = act.rect[0] / app.last_frame_width as f32;
+        let norm_y = act.rect[1] / app.last_frame_height as f32;
+        let norm_w = act.rect[2] / app.last_frame_width as f32;
+        let norm_h = act.rect[3] / app.last_frame_height as f32;
+
+        if i == 0 && !active_source.is_empty() {
+            dbg!(norm_x, norm_y, norm_w, norm_h); // debug first action
+        }
+
         raw_actions[i] = ActionInstance {
-            x: act.rect[0],      // Raw X percentage position
-            y: act.rect[1],      // Raw Y percentage position
-            width: act.rect[2],  // Raw Width percentage scale
-            height: act.rect[3], // Raw Height percentage scale
+            x: norm_x,
+            y: norm_y,
+            width: norm_w,
+            height: norm_h,
             action_type: if act.action_type == 0 { 1 } else { 2 },
             _pad: [0; 3],
         };
-        if i == 0 && !active_source.is_empty() {
-            dbg!(&raw_actions[0]); // This prints the first rectangle to your console!
-        }
     }
 
     queue.write_buffer(

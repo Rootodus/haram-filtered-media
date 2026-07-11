@@ -12,7 +12,7 @@ pub struct BrowserSession {
 impl BrowserSession {
     /// Launches a headless Chrome browser and returns the raw instances safely.
     pub async fn launch() -> Result<(Browser, Handler, TempDir), Box<dyn Error>> {
-        eprintln!("[LAUNCH TRACK 1] BrowserSession::launch() started.");
+        eprintln!("[LAUNCH TRACK] BrowserSession::launch() started.");
 
         // Prioritize an explicit runtime path override via CHROME_PATH environment variable
         let mut final_path = std::env::var("CHROME_PATH").ok();
@@ -167,9 +167,9 @@ impl BrowserSession {
             .arg(format!("--crash-dumps-dir={}", temp_dir.path().display()))
             .build()?;
 
-        eprintln!("[LAUNCH TRACK 6] Invoking async Browser::launch(config)...");
+        eprintln!("[LAUNCH TRACK] Invoking async Browser::launch(config)...");
         let (browser, handler) = Browser::launch(config).await?;
-        eprintln!("[LAUNCH TRACK 7] Core processes successfully initialized.");
+        eprintln!("[LAUNCH TRACK] Core processes successfully initialized.");
 
         Ok((browser, handler, temp_dir))
     }

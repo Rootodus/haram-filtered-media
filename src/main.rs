@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
                         Err(e) => {
                             eprintln!(
-                                "Warning: RenderDoc wrapper failed to initialize. Error: {:?}",
+                                "Warning: RenderDoc wrapper failed to initialize.Error: {:?}",
                                 e
                             );
                         }
@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 Err(e) => {
                     eprintln!(
-                        "Warning: Could not load renderdoc.dll from disk. Error: {:?}",
+                        "Warning: Could not load renderdoc.dll from disk.Error: {:?}",
                         e
                     );
                 }
@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::spawn(async move {
         if let Ok(_) = tokio::signal::ctrl_c().await {
-            println!("\n[Ctrl+C] Signal detected! Initiating instant shutdown pipeline...");
+            println!("\n[Ctrl + C] Signal detected! Initiating instant shutdown pipeline...");
             let mut guard = shutdown_tx_ctrlc.lock().unwrap();
             if let Some(tx) = guard.take() {
                 let _ = tx.send(());
@@ -168,11 +168,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let _ = tx.send(());
     }
 
-    println!("Winit UI engine shut down. Awaiting background thread profile deletion...");
+    println!("Winit UI engine shut down.Awaiting background thread profile deletion...");
 
     // FORCE AN INSTANT OS TERMINATION
     // This cleanly cuts through any async channel blocks or frozen tokio background tasks
-    println!("[Shutdown] Complete. Exiting terminal execution context.");
+    println!("[Shutdown] Complete.Exiting terminal execution context.");
     std::process::exit(0);
 }
 
@@ -188,9 +188,9 @@ async fn run_browser_frame_loop(
         while let Some(_) = handler.next().await {}
     });
 
-    println!("[LAUNCH TRACK 9] Requesting new page target via browser.new_page()...");
+    println!("[LAUNCH TRACK] Requesting new page target via browser.new_page()...");
     let page = browser.new_page("about:blank").await?;
-    println!("[LAUNCH TRACK 10] DevTools websocket handshake successful!");
+    println!("[LAUNCH TRACK] DevTools websocket handshake successful!");
 
     let mut session = BrowserSession {
         browser,
@@ -206,7 +206,19 @@ async fn run_browser_frame_loop(
 
     loop {
         let nodes = extract_dom_nodes(&session.page, TARGET_SELECTOR).await?;
+
+        for (i, node) in nodes.iter().take(5).enumerate() {
+            println!("Node {} rect: {:?}", i, node.rect);
+        }
+
+        let nodes: Vec<DomNode> = nodes
+            .into_iter()
+            .filter(|n| n.rect.width > 0.0 && n.rect.height > 0.0)
+            .collect();
         let (width, height, pixel_data) = capture_screenshot(&session.page).await?;
+
+        println!("Screenshot: {}x{}", width, height);
+
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -251,7 +263,7 @@ async fn test_browser() {
     session.set_viewport(1280, 720).await.unwrap();
     session.navigate("https://example.com").await.unwrap();
 
-    let nodes = browser::extract::extract_dom_nodes(&session.page, "p")
+    let nodes = browser::extract::extract_dom_nodes(&session.page, " p")
         .await
         .unwrap();
     println!("Nodes: {:?}", nodes);
