@@ -8,3 +8,4 @@ _temp.txt
 !.cargo/config.toml
 
 .compiler-diagnostics.json
+*.onnx
