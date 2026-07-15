@@ -206,20 +206,12 @@ async fn run_browser_frame_loop(
 
     loop {
         let nodes = extract_dom_nodes(&session.page, TARGET_SELECTOR).await?;
-
-        for (i, node) in nodes.iter().take(5).enumerate() {
-            println!("Node {} rect: {:?}", i, node.rect);
-        }
-
         let nodes: Vec<DomNode> = nodes
             .into_iter()
             .filter(|n| n.rect.width > 0.0 && n.rect.height > 0.0)
             .filter(|n| n.rect.y + n.rect.height <= 720.0)
             .collect();
         let (width, height, pixel_data) = capture_screenshot(&session.page).await?;
-
-        println!("Screenshot: {}x{}", width, height);
-
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -231,6 +223,7 @@ async fn run_browser_frame_loop(
         tokio::select! {
             ack = ack_rx.recv() => {
                 if ack.is_none() { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
             }
             _ = &mut shutdown_rx => {
                 break;

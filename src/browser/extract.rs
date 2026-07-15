@@ -65,9 +65,6 @@ pub async fn extract_dom_nodes(
     let result = page.evaluate(js_code).await?;
     // Use .value() to get Option<&serde_json::Value> or .into_value() to deserialize
     let raw: Vec<JsNode> = result.into_value()?; // deserializes directly
-    if let Some(first) = raw.first() {
-        println!("Raw JS first rect: {:?}", first.rect);
-    }
     Ok(raw
         .into_iter()
         .map(|n| DomNode {

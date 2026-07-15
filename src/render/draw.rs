@@ -1,4 +1,5 @@
 use super::context::{ActionInstance, App, FinalUniforms, MaskUniforms};
+use crate::logging::should_log;
 use crate::types::{MAX_ACTIONS, VisualAction};
 
 use bytemuck;
@@ -253,7 +254,9 @@ pub fn upload_frame_texture(
         texture_size,
     );
 
-    println!("Uploaded frame texture: {}x{}", width, height);
+    if should_log(30) {
+        println!("Uploaded frame texture: {}x{}", width, height);
+    }
 
     let final_bind_group =
         app.device
@@ -349,10 +352,6 @@ pub fn run_mask_pass(
         let norm_y = act.rect[1] / app.last_frame_height as f32;
         let norm_w = act.rect[2] / app.last_frame_width as f32;
         let norm_h = act.rect[3] / app.last_frame_height as f32;
-
-        if i == 0 && !active_source.is_empty() {
-            dbg!(norm_x, norm_y, norm_w, norm_h); // debug first action
-        }
 
         raw_actions[i] = ActionInstance {
             x: norm_x,

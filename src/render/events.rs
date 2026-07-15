@@ -1,5 +1,6 @@
 use super::{App, CustomAppEvent, context, draw, pipeline};
 use crate::inference::run_inference;
+use crate::logging::{increment_frame_counter, should_log};
 use crate::shared_state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE};
 use crate::tokenizer::tokenize;
 use crate::types::{MAX_ACTIONS, SEQ_LEN, VisualAction};
@@ -10,6 +11,7 @@ use ndarray::Array2;
 use ort::value::Value;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 use tokio::task::spawn_blocking;
 use wgpu::{
     CompositeAlphaMode, DeviceDescriptor, Features, Limits, MemoryHints, PowerPreference,
@@ -103,7 +105,7 @@ impl ApplicationHandler<CustomAppEvent> for App {
             format: TextureFormat::Rgba8UnormSrgb,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: PresentMode::Immediate,
+            present_mode: PresentMode::Fifo,
             alpha_mode: CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -279,7 +281,29 @@ impl ApplicationHandler<CustomAppEvent> for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(new_size) => {
+                let w = new_size.width.max(1);
+                let h = new_size.height.max(1);
+                self.viewport_size = (w, h);
+                if let (Some(surface), Some(device)) = (&self.surface, &self.device) {
+                    let config = wgpu::SurfaceConfiguration {
+                        usage: TextureUsages::RENDER_ATTACHMENT,
+                        format: TextureFormat::Rgba8UnormSrgb,
+                        width: w,
+                        height: h,
+                        present_mode: PresentMode::Fifo,
+                        alpha_mode: CompositeAlphaMode::Auto,
+                        view_formats: vec![],
+                        desired_maximum_frame_latency: 2,
+                        color_space: SurfaceColorSpace::Srgb,
+                    };
+                    surface.configure(device, &config);
+                }
+                self.window.as_ref().unwrap().request_redraw();
+            }
             WindowEvent::RedrawRequested => {
+                let frame_start = Instant::now();
+
                 // 1. Extract and immediately CLONE the device and queue handles to free up self fields.
                 let (device, queue) = {
                     let (Some(d), Some(q)) = (&self.device, &self.queue) else {
@@ -333,11 +357,15 @@ impl ApplicationHandler<CustomAppEvent> for App {
                     }
                 };
 
+                increment_frame_counter();
+
                 // ---------- Data update (inference) ----------
                 let mut needs_ack = false;
                 let mut actions: Vec<VisualAction> = Vec::new();
 
                 if let Some(frame) = self.state.get_frame_if_dirty() {
+                    let inference_start = Instant::now();
+
                     let should_skip = SKIP_NEXT_INFERENCE.swap(false, Ordering::AcqRel);
                     if !should_skip && !self.sessions.is_empty() {
                         INFERENCE_RUNNING.store(true, Ordering::Relaxed);
@@ -405,8 +433,15 @@ impl ApplicationHandler<CustomAppEvent> for App {
                             }
                         }
 
+                        let inference_duration = inference_start.elapsed();
+                        if should_log(60) {
+                            println!("Inference time: {:?}", inference_duration);
+                        }
+
                         if !all_actions.is_empty() {
-                            println!("Total actions produced: {}", all_actions.len());
+                            if should_log(30) {
+                                println!("Total actions produced: {}", all_actions.len());
+                            }
                             self.cached_actions = all_actions.clone();
                             self.state.set_actions(all_actions.clone());
                         } else {
@@ -417,6 +452,8 @@ impl ApplicationHandler<CustomAppEvent> for App {
                         INFERENCE_RUNNING.store(false, Ordering::Relaxed);
                     }
 
+                    let upload_start = Instant::now();
+
                     // Upload frame texture (unchanged)
                     draw::upload_frame_texture(
                         &queue,
@@ -425,6 +462,10 @@ impl ApplicationHandler<CustomAppEvent> for App {
                         frame.height,
                         &frame.pixel_data,
                     );
+                    let upload_duration = upload_start.elapsed();
+                    if should_log(60) {
+                        println!("Texture upload time: {:?}", upload_duration);
+                    }
                     needs_ack = true;
                 }
 
@@ -439,46 +480,8 @@ impl ApplicationHandler<CustomAppEvent> for App {
                 }
 
                 // ============================================================================
-                // DYNAMIC UPDATE: Re-bind the live data buffer continuously on every loop pass
-                // ============================================================================
-                let updated_final_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Live Diagnostic Bind Group"),
-                    layout: self.bind_group_layout.as_ref().unwrap(),
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(
-                                self.frame_texture_view.as_ref().unwrap(),
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(
-                                self.sampler.as_ref().unwrap(),
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(
-                                self.mask_texture_view.as_ref().unwrap(),
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: self.uniform_buffer.as_ref().unwrap().as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            // FORCE the real live mask data buffer to link to the fragment shader pass continuously!
-                            resource: self
-                                .mask_storage_buffer
-                                .as_ref()
-                                .unwrap()
-                                .as_entire_binding(),
-                        },
-                    ],
-                });
-                self.bind_group = Some(updated_final_group);
+                // FIXED: Reuse the existing bind group instead of creating a new one each frame.
+                // The bind group is updated by upload_frame_texture when a new frame arrives.
                 // ============================================================================
 
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -486,20 +489,18 @@ impl ApplicationHandler<CustomAppEvent> for App {
                 });
 
                 // --- Pass 1: Mask generation ---
+                let mask_start = Instant::now();
                 draw::run_mask_pass(&mut encoder, &queue, self, &self.cached_actions.clone());
-
+                let mask_duration = mask_start.elapsed();
+                if should_log(60) {
+                    println!("Mask pass time: {:?}", mask_duration);
+                }
                 // --- Pass 2: Final composition ---
-                // println!(
-                //     "About to run final pass, pipeline: {:?}, bind_group: {:?}",
-                //     self.pipeline.is_some(),
-                //     self.bind_group.is_some()
-                // );
-
                 let output_view = surface_texture
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
 
-                // Safely pull the references out of your Option wrappers and match your exact field names
+                let final_start = Instant::now();
                 draw::run_final_pass(
                     &mut encoder,
                     self.device.as_ref().expect("Device must be initialized"),
@@ -516,8 +517,12 @@ impl ApplicationHandler<CustomAppEvent> for App {
                     &output_view,
                     self.viewport_size,
                     (self.last_frame_width, self.last_frame_height),
-                    &mut self.uniform_scratch_pad, // FIX: Pass mutable reference down to drawing loop
+                    &mut self.uniform_scratch_pad,
                 );
+                let final_duration = final_start.elapsed();
+                if should_log(60) {
+                    println!("Final pass time: {:?}", final_duration);
+                }
 
                 // Debug: headless frame dump (controlled by DUMP_FRAMES_HEADLESS env var)
                 if crate::debug_config::DebugConfig::get().dump_frames_headless {
@@ -552,7 +557,6 @@ impl ApplicationHandler<CustomAppEvent> for App {
 
                 // ---------- Submit and present ----------
                 queue.submit(std::iter::once(encoder.finish()));
-                // println!("Submitted encoder");
                 queue.present(surface_texture);
 
                 // End RenderDoc capture AFTER present, only if one was started
@@ -561,6 +565,11 @@ impl ApplicationHandler<CustomAppEvent> for App {
                 if needs_ack {
                     let _ = self.state.ack_sender.try_send(());
                 }
+
+                let total_frame_time = frame_start.elapsed();
+                if should_log(60) {
+                    println!("Total frame time: {:?}", total_frame_time);
+                }
             }
 
             _ => (),
@@ -568,8 +577,11 @@ impl ApplicationHandler<CustomAppEvent> for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
+        // Only request redraw if a new frame is available (prevents event flooding)
+        if self.state.dirty.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
     }
 }

@@ -1,7 +1,8 @@
+use crate::logging::should_log;
 use crate::types::DomNode;
 use crate::types::VisualAction;
+
 use ort::session::Session;
-// In v2.0.0-rc.12, these variants live directly inside the value submodule
 use ort::value::DynValue;
 use std::error::Error;
 use std::time::Instant;
@@ -15,7 +16,6 @@ pub fn run_inference(
     viewport_height: f32,
 ) -> Result<Vec<VisualAction>, Box<dyn Error + Send + Sync>> {
     let start = Instant::now();
-
     let outputs = session.run(ort::inputs![
         "input_ids" => input_ids,
         "attention_mask" => attention_mask
@@ -26,10 +26,13 @@ pub fn run_inference(
     let pos = logits.get(1).copied().unwrap_or(0.0);
 
     let duration = start.elapsed();
-    println!(
-        "Large model inference completed in {:?}. Logits: neg={:.3}, pos={:.3}",
-        duration, neg, pos
-    );
+
+    if should_log(30) {
+        println!(
+            "Large model inference completed in {:?}. Logits: neg={:.3}, pos={:.3}",
+            duration, neg, pos
+        );
+    }
 
     let mut actions = Vec::new();
 
@@ -40,10 +43,12 @@ pub fn run_inference(
                 rect: [node.rect.x, node.rect.y, node.rect.width, node.rect.height],
             });
         }
-        println!(
-            "Blur applied to {} nodes (negative sentiment)",
-            actions.len()
-        );
+        if should_log(30) {
+            println!(
+                "Blur applied to {} nodes (negative sentiment)",
+                actions.len()
+            );
+        }
     } else {
         println!("Positive sentiment – no actions applied");
     }
