@@ -1,0 +1,12 @@
+[package]
+name = "temp-2-wgpu-freeze"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+winit = "0.30.13"
+wgpu = "30.0"
+pollster = "1.0.1"
+bytemuck = "1.25.1"
+rand = "0.10.2"

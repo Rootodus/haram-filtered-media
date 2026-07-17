@@ -19,7 +19,7 @@ wgpu = { version = "30.0", default-features = false, features = [
     "wgsl",
 ] }
 raw-window-handle = "0.6.2"
-pollster = "0.4.0"
+pollster = "1.0.1"
 ort = { version = "2.0.0-rc.12", features = ["directml"] }
 ndarray = "0.17.2"
 futures = "0.3.32"
@@ -27,7 +27,7 @@ tokenizers = { version = "0.23.1", default-features = false, features = [
     "onig",
 ] }
 anyhow = "1.0.103"
-bytemuck = { version = "1.25.0", features = ["derive"] }
+bytemuck = { version = "1.25.1", features = ["derive"] }
 encase = "0.12.0"
 glam = { version = "0.33.2", features = ["bytemuck", "encase"] }
 renderdoc = "0.12.1"
