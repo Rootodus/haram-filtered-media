@@ -5,3 +5,26 @@ edition = "2024"
 publish = false
 
 [dependencies]
+# Potential rust crates:
+# loom
+# parking_lot
+# minstant
+# hdrhistogram
+# proptest
+# static_assertions
+# dhat
+# tracing
+# tracing-subscriber
+#
+# | Tool / Crate | Type of Correctness | When to Use It | Why Use It (The Core Benefit) |
+# |---|---|---|---|
+# | static_assertions | Compile-Time Layout | Day 1 (Writing Structs) | Guarantees an LLM adjustment didn't accidentally resize a critical zero-copy type or break a memory byte alignment rule. It fails at compile-time instantly. |
+# | debug_assert! | Logical Invariants | Day 1 (Inside Code) | Best tool for inline logic testing. It checks boundaries and values every single frame in debug mode but compiles out to zero-cost in release mode. |
+# | parking_lot | OS Thread Safety | Day 1 (Replacing std) | Prevents thread locks from poisoning or locking the operating system scheduler. Drop-in replacement for standard mutexes. |
+# | minstant | Microsecond Timing | Day 2 (Integrating Loops) | Measures loop durations using direct hardware CPU timestamps. Tells you instantly if a frame processing step blows past your 16.6ms budget. |
+# | Standard Tests (#[test]) | Basic Logic | Day 2 (Module Complete) | Verifies single-threaded functional logic (e.g., "Does pushing data increment an index?"). Cannot verify timing or threading behavior. |
+# | loom | Permutation Safety | Day 3 (Lock-Free Check) | Essential for lock-free atomic code. It tests every single possible thread-switching edge-case to find silent deadlocks or race conditions. |
+# | proptest | Input Adversary | Day 4 (Integration) | Fuzzes your media pipelines with thousands of malformed or out-of-order byte inputs to ensure the runtime doesn't panic. |
+# | dhat | Memory Allocations | Day 5 (Performance) | Tracks down hidden memory leaks. It tells you exactly where an LLM snuck in a slow string clone or unexpected runtime malloc. |
+# | tracing & -subscriber | Dynamic Visibility | Day 5 (Debugging) | Provides high-performance, structured logging across async and synchronous tracks to map execution flows without performance impact. |
+# | hdrhistogram | Long-Term Jitter | Day 6 (Polishing) | Tracks p99 and p99.9 latency spikes over thousands of frames to find out exactly why a program jitters after 20 seconds of operation. |
