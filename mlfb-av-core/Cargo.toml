@@ -5,26 +5,82 @@ edition = "2024"
 publish = false
 
 [dependencies]
-# Potential rust crates:
-# loom
-# parking_lot
-# minstant
-# hdrhistogram
-# proptest
-# static_assertions
-# dhat
-# tracing
-# tracing-subscriber
-#
-# | Tool / Crate | Type of Correctness | When to Use It | Why Use It (The Core Benefit) |
-# |---|---|---|---|
-# | static_assertions | Compile-Time Layout | Day 1 (Writing Structs) | Guarantees an LLM adjustment didn't accidentally resize a critical zero-copy type or break a memory byte alignment rule. It fails at compile-time instantly. |
-# | debug_assert! | Logical Invariants | Day 1 (Inside Code) | Best tool for inline logic testing. It checks boundaries and values every single frame in debug mode but compiles out to zero-cost in release mode. |
-# | parking_lot | OS Thread Safety | Day 1 (Replacing std) | Prevents thread locks from poisoning or locking the operating system scheduler. Drop-in replacement for standard mutexes. |
-# | minstant | Microsecond Timing | Day 2 (Integrating Loops) | Measures loop durations using direct hardware CPU timestamps. Tells you instantly if a frame processing step blows past your 16.6ms budget. |
-# | Standard Tests (#[test]) | Basic Logic | Day 2 (Module Complete) | Verifies single-threaded functional logic (e.g., "Does pushing data increment an index?"). Cannot verify timing or threading behavior. |
-# | loom | Permutation Safety | Day 3 (Lock-Free Check) | Essential for lock-free atomic code. It tests every single possible thread-switching edge-case to find silent deadlocks or race conditions. |
-# | proptest | Input Adversary | Day 4 (Integration) | Fuzzes your media pipelines with thousands of malformed or out-of-order byte inputs to ensure the runtime doesn't panic. |
-# | dhat | Memory Allocations | Day 5 (Performance) | Tracks down hidden memory leaks. It tells you exactly where an LLM snuck in a slow string clone or unexpected runtime malloc. |
-# | tracing & -subscriber | Dynamic Visibility | Day 5 (Debugging) | Provides high-performance, structured logging across async and synchronous tracks to map execution flows without performance impact. |
-# | hdrhistogram | Long-Term Jitter | Day 6 (Polishing) | Tracks p99 and p99.9 latency spikes over thousands of frames to find out exactly why a program jitters after 20 seconds of operation. |
+core_affinity = "0.8.3"
+cpal = "0.18.1"
+crossbeam = "0.8.4"
+minstant = "0.1.7"
+ort = "2.0.0-rc.12"
+parking_lot = "0.12.5"
+rfd = "0.17.2"
+ringbuf = "0.5.1"
+shared_memory = "0.12.4"
+thiserror = "2.0.19"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+wgpu = "30.0.0"
+winit = "0.30.13"
+
+[dev-dependencies]
+dhat = "0.3.3"
+hdrhistogram = "7.6.0"
+loom = "0.7.2"
+proptest = "1.11.0"
+static_assertions = "1.1.0"
+
+# =========================================================================
+# DAILY DEVELOPMENT
+# =========================================================================
+[profile.dev]
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.dev.build-override]
+opt-level = 3
+
+# =========================================================================
+# BENCHMARKING
+# =========================================================================
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+# =========================================================================
+# TESTING (Integration & Stress Tests)
+# =========================================================================
+[profile.test]
+opt-level = 2
+debug = true
+lto = "thin"
+debug-assertions = true
+overflow-checks = true
+
+[profile.test.package."*"]
+debug = false
+
+# =========================================================================
+# PROFILING VIA TOOLS
+# =========================================================================
+[profile.profiling]
+inherits = "release"
+debug = true
+
+# =========================================================================
+# LOCAL PROFILING
+# =========================================================================
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+# =========================================================================
+# FINAL USER DISTRIBUTION
+# =========================================================================
+[profile.final-release]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true
+# no panic abort
