@@ -2457,7 +2457,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ml_filtered_browser"
+name = "ml-filtered-browser"
 version = "0.1.0"
 dependencies = [
  "anyhow",
