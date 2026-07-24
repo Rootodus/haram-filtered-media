@@ -25,10 +25,10 @@ Atomic ordering: state.load Acquire, state.store Release, generation SeqCst.
 ## Queues (lock‑free, fixed capacity)
 | Queue | Producer | Consumer | Drop on full |
 | --- | --- | --- | --- |
-| audio_free | Audio callback (release) | Audio ingest (claim) | N/A (panic if empty) |
-| video_free | Render loop? (release) | Video ingest | N/A – ingest drops frame |
-| audio_ingested | Audio ingest | ML workers | N/A (workers block?) |
-| video_ingested | Video ingest | ML workers | N/A (workers block?) |
+| audio_free | CPAL SPSC writer (after copy) | Audio ingest | N/A (panic if empty) |
+| video_free | Render loop (after present) | Video ingest | N/A – ingest drops frame |
+| audio_ingested | Audio ingest | ML workers | Panic if full |
+| video_ingested | Video ingest | ML workers | Drop frame |
 | audio_ml_ready | ML workers | CPAL SPSC writer | Panic if full |
 | video_ml_ready | ML workers | GPU upload | Drop video slot |
 | video_gpu_upload_ready | GPU upload | Render loop | Render stale frame |
@@ -37,18 +37,21 @@ Atomic ordering: state.load Acquire, state.store Release, generation SeqCst.
 | Role | Priority | Affinity | I/O |
 | --- | --- | --- | --- |
 | CPAL callback | Realtime | Fixed core | Reads audio_output_queue |
+| CPAL SPSC writer | High (just below realtime) | Separate core, high priority (but not realtime) | Consumes audio_ml_ready → writes SPSC → releases to audio_free |
 | Audio ingest | High | Any | audio_free → audio_ingested |
-| Video ingest | Normal | Any | video_free → video_ingested |
-| ML workers | Low | Separate cores | audio_ingested → audio_ml_ready; video_ingested → video_ml_ready |
+| Video ingest | Normal | Any | video_free → video_ingested (drops if either full) |
+| ML workers | Low | Separate cores | Consume audio_ingested/video_ingested; push to audio_ml_ready/video_ml_ready |
 | GPU upload | Normal | Near render | video_ml_ready → staging → video_gpu_upload_ready |
-| WGPU loop | Normal | Fixed core | video_gpu_upload_ready → present |
+| WGPU loop | Normal | Fixed core | video_gpu_upload_ready → present; after present, release slot to video_free |
 
 ## Drop Policies
-- audio_free empty: fatal (panic/suspend)
-- audio_ml_ready full: panic (audio must not drop)
-- video_free full: drop frame
-- video_ml_ready full: drop processed video slot
-- video_gpu_upload_ready full: render stale frame (consumer lags)
+- audio_free empty: panic! (or suspend ingestion).
+- audio_ingested full: panic! – cannot drop audio.
+- audio_ml_ready full: panic! – cannot drop processed audio.
+- video_free full: drop frame.
+- video_ingested full: drop frame (same check as above).
+- video_ml_ready full: drop processed video slot.
+- video_gpu_upload_ready full: render stale frame (consumer lags).
 
 ## Shutdown Order
 1. Set SHUTDOWN atomic (Release).
