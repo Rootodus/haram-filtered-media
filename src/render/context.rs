@@ -5,6 +5,7 @@ use encase::ShaderType;
 use glam::Vec2;
 use ort::session::Session;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc::UnboundedReceiver;
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, Device, Queue, RenderPipeline, Sampler, Surface, Texture,
     TextureView,
@@ -65,13 +66,18 @@ pub struct App {
     pub mask_bind_group: Option<BindGroup>,
     pub mask_uniform_buffer: Option<Buffer>,
     pub mask_storage_buffer: Option<Buffer>,
+    pub action_rx: Option<UnboundedReceiver<Vec<VisualAction>>>,
 
     pub last_frame_width: u32,
     pub last_frame_height: u32,
 }
 
 impl App {
-    pub fn new(state: Arc<SharedAppState>, sessions: Vec<Arc<Mutex<Session>>>) -> Self {
+    pub fn new(
+        state: Arc<SharedAppState>,
+        sessions: Vec<Arc<Mutex<Session>>>,
+        action_rx: UnboundedReceiver<Vec<VisualAction>>,
+    ) -> Self {
         Self {
             window: None,
             surface: None,
@@ -96,6 +102,7 @@ impl App {
             mask_bind_group: None,
             mask_uniform_buffer: None,
             mask_storage_buffer: None,
+            action_rx: Some(action_rx),
             last_frame_width: 0,
             last_frame_height: 0,
         }

@@ -1,8 +1,10 @@
 use ml_filtered_browser::browser::{BrowserSession, capture_screenshot, extract_dom_nodes};
 use ml_filtered_browser::debug_config::DebugConfig;
+use ml_filtered_browser::inference::run_inference;
 use ml_filtered_browser::render::{App, CustomAppEvent};
 use ml_filtered_browser::shared_state::SharedAppState;
-use ml_filtered_browser::types::{DomNode, SEQ_LEN};
+use ml_filtered_browser::tokenizer::tokenize;
+use ml_filtered_browser::types::{DomNode, FrameData, SEQ_LEN, VisualAction};
 
 use anyhow::Result;
 use ort::session::Session;
@@ -10,6 +12,7 @@ use ort::value::{DynValue, Value};
 use renderdoc::{RenderDoc, V141};
 use std::error::Error;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc::unbounded_channel;
 use winit::event_loop::EventLoop;
 
 const TARGET_URL: &str = "https://en.wikipedia.org/wiki/HTML5";
@@ -80,18 +83,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    // Spawn the browser execution loop instantly on its own dedicated OS thread.
-    let state_for_browser = state.clone();
-    let _browser_thread_handle = std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-        rt.block_on(async {
-            if let Err(e) = run_browser_frame_loop(state_for_browser, ack_rx, shutdown_rx).await {
-                eprintln!("Browser frame loop thread error: {}", e);
-            }
-        });
-    });
-
-    // Load ONNX model
+    // Load ONNX model (must be done before inference)
     let _ = ort::init().commit();
     ml_filtered_browser::tokenizer::init_tokenizer("tokenizer.json")?;
 
@@ -130,6 +122,60 @@ async fn main() -> Result<(), Box<dyn Error>> {
         sessions.push(Arc::new(Mutex::new(session)));
     }
 
+    // Create channels for async inference
+    let (frame_tx, mut frame_rx) = unbounded_channel::<FrameData>();
+    let (actions_tx, actions_rx) = unbounded_channel::<Vec<VisualAction>>();
+
+    // Spawn inference task
+    let sessions_for_inference = sessions.clone();
+    tokio::spawn(async move {
+        while let Some(frame_data) = frame_rx.recv().await {
+            let (input_ids_vec, attention_mask_vec) = tokenize(&frame_data.text, SEQ_LEN);
+            let ids_array = ndarray::Array2::from_shape_vec((1, SEQ_LEN), input_ids_vec)
+                .expect("Failed to create input_ids array");
+            let mask_array = ndarray::Array2::from_shape_vec((1, SEQ_LEN), attention_mask_vec)
+                .expect("Failed to create attention_mask array");
+            let ids_value = Value::from_array(ids_array)
+                .expect("Failed to create input_ids Value")
+                .into_dyn();
+            let mask_value = Value::from_array(mask_array)
+                .expect("Failed to create attention_mask Value")
+                .into_dyn();
+
+            // Run inference on all sessions (serial for simplicity)
+            let mut all_actions = Vec::new();
+            for session_arc in &sessions_for_inference {
+                let mut session_guard = session_arc.lock().unwrap();
+                if let Ok(actions) = run_inference(
+                    &mut session_guard,
+                    &ids_value,
+                    &mask_value,
+                    &frame_data.nodes,
+                    frame_data.width as f32,
+                    frame_data.height as f32,
+                ) {
+                    all_actions.extend(actions);
+                }
+            }
+            if !all_actions.is_empty() {
+                let _ = actions_tx.send(all_actions);
+            }
+        }
+    });
+
+    // Spawn the browser execution loop on its own OS thread.
+    let state_for_browser = state.clone();
+    let _browser_thread_handle = std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+        rt.block_on(async {
+            if let Err(e) =
+                run_browser_frame_loop(state_for_browser, ack_rx, shutdown_rx, frame_tx).await
+            {
+                eprintln!("Browser frame loop thread error: {}", e);
+            }
+        });
+    });
+
     // Warmup
     const BATCH: usize = 1;
     let ids_array = ndarray::Array2::<i64>::zeros((BATCH, SEQ_LEN));
@@ -138,7 +184,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let attention_mask_value: DynValue = Value::from_array(mask_array)?.into_dyn();
     let input_ids_arc = Arc::new(input_ids_value);
     let attention_mask_arc = Arc::new(attention_mask_value);
-    let empty_nodes: Vec<DomNode> = Vec::new(); // no real nodes for warmup
+    let empty_nodes: Vec<DomNode> = Vec::new();
     let dummy_w = 1.0;
     let dummy_h = 1.0;
 
@@ -157,7 +203,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Start the renderer
-    let mut app = App::new(state, sessions);
+    let mut app = App::new(state, sessions, actions_rx);
     println!("Starting Window Event Loop...");
 
     let _run_result = event_loop.run_app(&mut app);
@@ -180,6 +226,7 @@ async fn run_browser_frame_loop(
     state: Arc<SharedAppState>,
     mut ack_rx: tokio::sync::mpsc::Receiver<()>,
     mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    frame_tx: tokio::sync::mpsc::UnboundedSender<FrameData>,
 ) -> Result<(), Box<dyn Error>> {
     let (browser, mut handler, profile_dir) = BrowserSession::launch().await?;
 
@@ -211,6 +258,7 @@ async fn run_browser_frame_loop(
             .filter(|n| n.rect.width > 0.0 && n.rect.height > 0.0)
             .filter(|n| n.rect.y + n.rect.height <= 720.0)
             .collect();
+
         let (width, height, pixel_data) = capture_screenshot(&session.page).await?;
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -218,7 +266,9 @@ async fn run_browser_frame_loop(
             .as_millis() as u64;
         let pixel_arc = Arc::from(pixel_data.into_boxed_slice());
 
-        state.update_frame(timestamp, width, height, nodes, pixel_arc);
+        // Clone nodes for the frame; use the original for text extraction
+        let nodes_for_frame = nodes.clone();
+        state.update_frame(timestamp, width, height, nodes_for_frame, pixel_arc);
 
         tokio::select! {
             ack = ack_rx.recv() => {
@@ -229,6 +279,27 @@ async fn run_browser_frame_loop(
                 break;
             }
         }
+
+        // Extract text and send for inference
+        let mut text = String::new();
+        for node in &nodes {
+            if let Some(t) = &node.text {
+                if !t.is_empty() {
+                    text.push_str(t);
+                    text.push(' ');
+                }
+            }
+        }
+        if text.is_empty() {
+            text.push_str("empty");
+        }
+
+        let _ = frame_tx.send(FrameData {
+            text,
+            nodes,
+            width,
+            height,
+        });
     }
 
     let _ = session.close_sync();

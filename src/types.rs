@@ -28,3 +28,12 @@ pub struct VisualAction {
     pub action_type: u8,
     pub rect: [f32; 4],
 }
+
+/// Data needed for inference: text, nodes, and viewport.
+#[derive(Debug, Clone)]
+pub struct FrameData {
+    pub text: String,
+    pub nodes: Vec<DomNode>,
+    pub width: u32,
+    pub height: u32,
+}

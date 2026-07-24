@@ -73,6 +73,3 @@ impl SharedAppState {
         }
     }
 }
-
-pub static INFERENCE_RUNNING: AtomicBool = AtomicBool::new(false);
-pub static SKIP_NEXT_INFERENCE: AtomicBool = AtomicBool::new(false);

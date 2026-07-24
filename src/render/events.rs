@@ -1,18 +1,10 @@
 use super::{App, CustomAppEvent, context, draw, pipeline};
-use crate::inference::run_inference;
 use crate::logging::{increment_frame_counter, should_log};
-use crate::shared_state::{INFERENCE_RUNNING, SKIP_NEXT_INFERENCE};
-use crate::tokenizer::tokenize;
-use crate::types::{MAX_ACTIONS, SEQ_LEN, VisualAction};
+use crate::types::{MAX_ACTIONS, VisualAction};
 
 use encase::ShaderType;
-use futures::future::join_all;
-use ndarray::Array2;
-use ort::value::Value;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::Instant;
-use tokio::task::spawn_blocking;
 use wgpu::{
     CompositeAlphaMode, DeviceDescriptor, Features, Limits, MemoryHints, PowerPreference,
     PresentMode, RequestAdapterOptions, SurfaceColorSpace, SurfaceConfiguration, TextureFormat,
@@ -312,6 +304,16 @@ impl ApplicationHandler<CustomAppEvent> for App {
                     (d.clone(), q.clone())
                 };
 
+                // Poll for new actions from background inference
+                if let Some(ref mut rx) = self.action_rx {
+                    while let Ok(new_actions) = rx.try_recv() {
+                        if !new_actions.is_empty() {
+                            self.cached_actions = new_actions.clone();
+                            self.state.set_actions(new_actions);
+                        }
+                    }
+                }
+
                 // 2. Fetch the current surface texture in an isolated short-lived block.
                 // This immediately ends the immutable borrow on self.surface so that downstream
                 // functions can mutably borrow self safely.
@@ -361,97 +363,9 @@ impl ApplicationHandler<CustomAppEvent> for App {
 
                 // ---------- Data update (inference) ----------
                 let mut needs_ack = false;
-                let mut actions: Vec<VisualAction> = Vec::new();
+                let actions: Vec<VisualAction> = Vec::new();
 
                 if let Some(frame) = self.state.get_frame_if_dirty() {
-                    let inference_start = Instant::now();
-
-                    let should_skip = SKIP_NEXT_INFERENCE.swap(false, Ordering::AcqRel);
-                    if !should_skip && !self.sessions.is_empty() {
-                        INFERENCE_RUNNING.store(true, Ordering::Relaxed);
-
-                        // Tokenize text from frame.nodes
-                        let mut full_text = String::new();
-                        for node in &frame.nodes {
-                            if let Some(text) = &node.text {
-                                if !text.is_empty() {
-                                    full_text.push_str(text);
-                                    full_text.push(' ');
-                                }
-                            }
-                        }
-                        if full_text.is_empty() {
-                            full_text.push_str("empty");
-                        }
-
-                        let (input_ids_vec, attention_mask_vec) = tokenize(&full_text, SEQ_LEN);
-                        let ids_array = Array2::from_shape_vec((1, SEQ_LEN), input_ids_vec)
-                            .expect("Failed to create input_ids array");
-                        let mask_array = Array2::from_shape_vec((1, SEQ_LEN), attention_mask_vec)
-                            .expect("Failed to create attention_mask array");
-                        let ids_value = Value::from_array(ids_array)
-                            .expect("Failed to create input_ids Value")
-                            .into_dyn();
-                        let mask_value = Value::from_array(mask_array)
-                            .expect("Failed to create attention_mask Value")
-                            .into_dyn();
-
-                        let ids_arc = Arc::new(ids_value);
-                        let mask_arc = Arc::new(mask_value);
-
-                        // Spawn inference tasks
-                        let mut handles = Vec::with_capacity(self.sessions.len());
-                        for session_arc in &self.sessions {
-                            let session_clone = Arc::clone(session_arc);
-                            let ids_clone = Arc::clone(&ids_arc);
-                            let mask_clone = Arc::clone(&mask_arc);
-                            let nodes_clone = frame.nodes.clone(); // clone Vec<DomNode> (cheap)
-                            let viewport_w = frame.width as f32;
-                            let viewport_h = frame.height as f32;
-
-                            let handle = spawn_blocking(move || {
-                                let mut session_guard = session_clone.lock().unwrap();
-                                run_inference(
-                                    &mut session_guard,
-                                    &ids_clone,
-                                    &mask_clone,
-                                    &nodes_clone,
-                                    viewport_w,
-                                    viewport_h,
-                                )
-                            });
-                            handles.push(handle);
-                        }
-
-                        let mut all_actions = Vec::new();
-                        let results = pollster::block_on(join_all(handles));
-                        for res in results {
-                            match res {
-                                Ok(Ok(actions)) => all_actions.extend(actions),
-                                Ok(Err(e)) => eprintln!("Inference error: {}", e),
-                                Err(e) => eprintln!("Task panicked: {}", e),
-                            }
-                        }
-
-                        let inference_duration = inference_start.elapsed();
-                        if should_log(60) {
-                            println!("Inference time: {:?}", inference_duration);
-                        }
-
-                        if !all_actions.is_empty() {
-                            if should_log(30) {
-                                println!("Total actions produced: {}", all_actions.len());
-                            }
-                            self.cached_actions = all_actions.clone();
-                            self.state.set_actions(all_actions.clone());
-                        } else {
-                            self.state.set_actions(Vec::new());
-                        }
-                        actions = all_actions;
-
-                        INFERENCE_RUNNING.store(false, Ordering::Relaxed);
-                    }
-
                     let upload_start = Instant::now();
 
                     // Upload frame texture (unchanged)
