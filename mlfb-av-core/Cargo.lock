@@ -1225,6 +1225,7 @@ dependencies = [
  "hdrhistogram",
  "loom",
  "minstant",
+ "naga",
  "ort",
  "parking_lot",
  "pollster 1.0.1",
