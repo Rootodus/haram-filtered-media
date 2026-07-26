@@ -2,6 +2,7 @@ use crossbeam::queue::ArrayQueue;
 use mlfb_av_core::memory::{
     PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool,
 };
+use mlfb_av_core::ml::VideoModel;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use wgpu::{
@@ -103,6 +104,11 @@ impl Default for App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // --- Load ONNX model ---
+        let model = Arc::new(std::sync::Mutex::new(
+            VideoModel::new("models/image_model.onnx").expect("Failed to load model"),
+        ));
+
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -385,22 +391,28 @@ impl ApplicationHandler for App {
         });
         self.ingest_handle = Some(ingest_handle);
 
-        // ML
+        // ML worker – uses the ONNX model with a Mutex
         let pool_ml = pool.clone();
         let video_ingested_cons = video_ingested.clone();
         let video_ml_ready_prod = video_ml_ready.clone();
+        let model_ml = model.clone();
         let running_ml = running.clone();
         let ml_handle = std::thread::spawn(move || {
             while running_ml.load(std::sync::atomic::Ordering::Acquire) {
                 if let Some(packed) = video_ingested_cons.pop() {
-                    pool_ml.with_payload_mut(packed, |payload| {
-                        for byte in payload.iter_mut() {
-                            *byte = 255 - *byte;
-                        }
+                    // Process the slot with the model.
+                    let result = pool_ml.with_payload_mut(packed, |payload| {
+                        let mut model = model_ml.lock().unwrap();
+                        model.process(payload, WIDTH, HEIGHT)
                     });
+                    if let Err(e) = result {
+                        eprintln!("ML inference failed: {}", e);
+                        // Continue with the slot anyway.
+                    }
+                    // Transition to ML_COMMITTED regardless of success.
                     pool_ml
                         .transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
-                        .unwrap();
+                        .expect("State transition failed");
                     video_ml_ready_prod.push(packed).unwrap();
                 } else {
                     std::thread::sleep(std::time::Duration::from_micros(100));
@@ -441,7 +453,7 @@ impl ApplicationHandler for App {
                             buffer: &staging,
                             layout: wgpu::TexelCopyBufferLayout {
                                 offset: 0,
-                                bytes_per_row: Some(4 * WIDTH), // now aligned (3840)
+                                bytes_per_row: Some(4 * WIDTH),
                                 rows_per_image: Some(HEIGHT),
                             },
                         },
@@ -458,7 +470,6 @@ impl ApplicationHandler for App {
                         },
                     );
                     queue_upload.submit(Some(encoder.finish()));
-
                     pool_upload
                         .transition_state(packed, STATE_ML_COMMITTED, STATE_GPU_UPLOADED)
                         .unwrap();
@@ -552,6 +563,13 @@ impl ApplicationHandler for App {
                             let config = self.config.as_mut().unwrap();
                             config.width = size.width;
                             config.height = size.height;
+                            // Ensure GPU is idle before reconfiguring
+                            device
+                                .poll(wgpu::PollType::Wait {
+                                    submission_index: None,
+                                    timeout: None,
+                                })
+                                .expect("Failed to poll GPU before reconfiguring (Outdated)");
                             surface.configure(device, config);
                         }
                         if let Some(window) = self.window.as_ref() {
@@ -603,6 +621,13 @@ impl ApplicationHandler for App {
                             let config = self.config.as_mut().unwrap();
                             config.width = size.width;
                             config.height = size.height;
+                            // Ensure GPU is idle before reconfiguring
+                            device
+                                .poll(wgpu::PollType::Wait {
+                                    submission_index: None,
+                                    timeout: None,
+                                })
+                                .expect("Failed to poll GPU before reconfiguring (Suboptimal)");
                             surface.configure(device, config);
                         }
                     }

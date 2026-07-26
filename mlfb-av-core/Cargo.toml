@@ -5,9 +5,11 @@ edition = "2024"
 publish = false
 
 [dependencies]
+anyhow = "1.0.104"
 core_affinity = "0.8.3"
 cpal = "0.18.1"
 crossbeam = "0.8.4"
+fast_image_resize = "6.1.0"
 minstant = "0.1.7"
 ort = "2.0.0-rc.12"
 parking_lot = "0.12.5"
@@ -36,7 +38,7 @@ naga = { version = "30.0.0", features = ["wgsl-in"] }
 # DAILY DEVELOPMENT
 # =========================================================================
 [profile.dev]
-opt-level = 0
+opt-level = 1
 split-debuginfo = "unpacked"
 
 [profile.dev.package."*"]
@@ -75,7 +77,6 @@ debug = true
 # LOCAL PROFILING
 # =========================================================================
 [profile.release]
-opt-level = 3
 lto = "thin"
 
 # =========================================================================
