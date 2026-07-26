@@ -57,7 +57,7 @@ opt-level = 0
 
 [profile.dev.package."*"]
 opt-level = 3
-debug = false
+debug = "line-tables-only"
 
 [profile.dev.build-override]
 opt-level = 3
@@ -81,7 +81,7 @@ debug-assertions = true
 overflow-checks = true
 
 [profile.test.package."*"]
-debug = false
+debug = "line-tables-only"
 
 # =========================================================================
 # PROFILING VIA TOOLS
