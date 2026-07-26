@@ -54,13 +54,14 @@ flamegraph = "0.6.13"
 # =========================================================================
 [profile.dev]
 opt-level = 0
+split-debuginfo = "unpacked"
 
 [profile.dev.package."*"]
-opt-level = 3
+opt-level = 2
 debug = "line-tables-only"
 
 [profile.dev.build-override]
-opt-level = 3
+opt-level = 2
 
 # =========================================================================
 # BENCHMARKING
@@ -79,9 +80,6 @@ debug = true
 lto = "thin"
 debug-assertions = true
 overflow-checks = true
-
-[profile.test.package."*"]
-debug = "line-tables-only"
 
 # =========================================================================
 # PROFILING VIA TOOLS
