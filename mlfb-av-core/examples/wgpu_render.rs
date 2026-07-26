@@ -152,7 +152,7 @@ impl ApplicationHandler for App {
                 .unwrap()
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("Shader"),
-                    source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+                    source: wgpu::ShaderSource::Wgsl(include_str!("shaders/quad.wgsl").into()),
                 });
 
         // 9. Create pipeline layout
