@@ -20,6 +20,8 @@ wgpu = { version = "30.0", default-features = false, features = [
 ] }
 raw-window-handle = "0.6.2"
 pollster = "1.0.1"
+# Avoid rc.13+ until Microsoft fixes the upstream quantization casting bug
+# (CAST_F32_TO_F16) which causes instant hardware panics on runtime.
 ort = { version = "=2.0.0-rc.12", features = ["directml"] }
 ndarray = "0.17.2"
 futures = "0.3.32"
