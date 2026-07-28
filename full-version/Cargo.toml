@@ -20,7 +20,7 @@ wgpu = { version = "30.0", default-features = false, features = [
 ] }
 raw-window-handle = "0.6.2"
 pollster = "1.0.1"
-ort = { version = "2.0.0-rc.12", features = ["directml"] }
+ort = { version = "=2.0.0-rc.12", features = ["directml"] }
 ndarray = "0.17.2"
 futures = "0.3.32"
 tokenizers = { version = "0.23.1", default-features = false, features = [
