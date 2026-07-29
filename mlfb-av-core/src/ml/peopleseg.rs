@@ -1,13 +1,18 @@
 // ============================================================================
-// ATTRIBUTION NOTICE:
-// The mathematical tensor stride indexing, channel mapping,
-// and post-processing logic implemented in this module are translated
-// and adapted from the upstream Python reference implementation:
+// ASSET ACKNOWLEDGMENT & ATTRIBUTION:
+// This module executes inference against an optimized, standalone UNet weight
+// binary acquired from the open-source community.
 //
-// Source Project: PINTO Model Zoo - 466_People_Segmentation
-// Author: Katsuya Hyodo (pinto0309)
-// Source URL: https://github.com/PINTO0309/PINTO_model_zoo/tree/main/466_People_Segmentation
-// Upstream License: MIT
+// Source Project: PINTO Model Zoo
+// Asset Model Target: 466_People_Segmentation (UNet Architecture)
+// Curator/Converter: Katsuya Hyodo (pinto0309)
+// Source Repository: https://github.com/PINTO0309/PINTO_model_zoo
+// Upstream Model Research: Vladimir Iglovikov (people_segmentation)
+// Upstream Asset License: MIT
+//
+// NOTE: The real-time pixel normalization, image resizing, and 4D tensor
+// indexing layout maps implemented below are custom native Rust pipeline
+// components written to interface directly with the standalone ONNX matrix.
 // ============================================================================
 
 use crate::filter::VideoFilter;
@@ -34,6 +39,20 @@ impl PeopleSegFilter {
     pub fn new(path: &str) -> Result<Self> {
         // Direct clean call to parent module's initialization engine
         let session = super::init_session(path)?;
+
+        let output_shape = match session.outputs()[0].dtype() {
+            ValueType::Tensor { shape, .. } => shape.clone(),
+            _ => return Err(anyhow!("Expected tensor output")),
+        };
+
+        // ====================================================================
+        // THE SANITY CHECK: Print the actual hidden output dimensions
+        // ====================================================================
+        println!(
+            "DEBUG CRITICAL: True Model Output Shape is: {:?}",
+            output_shape
+        );
+        // ====================================================================
 
         let input_name = session.inputs()[0].name().to_string();
         let output_names: Vec<String> = session
@@ -65,7 +84,7 @@ impl PeopleSegFilter {
             output_name,
             input_height,
             input_width,
-            mask_threshold: 0.5,
+            mask_threshold: 0.0,
             dilation_kernel_size: 5,
             dilation_iterations: 3,
         })
@@ -160,36 +179,34 @@ impl VideoFilter for PeopleSegFilter {
 
         let mut input_data = Vec::with_capacity(3 * model_h * model_w);
         let dst_data = dst_rgba.buffer();
+
         for ch in 0..3 {
             for y in 0..model_h {
                 for x in 0..model_w {
-                    input_data.push(dst_data[(y * model_w + x) * 4 + ch] as f32);
+                    // FIX: Scale raw 0-255 u8 values down to 0.0-1.0 f32 range
+                    let raw_pixel = dst_data[(y * model_w + x) * 4 + ch] as f32;
+                    input_data.push(raw_pixel / 255.0);
                 }
             }
         }
 
         // --- Core Model Inference Loop ---
-        // --- Core Model Inference Loop ---
         let input_tensor = Value::from_array(([1, 3, model_h, model_w], input_data))?;
 
-        // FIX: Acquire a local mutable guard block from the interior Mutex container
         let mut session_guard = self
             .session
             .lock()
             .map_err(|_| anyhow!("Failed to acquire safe lock on ONNX session state"))?;
 
-        // Call run on your mutable guard variable reference instead of directly on self.session
         let outputs = session_guard.run(ort::inputs![self.input_name.as_str() => input_tensor])?;
-
         let output_tensor = outputs
             .get(self.output_name.as_str())
             .ok_or_else(|| anyhow!("Output tensor missing"))?;
-
         let (_, raw_slice) = output_tensor.try_extract_tensor::<f32>()?;
 
-        // --- Output Bitmask Assignment via Safe 4D ndarray View ---
-        // Expected shape signature from folder 466 outputs is [1, 2, model_h, model_w]
-        let view4d = ndarray::ArrayView4::from_shape((1, 2, model_h, model_w), raw_slice)
+        // --- 1. Re-interpret flat FFI float array as a 4D viewport ---
+        // FIX 1: Change the shape parameters to match your true [1, 1, 384, 640] layout
+        let view4d = ndarray::ArrayView4::from_shape((1, 1, model_h, model_w), raw_slice)
             .map_err(|e| anyhow!("Array layout transposition error: {:?}", e))?;
 
         let mut combined_mask = vec![0u8; orig_width * orig_height];
@@ -202,8 +219,10 @@ impl VideoFilter for PeopleSegFilter {
                 let norm_x = x as f32 / orig_width as f32;
                 let model_x = ((norm_x * model_w as f32) as usize).min(model_w - 1);
 
-                // Zero-copy index lookup targeting Channel 1 (Human Silhouette probabilities) exclusively
-                let confidence = view4d[[0, 1, model_y, model_x]];
+                // FIX 2: Target channel index 0 natively (since there is only one layer)
+                let confidence = view4d[[0, 0, model_y, model_x]];
+
+                // Keep the raw logit threshold filter boundary (> 0.0)
                 if confidence > self.mask_threshold {
                     combined_mask[row_offset + x] = 1;
                 }
