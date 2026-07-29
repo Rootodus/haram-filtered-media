@@ -70,7 +70,6 @@ opt-level = 0
 # BENCHMARKING
 # =========================================================================
 [profile.bench]
-opt-level = 3
 lto = "fat"
 codegen-units = 1
 
@@ -78,11 +77,8 @@ codegen-units = 1
 # TESTING (Integration & Stress Tests)
 # =========================================================================
 [profile.test]
-opt-level = 2
-debug = true
-lto = "thin"
-debug-assertions = true
-overflow-checks = true
+opt-level = 1
+debug = "line-tables-only"
 
 # =========================================================================
 # PROFILING VIA TOOLS
