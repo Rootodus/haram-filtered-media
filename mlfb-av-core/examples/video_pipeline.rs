@@ -104,9 +104,9 @@ impl Default for App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // --- Load ONNX model ---
+        // --- UNet People Segmentation ---
         let model = Arc::new(std::sync::Mutex::new(
-            VideoModel::new("models/yolov8n-seg.onnx").expect("Failed to load model"),
+            VideoModel::new("models/peopleseg_1x3x384x640.onnx").expect("Failed to load model"),
         ));
 
         let window = Arc::new(
@@ -360,10 +360,6 @@ impl ApplicationHandler for App {
 
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        // Ingest
-        let pool_ingest = pool.clone();
-        let video_ingested_prod = video_ingested.clone();
-        let running_ingest = running.clone();
         // --- Load and resize the static image once (outside the thread) ---
         let loaded_image = {
             // Open the image file (assumed to be in the project root)
@@ -427,7 +423,7 @@ impl ApplicationHandler for App {
         });
         self.ingest_handle = Some(ingest_handle);
 
-        // ML worker – uses the ONNX model with a Mutex
+        // --- ML worker thread loop ---
         let pool_ml = pool.clone();
         let video_ingested_cons = video_ingested.clone();
         let video_ml_ready_prod = video_ml_ready.clone();
@@ -436,16 +432,17 @@ impl ApplicationHandler for App {
         let ml_handle = std::thread::spawn(move || {
             while running_ml.load(std::sync::atomic::Ordering::Acquire) {
                 if let Some(packed) = video_ingested_cons.pop() {
-                    // Process the slot with the model.
+                    // Execute the single-tensor filter directly inside your zero-allocation buffer
                     let result = pool_ml.with_payload_mut(packed, |payload| {
                         let mut model = model_ml.lock().unwrap();
                         model.process(payload, WIDTH, HEIGHT)
                     });
+
                     if let Err(e) = result {
                         eprintln!("ML inference failed: {}", e);
-                        // Continue with the slot anyway.
                     }
-                    // Transition to ML_COMMITTED regardless of success.
+
+                    // Seamlessly commit the processed frame to the next pipeline queue stage
                     pool_ml
                         .transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                         .expect("State transition failed");
