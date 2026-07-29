@@ -9,13 +9,17 @@ anyhow = "1.0.104"
 core_affinity = "0.8.3"
 cpal = "0.18.1"
 crossbeam = "0.8.4"
+edgefirst-decoder = "0.27.0"
+edgefirst-tensor = "0.27.0"
 fast_image_resize = { version = "6.1.0", default-features = false, features = [
     "std"
 ] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 minstant = "0.1.7"
 ndarray = "0.17.2"
-ort = { version = "2.0.0-rc.12", default-features = false, features = [
+# Avoid rc.13+ until Microsoft fixes the upstream quantization casting bug
+# (CAST_F32_TO_F16) which causes instant hardware panics on runtime.
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
     "download-binaries",
     "copy-dylibs",
     "tls-native",
@@ -76,15 +80,16 @@ naga = { version = "30.0.0", default-features = false, features = ["wgsl-in"] }
 # DAILY DEVELOPMENT
 # =========================================================================
 [profile.dev]
-opt-level = 1
+opt-level = 0
 split-debuginfo = "unpacked"
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2
-debug = "line-tables-only"
+debug = false
 
 [profile.dev.build-override]
-opt-level = 2
+opt-level = 0
 
 # =========================================================================
 # BENCHMARKING
@@ -121,8 +126,8 @@ lto = "thin"
 # FINAL USER DISTRIBUTION
 # =========================================================================
 [profile.final-release]
+# no panic abort
 inherits = "release"
 lto = "fat"
 codegen-units = 1
 strip = true
-# no panic abort
