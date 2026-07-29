@@ -122,7 +122,7 @@ lto = "thin"
 # FINAL USER DISTRIBUTION
 # =========================================================================
 [profile.final-release]
-# Do not use panic = "abort" because code (could) rely/relies on catch_unwind
+# Do not use panic = "abort" because code could rely/relies on catch_unwind
 inherits = "release"
 lto = "fat"
 codegen-units = 1
