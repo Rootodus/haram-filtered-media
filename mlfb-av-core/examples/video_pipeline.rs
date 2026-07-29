@@ -106,7 +106,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // --- Load ONNX model ---
         let model = Arc::new(std::sync::Mutex::new(
-            VideoModel::new("models/image_model.onnx").expect("Failed to load model"),
+            VideoModel::new("models/yolov8n-seg.onnx").expect("Failed to load model"),
         ));
 
         let window = Arc::new(
@@ -364,24 +364,60 @@ impl ApplicationHandler for App {
         let pool_ingest = pool.clone();
         let video_ingested_prod = video_ingested.clone();
         let running_ingest = running.clone();
+        // --- Load and resize the static image once (outside the thread) ---
+        let loaded_image = {
+            // Open the image file (assumed to be in the project root)
+            let img = image::open("assets/person.jpg")
+                .expect("Failed to load person.jpg")
+                .to_rgba8();
+            let (w, h) = (img.width(), img.height());
+            println!(
+                "Loaded image: {}x{}, first pixel: {:?}",
+                w,
+                h,
+                &img.as_raw()[0..4]
+            );
+
+            // Convert to fast_image_resize image using from_vec_u8 (takes ownership of data)
+            let data = img.into_raw(); // consumes img, returns Vec<u8>
+            let src = fast_image_resize::images::Image::from_vec_u8(
+                w, // width first
+                h, // height second
+                data,
+                fast_image_resize::PixelType::U8x4,
+            )
+            .unwrap();
+
+            // Allocate destination image at the target size (WIDTH x HEIGHT)
+            let mut dst = fast_image_resize::images::Image::new(
+                WIDTH,
+                HEIGHT,
+                fast_image_resize::PixelType::U8x4,
+            );
+
+            let mut resizer = fast_image_resize::Resizer::new();
+            let options = fast_image_resize::ResizeOptions::new().resize_alg(
+                fast_image_resize::ResizeAlg::Convolution(fast_image_resize::FilterType::Bilinear),
+            );
+            resizer.resize(&src, &mut dst, Some(&options)).unwrap();
+            println!("Resized image first 16 bytes: {:?}", &dst.buffer()[0..16]);
+
+            // Extract the resized RGBA data as a Vec<u8>
+            dst.buffer().to_vec()
+        };
+
+        // --- Ingest thread ---
+        let pool_ingest = pool.clone();
+        let video_ingested_prod = video_ingested.clone();
+        let running_ingest = running.clone();
+        let loaded_image_clone = loaded_image.clone(); // clone for the thread
+
         let ingest_handle = std::thread::spawn(move || {
-            let mut t = 0u64;
             while running_ingest.load(std::sync::atomic::Ordering::Acquire) {
                 if let Some(packed) = pool_ingest.try_claim() {
                     pool_ingest.with_payload_mut(packed, |payload| {
-                        for y in 0..HEIGHT {
-                            for x in 0..WIDTH {
-                                let idx = ((y * WIDTH + x) * 4) as usize;
-                                let r = ((x as f32 / WIDTH as f32) * 255.0) as u8;
-                                let g = ((y as f32 / HEIGHT as f32) * 255.0) as u8;
-                                let b = (((t % 256) as f32) / 255.0 * 255.0) as u8;
-                                payload[idx] = r;
-                                payload[idx + 1] = g;
-                                payload[idx + 2] = b;
-                                payload[idx + 3] = 255;
-                            }
-                        }
-                        t += 1;
+                        // Copy the pre‑resized image into the slot
+                        payload.copy_from_slice(&loaded_image_clone);
                     });
                     video_ingested_prod.push(packed).unwrap();
                 } else {
@@ -430,10 +466,14 @@ impl ApplicationHandler for App {
         let texture_upload = self.texture.as_ref().unwrap().clone();
         let running_upload = running.clone();
         let upload_handle = std::thread::spawn(move || {
+            //println!("inside std::thread::spawn(move ||");
             while running_upload.load(std::sync::atomic::Ordering::Acquire) {
+                //println!("inside running_upload.load");
                 if let Some(packed) = video_ml_ready_cons.pop() {
+                    //println!("inside if let Some(packed)");
                     // Get payload slice.
                     let payload = pool_upload.with_payload_mut(packed, |p| p.to_vec());
+                    println!("Payload[0..16]: {:?}", &payload[0..16]);
 
                     // Create a staging buffer from the payload.
                     let staging =
