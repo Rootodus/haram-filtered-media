@@ -1,8 +1,9 @@
 use crossbeam::queue::ArrayQueue;
+use mlfb_av_core::filter::VideoFilter;
 use mlfb_av_core::memory::{
     PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool,
 };
-use mlfb_av_core::ml::VideoModel;
+use mlfb_av_core::ml::PeopleSegFilter;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use wgpu::{
@@ -105,9 +106,10 @@ impl Default for App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // --- UNet People Segmentation ---
-        let model = Arc::new(std::sync::Mutex::new(
-            VideoModel::new("models/peopleseg_1x3x384x640.onnx").expect("Failed to load model"),
-        ));
+        let model = Arc::new(
+            PeopleSegFilter::new("models/peopleseg_1x3x384x640.onnx")
+                .expect("Failed to load model"),
+        );
 
         let window = Arc::new(
             event_loop
@@ -423,19 +425,23 @@ impl ApplicationHandler for App {
         });
         self.ingest_handle = Some(ingest_handle);
 
+        // --- Page 15, around line 10-20 ---
+
         // --- ML worker thread loop ---
         let pool_ml = pool.clone();
         let video_ingested_cons = video_ingested.clone();
         let video_ml_ready_prod = video_ml_ready.clone();
         let model_ml = model.clone();
         let running_ml = running.clone();
+
         let ml_handle = std::thread::spawn(move || {
             while running_ml.load(std::sync::atomic::Ordering::Acquire) {
                 if let Some(packed) = video_ingested_cons.pop() {
-                    // Execute the single-tensor filter directly inside your zero-allocation buffer
+                    // Execute the clean filter pass directly inside your zero-allocation buffer
                     let result = pool_ml.with_payload_mut(packed, |payload| {
-                        let mut model = model_ml.lock().unwrap();
-                        model.process(payload, WIDTH, HEIGHT)
+                        // FIX: Delete the old model guard lock completely!
+                        // Call filter_frame directly on your shared reference
+                        model_ml.filter_frame(payload, WIDTH, HEIGHT)
                     });
 
                     if let Err(e) = result {
