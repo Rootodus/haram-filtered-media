@@ -1,9 +1,6 @@
 use crossbeam::queue::ArrayQueue;
-use image::RgbaImage;
 use mlfb_av_core::memory::{PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, SlotPool};
-use std::cmp::min;
 use std::sync::Arc;
-use std::sync::Once;
 use wgpu::util::DeviceExt;
 use wgpu::{
     BackendOptions, Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,
@@ -16,13 +13,28 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
-use yscv_video::Mp4VideoReader;
+
+// ---- Symphonia + rav1d imports ----
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::default::get_probe;
+
+use rav1d::include::dav1d::data::Dav1dData;
+use rav1d::include::dav1d::dav1d::{Dav1dContext, Dav1dSettings};
+use rav1d::include::dav1d::picture::Dav1dPicture;
+use rav1d::src::lib::{
+    dav1d_close, dav1d_data_create, dav1d_data_unref, dav1d_default_settings, dav1d_flush,
+    dav1d_get_picture, dav1d_open, dav1d_picture_unref, dav1d_send_data,
+};
+use std::mem::MaybeUninit;
+use std::ptr::NonNull;
 
 const WIDTH: u32 = 960;
 const HEIGHT: u32 = 540;
 const VIDEO_SLOT_SIZE: usize = (WIDTH * HEIGHT * 4) as usize;
 const N_V: usize = 128;
-static SAVE_FRAME: Once = Once::new();
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -73,8 +85,8 @@ struct App {
     pool: Option<Arc<SlotPool<VIDEO_SLOT_SIZE>>>,
     video_ingested: Option<Arc<ArrayQueue<PackedIndex>>>,
     video_gpu_upload_ready: Option<Arc<ArrayQueue<PackedIndex>>>,
-    video_reader: Option<Mp4VideoReader>,
 
+    ingest_handle: Option<std::thread::JoinHandle<()>>,
     upload_handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -94,7 +106,7 @@ impl Default for App {
             pool: None,
             video_ingested: None,
             video_gpu_upload_ready: None,
-            video_reader: None,
+            ingest_handle: None,
             upload_handle: None,
         }
     }
@@ -340,7 +352,7 @@ impl ApplicationHandler for App {
                 });
         self.render_pipeline = Some(render_pipeline);
 
-        // --- Video Pipeline ---
+        // --- Video Pipeline (queues) ---
         let pool = Arc::new(SlotPool::<VIDEO_SLOT_SIZE>::new(N_V));
         self.pool = Some(pool.clone());
 
@@ -351,20 +363,248 @@ impl ApplicationHandler for App {
 
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        // --- Open video reader on main thread ---
-        let reader = match Mp4VideoReader::open("assets/video.mp4".as_ref()) {
-            Ok(r) => {
-                println!("[MAIN] Video opened successfully.");
-                r
-            }
-            Err(e) => {
-                eprintln!("[MAIN] Failed to open video: {}", e);
-                return;
-            }
-        };
-        self.video_reader = Some(reader);
+        // ---- Ingest thread (video decoder) ----
+        let pool_ingest = pool.clone();
+        let video_ingested_prod = video_ingested.clone();
+        let running_ingest = running.clone();
 
-        // --- Upload thread (consumes from video_ingested directly) ---
+        let ingest_handle = std::thread::spawn(move || {
+            // ---- Open video with Symphonia ----
+            let file_path = "assets/video.mp4";
+            let source = std::fs::File::open(file_path).expect("Failed to open video file");
+            let mss = MediaSourceStream::new(Box::new(source), Default::default());
+            let hint = Hint::new();
+            let format_opts = FormatOptions::default();
+            let meta_opts = MetadataOptions::default();
+
+            let mut format_reader = get_probe()
+                .probe(&hint, mss, format_opts, meta_opts)
+                .expect("Failed to probe file");
+
+            let video_track = format_reader
+                .tracks()
+                .iter()
+                .find(|track| {
+                    track
+                        .codec_params
+                        .as_ref()
+                        .map_or(false, |cp| cp.is_video())
+                })
+                .cloned()
+                .expect("No video track");
+
+            println!("[INGEST] Using video track id: {}", video_track.id);
+
+            // ---- Init rav1d ----
+            let mut settings = MaybeUninit::<Dav1dSettings>::uninit();
+            unsafe {
+                dav1d_default_settings(NonNull::new(settings.as_mut_ptr()).unwrap());
+            }
+            let settings = unsafe { settings.assume_init() };
+
+            let mut ctx_ptr: Option<Dav1dContext> = None;
+            let res = unsafe {
+                dav1d_open(
+                    Some(NonNull::from(&mut ctx_ptr)),
+                    Some(NonNull::from(&settings)),
+                )
+            };
+            if res.0 != 0 {
+                panic!("dav1d_open failed: {}", res.0);
+            }
+            let ctx = ctx_ptr.unwrap();
+
+            let mut obu_buffer = Vec::new();
+            let target_w = WIDTH as usize;
+            let target_h = HEIGHT as usize;
+            let mut frame_count = 0;
+
+            while running_ingest.load(std::sync::atomic::Ordering::Acquire) {
+                match format_reader.next_packet() {
+                    Ok(Some(packet)) => {
+                        if packet.track_id != video_track.id {
+                            continue;
+                        }
+                        // Accumulate raw packet data (it's already OBU data)
+                        obu_buffer.extend_from_slice(&packet.data);
+
+                        if !obu_buffer.is_empty() {
+                            // Allocate internal buffer
+                            let mut dav1d_data = Dav1dData::default();
+                            let buf_ptr = unsafe {
+                                dav1d_data_create(
+                                    Some(NonNull::from(&mut dav1d_data)),
+                                    obu_buffer.len(),
+                                )
+                            };
+                            if buf_ptr.is_null() {
+                                eprintln!("[INGEST] dav1d_data_create failed");
+                                obu_buffer.clear();
+                                continue;
+                            }
+                            unsafe {
+                                std::ptr::copy_nonoverlapping(
+                                    obu_buffer.as_ptr(),
+                                    buf_ptr,
+                                    obu_buffer.len(),
+                                );
+                            }
+                            let res = unsafe {
+                                dav1d_send_data(Some(ctx), Some(NonNull::from(&mut dav1d_data)))
+                            };
+                            if res.0 != 0 {
+                                unsafe { dav1d_data_unref(Some(NonNull::from(&mut dav1d_data))) }
+                                obu_buffer.clear();
+                                if res.0 != -11 {
+                                    eprintln!("[INGEST] send_data error: {}", res.0);
+                                }
+                                continue;
+                            }
+                            obu_buffer.clear();
+
+                            // Try to retrieve decoded frames
+                            loop {
+                                let mut picture = MaybeUninit::<Dav1dPicture>::uninit();
+                                let res = unsafe {
+                                    dav1d_get_picture(
+                                        Some(ctx),
+                                        Some(NonNull::new(picture.as_mut_ptr()).unwrap()),
+                                    )
+                                };
+                                if res.0 == 0 {
+                                    let mut picture = unsafe { picture.assume_init() };
+                                    frame_count += 1;
+                                    if frame_count % 10 == 0 {
+                                        println!("[INGEST] Decoded frame #{}", frame_count);
+                                    }
+
+                                    let w = picture.p.w as usize;
+                                    let h = picture.p.h as usize;
+                                    let y_ptr = picture.data[0].unwrap().as_ptr() as *const u8;
+                                    let u_ptr = picture.data[1].unwrap().as_ptr() as *const u8;
+                                    let v_ptr = picture.data[2].unwrap().as_ptr() as *const u8;
+                                    let y_stride = picture.stride[0] as usize;
+                                    let uv_stride = picture.stride[1] as usize;
+
+                                    // Convert YUV to RGBA
+                                    let mut rgba = vec![0u8; w * h * 4];
+                                    for row in 0..h {
+                                        for col in 0..w {
+                                            let y_idx = row * y_stride + col;
+                                            let uv_idx = (row / 2) * uv_stride + (col / 2);
+                                            unsafe {
+                                                let y_val = *y_ptr.add(y_idx) as f32;
+                                                let u_val = *u_ptr.add(uv_idx) as f32 - 128.0;
+                                                let v_val = *v_ptr.add(uv_idx) as f32 - 128.0;
+                                                let r = (y_val + 1.5748 * v_val).clamp(0.0, 255.0)
+                                                    as u8;
+                                                let g = (y_val - 0.1873 * u_val - 0.4681 * v_val)
+                                                    .clamp(0.0, 255.0)
+                                                    as u8;
+                                                let b = (y_val + 1.8556 * u_val).clamp(0.0, 255.0)
+                                                    as u8;
+                                                let idx = (row * w + col) * 4;
+                                                rgba[idx] = r;
+                                                rgba[idx + 1] = g;
+                                                rgba[idx + 2] = b;
+                                                rgba[idx + 3] = 255;
+                                            }
+                                        }
+                                    }
+
+                                    // Resize to target dimensions
+                                    let src_img = fast_image_resize::images::Image::from_slice_u8(
+                                        w as u32,
+                                        h as u32,
+                                        &mut rgba,
+                                        fast_image_resize::PixelType::U8x4,
+                                    )
+                                    .unwrap();
+                                    let mut dst_img = fast_image_resize::images::Image::new(
+                                        target_w as u32,
+                                        target_h as u32,
+                                        fast_image_resize::PixelType::U8x4,
+                                    );
+                                    let mut resizer = fast_image_resize::Resizer::new();
+                                    let options = fast_image_resize::ResizeOptions::new()
+                                        .resize_alg(fast_image_resize::ResizeAlg::Convolution(
+                                            fast_image_resize::FilterType::Bilinear,
+                                        ));
+                                    resizer
+                                        .resize(&src_img, &mut dst_img, Some(&options))
+                                        .unwrap();
+                                    let resized_data = dst_img.buffer().to_vec();
+
+                                    // Claim a slot and push to queue
+                                    if let Some(packed) = pool_ingest.try_claim() {
+                                        pool_ingest.with_payload_mut(packed, |payload| {
+                                            payload.copy_from_slice(&resized_data);
+                                        });
+                                        while let Err(_) = video_ingested_prod.push(packed) {
+                                            std::thread::sleep(std::time::Duration::from_micros(
+                                                100,
+                                            ));
+                                        }
+                                    } else {
+                                        // No free slot; drop frame
+                                        std::thread::sleep(std::time::Duration::from_micros(100));
+                                    }
+
+                                    unsafe {
+                                        dav1d_picture_unref(Some(NonNull::from(&mut picture)))
+                                    }
+                                } else if res.0 == -11 {
+                                    break; // EAGAIN, no more frames ready
+                                } else {
+                                    eprintln!("[INGEST] get_picture error: {}", res.0);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // End of stream – flush decoder
+                        println!("[INGEST] End of stream, flushing decoder");
+                        unsafe { dav1d_flush(ctx) };
+                        // Try to get any remaining frames
+                        loop {
+                            let mut picture = MaybeUninit::<Dav1dPicture>::uninit();
+                            let res = unsafe {
+                                dav1d_get_picture(
+                                    Some(ctx),
+                                    Some(NonNull::new(picture.as_mut_ptr()).unwrap()),
+                                )
+                            };
+                            if res.0 == 0 {
+                                let mut picture = unsafe { picture.assume_init() };
+                                // Process flush frame (simplified: just unref)
+                                unsafe { dav1d_picture_unref(Some(NonNull::from(&mut picture))) }
+                            } else {
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("[INGEST] Demux error: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            // Cleanup
+            unsafe { dav1d_flush(ctx) };
+            let mut ctx_ptr2 = Some(ctx);
+            unsafe { dav1d_close(Some(NonNull::from(&mut ctx_ptr2))) };
+            println!(
+                "[INGEST] Exiting ingest thread. Total frames decoded: {}",
+                frame_count
+            );
+        });
+
+        self.ingest_handle = Some(ingest_handle);
+
+        // ---- Upload thread (consumes from video_ingested) ----
         let pool_upload = pool.clone();
         let video_ingested_cons = video_ingested.clone();
         let video_gpu_upload_ready_prod = video_gpu_upload_ready.clone();
@@ -376,11 +616,8 @@ impl ApplicationHandler for App {
         let upload_handle = std::thread::spawn(move || {
             while running_upload.load(std::sync::atomic::Ordering::Acquire) {
                 if let Some(packed) = video_ingested_cons.pop() {
+                    println!("[UPLOAD] Popped frame from ingested queue");
                     let payload = pool_upload.with_payload_mut(packed, |p| p.to_vec());
-                    println!(
-                        "[UPLOAD] First 16 bytes of payload: {:02x?}",
-                        &payload[..min(16, payload.len())]
-                    );
                     let staging =
                         device_upload.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                             label: Some("Frame Staging"),
@@ -416,7 +653,12 @@ impl ApplicationHandler for App {
                     pool_upload
                         .transition_state(packed, STATE_INGESTED, STATE_GPU_UPLOADED)
                         .unwrap();
+                    println!("[UPLOAD] Submitted frame to GPU");
                     video_gpu_upload_ready_prod.push(packed).unwrap();
+                    println!(
+                        "[UPLOAD] Pushed to gpu_upload_ready, queue len: {}",
+                        video_gpu_upload_ready_prod.len()
+                    );
                 } else {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
@@ -437,89 +679,9 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
+
             WindowEvent::RedrawRequested => {
-                // --- Main-thread video ingest ---
-                if let Some(reader) = self.video_reader.as_mut() {
-                    match reader.next_frame() {
-                        Ok(Some(frame)) => {
-                            // Convert RGB -> RGBA
-                            let rgb = &frame.rgb8_data;
-                            let width = frame.width as usize;
-                            let height = frame.height as usize;
-                            let mut rgba = Vec::with_capacity(width * height * 4);
-                            for chunk in rgb.chunks_exact(3) {
-                                rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
-                            }
-
-                            // Resize to target dimensions
-                            let src_img = fast_image_resize::images::Image::from_slice_u8(
-                                width as u32,
-                                height as u32,
-                                &mut rgba,
-                                fast_image_resize::PixelType::U8x4,
-                            )
-                            .unwrap();
-                            let mut dst_img = fast_image_resize::images::Image::new(
-                                WIDTH,
-                                HEIGHT,
-                                fast_image_resize::PixelType::U8x4,
-                            );
-                            let mut resizer = fast_image_resize::Resizer::new();
-                            let options = fast_image_resize::ResizeOptions::new().resize_alg(
-                                fast_image_resize::ResizeAlg::Convolution(
-                                    fast_image_resize::FilterType::Bilinear,
-                                ),
-                            );
-                            resizer
-                                .resize(&src_img, &mut dst_img, Some(&options))
-                                .unwrap();
-                            let resized_data = dst_img.buffer().to_vec();
-                            SAVE_FRAME.call_once(|| {
-                                // Use RgbaImage to infer pixel type
-                                if let Some(img) =
-                                    RgbaImage::from_raw(WIDTH, HEIGHT, resized_data.clone())
-                                {
-                                    if let Err(e) = img.save("first_frame.png") {
-                                        eprintln!("Failed to save frame: {}", e);
-                                    } else {
-                                        println!("Saved first_frame.png");
-                                    }
-                                } else {
-                                    eprintln!("Failed to create RgbaImage from raw data");
-                                }
-                            });
-                            println!(
-                                "[MAIN] First 16 bytes of resized data: {:02x?}",
-                                &resized_data[..min(16, resized_data.len())]
-                            );
-
-                            // Push to the queue
-                            if let Some(pool) = self.pool.as_ref() {
-                                if let Some(packed) = pool.try_claim() {
-                                    pool.with_payload_mut(packed, |payload| {
-                                        payload.copy_from_slice(&resized_data);
-                                    });
-                                    if let Some(queue) = self.video_ingested.as_ref() {
-                                        while let Err(_) = queue.push(packed) {
-                                            std::thread::sleep(std::time::Duration::from_micros(
-                                                100,
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            println!("[MAIN] End of video stream");
-                            self.video_reader = None;
-                        }
-                        Err(e) => {
-                            eprintln!("[MAIN] Decode error: {}", e);
-                            self.video_reader = None;
-                        }
-                    }
-                }
-
+                // ---- Render ----
                 let surface = self.surface.as_ref().unwrap();
                 let device = self.device.as_ref().unwrap();
                 let queue = self.queue.as_ref().unwrap();
@@ -529,13 +691,7 @@ impl ApplicationHandler for App {
                 let pool = self.pool.as_ref().unwrap();
                 let video_gpu_upload_ready = self.video_gpu_upload_ready.as_ref().unwrap();
 
-                // Pop any ready frame and release it (already uploaded).
-                if let Some(packed) = video_gpu_upload_ready.pop() {
-                    pool.release_video(packed);
-                }
-
                 let ready_count = video_gpu_upload_ready.len();
-                println!("[RENDER] Buffer count: {}", ready_count);
                 if ready_count < 1 {
                     self.window.as_ref().unwrap().request_redraw();
                     return;
@@ -543,71 +699,6 @@ impl ApplicationHandler for App {
 
                 match surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(frame) => {
-                        let view = frame
-                            .texture
-                            .create_view(&wgpu::TextureViewDescriptor::default());
-                        let mut encoder =
-                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: Some("Render Encoder"),
-                            });
-
-                        {
-                            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                label: Some("Render Pass"),
-                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                    view: &view,
-                                    resolve_target: None,
-                                    ops: wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                                            r: 1.0,
-                                            g: 0.0,
-                                            b: 0.0,
-                                            a: 1.0,
-                                        }),
-                                        store: wgpu::StoreOp::Store,
-                                    },
-                                    depth_slice: None,
-                                })],
-                                depth_stencil_attachment: None,
-                                timestamp_writes: None,
-                                occlusion_query_set: None,
-                                multiview_mask: None,
-                            });
-
-                            pass.set_pipeline(render_pipeline);
-                            pass.set_bind_group(0, bind_group, &[]);
-                            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                            pass.draw(0..6, 0..1);
-                        }
-
-                        queue.submit(Some(encoder.finish()));
-                        queue.present(frame);
-                    }
-                    wgpu::CurrentSurfaceTexture::Timeout
-                    | wgpu::CurrentSurfaceTexture::Occluded => {
-                        if let Some(window) = self.window.as_ref() {
-                            window.request_redraw();
-                        }
-                    }
-                    wgpu::CurrentSurfaceTexture::Outdated => {
-                        let size = self.window.as_ref().unwrap().inner_size();
-                        if size.width > 0 && size.height > 0 {
-                            let config = self.config.as_mut().unwrap();
-                            config.width = size.width;
-                            config.height = size.height;
-                            device
-                                .poll(wgpu::PollType::Wait {
-                                    submission_index: None,
-                                    timeout: None,
-                                })
-                                .expect("Failed to poll GPU before reconfiguring (Outdated)");
-                            surface.configure(device, config);
-                        }
-                        if let Some(window) = self.window.as_ref() {
-                            window.request_redraw();
-                        }
-                    }
-                    wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                         let view = frame
                             .texture
                             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -647,6 +738,82 @@ impl ApplicationHandler for App {
 
                         queue.submit(Some(encoder.finish()));
                         queue.present(frame);
+
+                        // After presenting, pop the frame that was used and release its slot
+                        if let Some(packed) = video_gpu_upload_ready.pop() {
+                            pool.release_video(packed);
+                        }
+                    }
+                    wgpu::CurrentSurfaceTexture::Timeout
+                    | wgpu::CurrentSurfaceTexture::Occluded => {
+                        if let Some(window) = self.window.as_ref() {
+                            window.request_redraw();
+                        }
+                    }
+                    wgpu::CurrentSurfaceTexture::Outdated => {
+                        let size = self.window.as_ref().unwrap().inner_size();
+                        if size.width > 0 && size.height > 0 {
+                            let config = self.config.as_mut().unwrap();
+                            config.width = size.width;
+                            config.height = size.height;
+                            device
+                                .poll(wgpu::PollType::Wait {
+                                    submission_index: None,
+                                    timeout: None,
+                                })
+                                .expect("Failed to poll GPU before reconfiguring (Outdated)");
+                            surface.configure(device, config);
+                        }
+                        if let Some(window) = self.window.as_ref() {
+                            window.request_redraw();
+                        }
+                    }
+                    wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                        // Similar to Success, but also reconfigure
+                        let view = frame
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
+                        let mut encoder =
+                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("Render Encoder"),
+                            });
+
+                        {
+                            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("Render Pass"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &view,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                                            r: 0.0,
+                                            g: 0.0,
+                                            b: 0.0,
+                                            a: 1.0,
+                                        }),
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                    depth_slice: None,
+                                })],
+                                depth_stencil_attachment: None,
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                                multiview_mask: None,
+                            });
+
+                            pass.set_pipeline(render_pipeline);
+                            pass.set_bind_group(0, bind_group, &[]);
+                            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                            pass.draw(0..6, 0..1);
+                        }
+
+                        queue.submit(Some(encoder.finish()));
+                        queue.present(frame);
+
+                        if let Some(packed) = video_gpu_upload_ready.pop() {
+                            pool.release_video(packed);
+                        }
+
                         let size = self.window.as_ref().unwrap().inner_size();
                         if size.width > 0 && size.height > 0 {
                             let config = self.config.as_mut().unwrap();
@@ -661,20 +828,11 @@ impl ApplicationHandler for App {
                             surface.configure(device, config);
                         }
                     }
-                    wgpu::CurrentSurfaceTexture::Lost => {
-                        eprintln!("Surface lost");
-                    }
-                    wgpu::CurrentSurfaceTexture::Validation => {
-                        eprintln!("Validation error");
-                    }
+                    wgpu::CurrentSurfaceTexture::Lost => eprintln!("Surface lost"),
+                    wgpu::CurrentSurfaceTexture::Validation => eprintln!("Validation error"),
                 }
 
-                // Keep redrawing if video is still playing
-                if self.video_reader.is_some() {
-                    if let Some(window) = self.window.as_ref() {
-                        window.request_redraw();
-                    }
-                }
+                self.window.as_ref().unwrap().request_redraw();
             }
             _ => {}
         }
