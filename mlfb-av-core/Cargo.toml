@@ -29,6 +29,7 @@ ort = { version = "=2.0.0-rc.12", default-features = false, features = [
     "ndarray"
 ] }
 parking_lot = "0.12.5"
+rav1d = { version = "1.1.0", features = ["bitdepth_8"] }
 rfd = "0.17.2"
 ringbuf = "0.5.1"
 rust_h264 = "0.4.0"
