@@ -1,6 +1,7 @@
 use crossbeam::queue::ArrayQueue;
 use mlfb_av_core::memory::{PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, SlotPool};
 use std::sync::Arc;
+use std::time::Instant;
 use wgpu::util::DeviceExt;
 use wgpu::{
     BackendOptions, Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,
@@ -13,6 +14,8 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
+static mut PRESENT_COUNT: usize = 0;
+static mut PRESENT_LAST_TIME: Option<Instant> = None;
 
 // ---- Symphonia + rav1d imports ----
 use symphonia::core::formats::FormatOptions;
@@ -168,7 +171,7 @@ impl ApplicationHandler for App {
             format,
             width: WIDTH,
             height: HEIGHT,
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: wgpu::PresentMode::Immediate,
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
@@ -474,6 +477,9 @@ impl ApplicationHandler for App {
                                 if res.0 == 0 {
                                     let mut picture = unsafe { picture.assume_init() };
                                     frame_count += 1;
+                                    if frame_count % 30 == 0 {
+                                        println!("[INGEST] Frame #{} decoded", frame_count);
+                                    }
                                     if frame_count % 10 == 0 {
                                         println!("[INGEST] Decoded frame #{}", frame_count);
                                     }
@@ -655,6 +661,15 @@ impl ApplicationHandler for App {
                         .unwrap();
                     println!("[UPLOAD] Submitted frame to GPU");
                     video_gpu_upload_ready_prod.push(packed).unwrap();
+                    static mut UPLOAD_COUNT: usize = 0;
+                    unsafe {
+                        UPLOAD_COUNT += 1;
+                    }
+                    if unsafe { UPLOAD_COUNT } % 30 == 0 {
+                        println!("[UPLOAD] Total frames uploaded: {}", unsafe {
+                            UPLOAD_COUNT
+                        });
+                    }
                     println!(
                         "[UPLOAD] Pushed to gpu_upload_ready, queue len: {}",
                         video_gpu_upload_ready_prod.len()
@@ -682,6 +697,8 @@ impl ApplicationHandler for App {
 
             WindowEvent::RedrawRequested => {
                 // ---- Render ----
+                use std::time::Instant;
+
                 let surface = self.surface.as_ref().unwrap();
                 let device = self.device.as_ref().unwrap();
                 let queue = self.queue.as_ref().unwrap();
@@ -696,6 +713,11 @@ impl ApplicationHandler for App {
                     self.window.as_ref().unwrap().request_redraw();
                     return;
                 }
+
+                let _device_poll_result = device.poll(wgpu::PollType::Wait {
+                    submission_index: None,
+                    timeout: None,
+                });
 
                 match surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(frame) => {
@@ -738,6 +760,23 @@ impl ApplicationHandler for App {
 
                         queue.submit(Some(encoder.finish()));
                         queue.present(frame);
+
+                        unsafe {
+                            PRESENT_COUNT += 1;
+                            let now = Instant::now();
+                            if let Some(last) = PRESENT_LAST_TIME {
+                                if now.duration_since(last).as_secs() >= 1 {
+                                    #[allow(static_mut_refs)]
+                                    {
+                                        println!("[RENDER] Presented FPS: {}", PRESENT_COUNT);
+                                    }
+                                    PRESENT_COUNT = 0;
+                                    PRESENT_LAST_TIME = Some(now);
+                                }
+                            } else {
+                                PRESENT_LAST_TIME = Some(now);
+                            }
+                        }
 
                         // After presenting, pop the frame that was used and release its slot
                         if let Some(packed) = video_gpu_upload_ready.pop() {
