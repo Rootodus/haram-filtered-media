@@ -1,5 +1,4 @@
 use crossbeam::queue::ArrayQueue;
-use gstreamer::prelude::*;
 use mlfb_av_core::filter::VideoFilter;
 use mlfb_av_core::memory::{
     PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool,
@@ -363,162 +362,106 @@ impl ApplicationHandler for App {
 
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        // --- Ingest thread (GStreamer video decoder) ---
+        // --- Ingest thread (Video decoder) ---
         let pool_ingest = pool.clone();
         let video_ingested_prod = video_ingested.clone();
         let running_ingest = running.clone();
 
-        println!("[INGEST] Setting GST_DEBUG 3...");
-        // Enable GStreamer debug logs to see where it hangs.
-        unsafe {
-            std::env::set_var("GST_DEBUG", "3");
-        }
-        println!("[INGEST] GST_DEBUG set to 3, initializing GStreamer...");
-        if let Err(e) = gstreamer::init() {
-            eprintln!("GStreamer init failed on main thread: {}", e);
-            return;
-        }
-        println!("[MAIN] GStreamer initialized successfully on main thread.");
-
         let ingest_handle = std::thread::spawn(move || {
-            println!("[INGEST] Formatting str...");
+            use yscv_video::Mp4VideoReader;
 
-            let pipeline_str = format!(
-                "videotestsrc pattern=ball ! videoconvert ! videoscale ! \
-             video/x-raw,format=RGBA,width={},height={} ! appsink name=sink sync=false",
-                WIDTH, HEIGHT
-            );
-
-            println!("[INGEST] Building pipeline: {}", pipeline_str);
-
-            unsafe {
-                std::env::set_var("GST_DEBUG", "GST_PIPELINE:4");
-                std::env::set_var("GST_DEBUG_NO_COLOR", "1");
-            }
-            println!("[INGEST] GST_DEBUG set to GST_PIPELINE:4");
-
-            println!("[INGEST] Parsing pipeline with gst::parse::launch...");
-
-            // FIX: Downcast the launched element straight into a Pipeline type container
-            let pipeline = match gstreamer::parse::launch(&pipeline_str) {
-                Ok(p) => {
-                    println!("[INGEST] Pipeline parsed successfully.");
-                    p.downcast::<gstreamer::Pipeline>()
-                        .expect("Launched element is not a top-level Pipeline object")
+            let file_path = "assets/video.mp4";
+            println!("[INGEST] Opening video file: {}", file_path);
+            let mut reader = match Mp4VideoReader::open(file_path.as_ref()) {
+                Ok(r) => {
+                    println!("[INGEST] Video opened successfully.");
+                    r
                 }
                 Err(e) => {
-                    eprintln!("[INGEST] Pipeline parse error: {}", e);
-                    panic!("Failed to parse pipeline");
+                    eprintln!("[INGEST] Failed to open video: {}", e);
+                    return;
                 }
             };
 
-            println!("[INGEST] Pipeline built and added.");
-
-            // --- Add bus watch to capture errors ---
-            let bus = pipeline.bus().unwrap();
-            let _watch = bus
-                .add_watch(|_, msg| {
-                    use gstreamer::MessageView;
-                    match msg.view() {
-                        MessageView::Error(err) => {
-                            eprintln!(
-                                "[GST ERROR] {}: {}",
-                                err.src()
-                                    .as_ref()
-                                    // FIX: Use .to_string() to convert the GString into an owned String
-                                    .map(|s| s.name().to_string())
-                                    .unwrap_or_else(|| "unknown".to_string()),
-                                err.error()
-                            );
-                        }
-                        MessageView::Warning(warn) => {
-                            eprintln!(
-                                "[GST WARNING] {}: {}",
-                                warn.src()
-                                    .as_ref()
-                                    // FIX: Use .to_string() to convert the GString into an owned String
-                                    .map(|s| s.name().to_string())
-                                    .unwrap_or_else(|| "unknown".to_string()),
-                                warn.error()
-                            );
-                        }
-                        MessageView::Eos(_) => {
-                            println!("[GST] End of stream.");
-                        }
-                        _ => {}
-                    }
-                    // FIX: Use the standard library ControlFlow mapping explicitly
-                    gstreamer::glib::ControlFlow::Continue
-                })
-                .unwrap();
-
-            println!("[INGEST] Bus watch installed.");
-
-            let appsink = pipeline
-                .by_name("sink")
-                .expect("appsink not found")
-                .downcast::<gstreamer_app::AppSink>()
-                .expect("sink is not an appsink");
-            appsink.set_property("emit-signals", false);
-            println!("[INGEST] Appsink configured.");
-            println!("[INGEST] Setting pipeline to Playing...");
-            let state_res = pipeline.set_state(gstreamer::State::Playing);
-            println!("[INGEST] Set state result: {:?}", state_res);
-
-            // FIX: Unpack the Result properly instead of matching against State directly
-            match pipeline.set_state(gstreamer::State::Playing) {
-                Ok(success) => {
-                    println!(
-                        "[INGEST] State transition initiated successfully: {:?}",
-                        success
-                    );
-                }
-                Err(err) => {
-                    eprintln!(
-                        "[INGEST] Critical: Failed to set pipeline to Playing: {:?}",
-                        err
-                    );
-                    panic!("GStreamer pipeline failed to start");
-                }
-            }
-
+            let target_w = WIDTH as usize;
+            let target_h = HEIGHT as usize;
             let mut frame_count = 0;
 
             while running_ingest.load(std::sync::atomic::Ordering::Acquire) {
-                match appsink.pull_sample() {
-                    Ok(sample) => {
+                match reader.next_frame() {
+                    Ok(Some(frame)) => {
                         frame_count += 1;
                         if frame_count % 10 == 0 {
-                            println!("[INGEST] Successfully pulled frame #{}", frame_count);
+                            println!(
+                                "[INGEST] Decoded frame #{}: {}x{}",
+                                frame_count, frame.width, frame.height
+                            );
                         }
 
-                        // No resolution checks or caps unpacking variables needed anymore!
-                        // The GStreamer pipeline capsule string layout guarantees 960x540 RGBA bytes.
-                        if let Some(buffer) = sample.buffer() {
-                            if let Ok(map) = buffer.map_readable() {
-                                if let Some(packed) = pool_ingest.try_claim() {
-                                    pool_ingest.with_payload_mut(packed, |payload| {
-                                        payload.copy_from_slice(map.as_slice());
-                                    });
+                        // frame.rgb8_data is RGB (3 bytes per pixel).
+                        // Convert to RGBA by adding alpha channel (255).
+                        let rgb = &frame.rgb8_data;
+                        let width = frame.width as usize;
+                        let height = frame.height as usize;
+                        let mut rgba = Vec::with_capacity(width * height * 4);
+                        for chunk in rgb.chunks_exact(3) {
+                            rgba.push(chunk[0]);
+                            rgba.push(chunk[1]);
+                            rgba.push(chunk[2]);
+                            rgba.push(255);
+                        }
 
-                                    while let Err(_) = video_ingested_prod.push(packed) {
-                                        std::thread::sleep(std::time::Duration::from_micros(100));
-                                    }
-                                } else {
-                                    std::thread::sleep(std::time::Duration::from_micros(100));
-                                }
+                        // Resize to target dimensions using fast_image_resize.
+                        let src_img = fast_image_resize::images::Image::from_slice_u8(
+                            width as u32,
+                            height as u32,
+                            &mut rgba,
+                            fast_image_resize::PixelType::U8x4,
+                        )
+                        .unwrap();
+                        let mut dst_img = fast_image_resize::images::Image::new(
+                            target_w as u32,
+                            target_h as u32,
+                            fast_image_resize::PixelType::U8x4,
+                        );
+                        let mut resizer = fast_image_resize::Resizer::new();
+                        let options = fast_image_resize::ResizeOptions::new().resize_alg(
+                            fast_image_resize::ResizeAlg::Convolution(
+                                fast_image_resize::FilterType::Bilinear,
+                            ),
+                        );
+                        resizer
+                            .resize(&src_img, &mut dst_img, Some(&options))
+                            .unwrap();
+                        let resized_data = dst_img.buffer().to_vec();
+
+                        // Claim a slot and push the frame.
+                        if let Some(packed) = pool_ingest.try_claim() {
+                            pool_ingest.with_payload_mut(packed, |payload| {
+                                payload.copy_from_slice(&resized_data);
+                            });
+                            while let Err(_) = video_ingested_prod.push(packed) {
+                                std::thread::sleep(std::time::Duration::from_micros(100));
                             }
+                        } else {
+                            std::thread::sleep(std::time::Duration::from_micros(100));
                         }
                     }
-                    Err(_) => {
-                        println!("[INGEST] Pipeline reached End of Stream or crashed.");
+                    Ok(None) => {
+                        // End of stream. Break out of loop.
+                        println!("[INGEST] End of video stream.");
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("[INGEST] Error decoding frame: {}", e);
                         break;
                     }
                 }
             }
-
-            println!("[INGEST] Exiting ingest thread.");
-            pipeline.set_state(gstreamer::State::Null).unwrap();
+            println!(
+                "[INGEST] Exiting ingest thread. Total frames decoded: {}",
+                frame_count
+            );
         });
         self.ingest_handle = Some(ingest_handle);
 
