@@ -12,8 +12,12 @@ crossbeam = "0.8.4"
 fast_image_resize = { version = "6.1.0", default-features = false, features = [
     "std"
 ] }
-image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
+image = { version = "0.25.10", default-features = false, features = [
+    "jpeg",
+    "png"
+] }
 minstant = "0.1.7"
+mp4 = "0.14.0"
 ndarray = "0.17.2"
 # Avoid rc.13+ until Microsoft fixes the upstream quantization casting bug
 # (CAST_F32_TO_F16) which causes instant hardware panics on runtime.
@@ -27,13 +31,15 @@ ort = { version = "=2.0.0-rc.12", default-features = false, features = [
 parking_lot = "0.12.5"
 rfd = "0.17.2"
 ringbuf = "0.5.1"
+rust_h264 = "0.4.0"
 shared_memory = "0.12.4"
 symphonia = { version = "0.6.0", features = [
     "isomp4",
     "mp3",
     "flac",
     "vorbis",
-    "aac"
+    "aac",
+    "exp-video-codecs"
 ] }
 thiserror = "2.0.19"
 tracing = "0.1.44"

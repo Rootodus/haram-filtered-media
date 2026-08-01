@@ -1,10 +1,9 @@
 use crossbeam::queue::ArrayQueue;
-use mlfb_av_core::filter::VideoFilter;
-use mlfb_av_core::memory::{
-    PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool,
-};
-use mlfb_av_core::ml::PeopleSegFilter;
+use image::RgbaImage;
+use mlfb_av_core::memory::{PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, SlotPool};
+use std::cmp::min;
 use std::sync::Arc;
+use std::sync::Once;
 use wgpu::util::DeviceExt;
 use wgpu::{
     BackendOptions, Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,
@@ -19,10 +18,11 @@ use winit::{
 };
 use yscv_video::Mp4VideoReader;
 
-const WIDTH: u32 = 960; // 960 % 64 == 0
-const HEIGHT: u32 = 540; // keep 16:9 aspect
+const WIDTH: u32 = 960;
+const HEIGHT: u32 = 540;
 const VIDEO_SLOT_SIZE: usize = (WIDTH * HEIGHT * 4) as usize;
 const N_V: usize = 128;
+static SAVE_FRAME: Once = Once::new();
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -72,12 +72,9 @@ struct App {
 
     pool: Option<Arc<SlotPool<VIDEO_SLOT_SIZE>>>,
     video_ingested: Option<Arc<ArrayQueue<PackedIndex>>>,
-    video_ml_ready: Option<Arc<ArrayQueue<PackedIndex>>>,
     video_gpu_upload_ready: Option<Arc<ArrayQueue<PackedIndex>>>,
     video_reader: Option<Mp4VideoReader>,
 
-    ingest_handle: Option<std::thread::JoinHandle<()>>,
-    ml_handle: Option<std::thread::JoinHandle<()>>,
     upload_handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -96,11 +93,8 @@ impl Default for App {
             bind_group: None,
             pool: None,
             video_ingested: None,
-            video_ml_ready: None,
             video_gpu_upload_ready: None,
             video_reader: None,
-            ingest_handle: None,
-            ml_handle: None,
             upload_handle: None,
         }
     }
@@ -108,17 +102,11 @@ impl Default for App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // --- UNet People Segmentation ---
-        let model = Arc::new(
-            PeopleSegFilter::new("models/peopleseg_1x3x384x640.onnx")
-                .expect("Failed to load model"),
-        );
-
         let window = Arc::new(
             event_loop
                 .create_window(
                     winit::window::WindowAttributes::default()
-                        .with_title("Video Pipeline Test")
+                        .with_title("Video Pipeline (No ML)")
                         .with_inner_size(winit::dpi::LogicalSize::new(WIDTH, HEIGHT)),
                 )
                 .unwrap(),
@@ -357,10 +345,8 @@ impl ApplicationHandler for App {
         self.pool = Some(pool.clone());
 
         let video_ingested = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
-        let video_ml_ready = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
         let video_gpu_upload_ready = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
         self.video_ingested = Some(video_ingested.clone());
-        self.video_ml_ready = Some(video_ml_ready.clone());
         self.video_gpu_upload_ready = Some(video_gpu_upload_ready.clone());
 
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -378,46 +364,23 @@ impl ApplicationHandler for App {
         };
         self.video_reader = Some(reader);
 
-        // --- ML worker thread loop ---
-        let pool_ml = pool.clone();
-        let video_ingested_cons = video_ingested.clone();
-        let video_ml_ready_prod = video_ml_ready.clone();
-        let model_ml = model.clone();
-        let running_ml = running.clone();
-
-        let ml_handle = std::thread::spawn(move || {
-            while running_ml.load(std::sync::atomic::Ordering::Acquire) {
-                if let Some(packed) = video_ingested_cons.pop() {
-                    println!("[ML] Processing frame...");
-                    let result = pool_ml.with_payload_mut(packed, |payload| {
-                        model_ml.filter_frame(payload, WIDTH, HEIGHT)
-                    });
-                    if let Err(e) = result {
-                        eprintln!("ML inference failed: {}", e);
-                    }
-                    pool_ml
-                        .transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
-                        .expect("State transition failed");
-                    video_ml_ready_prod.push(packed).unwrap();
-                } else {
-                    std::thread::sleep(std::time::Duration::from_micros(100));
-                }
-            }
-        });
-        self.ml_handle = Some(ml_handle);
-
-        // Upload
+        // --- Upload thread (consumes from video_ingested directly) ---
         let pool_upload = pool.clone();
-        let video_ml_ready_cons = video_ml_ready.clone();
+        let video_ingested_cons = video_ingested.clone();
         let video_gpu_upload_ready_prod = video_gpu_upload_ready.clone();
         let device_upload = self.device.as_ref().unwrap().clone();
         let queue_upload = self.queue.as_ref().unwrap().clone();
         let texture_upload = self.texture.as_ref().unwrap().clone();
         let running_upload = running.clone();
+
         let upload_handle = std::thread::spawn(move || {
             while running_upload.load(std::sync::atomic::Ordering::Acquire) {
-                if let Some(packed) = video_ml_ready_cons.pop() {
+                if let Some(packed) = video_ingested_cons.pop() {
                     let payload = pool_upload.with_payload_mut(packed, |p| p.to_vec());
+                    println!(
+                        "[UPLOAD] First 16 bytes of payload: {:02x?}",
+                        &payload[..min(16, payload.len())]
+                    );
                     let staging =
                         device_upload.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                             label: Some("Frame Staging"),
@@ -451,7 +414,7 @@ impl ApplicationHandler for App {
                     );
                     queue_upload.submit(Some(encoder.finish()));
                     pool_upload
-                        .transition_state(packed, STATE_ML_COMMITTED, STATE_GPU_UPLOADED)
+                        .transition_state(packed, STATE_INGESTED, STATE_GPU_UPLOADED)
                         .unwrap();
                     video_gpu_upload_ready_prod.push(packed).unwrap();
                 } else {
@@ -511,6 +474,24 @@ impl ApplicationHandler for App {
                                 .resize(&src_img, &mut dst_img, Some(&options))
                                 .unwrap();
                             let resized_data = dst_img.buffer().to_vec();
+                            SAVE_FRAME.call_once(|| {
+                                // Use RgbaImage to infer pixel type
+                                if let Some(img) =
+                                    RgbaImage::from_raw(WIDTH, HEIGHT, resized_data.clone())
+                                {
+                                    if let Err(e) = img.save("first_frame.png") {
+                                        eprintln!("Failed to save frame: {}", e);
+                                    } else {
+                                        println!("Saved first_frame.png");
+                                    }
+                                } else {
+                                    eprintln!("Failed to create RgbaImage from raw data");
+                                }
+                            });
+                            println!(
+                                "[MAIN] First 16 bytes of resized data: {:02x?}",
+                                &resized_data[..min(16, resized_data.len())]
+                            );
 
                             // Push to the queue
                             if let Some(pool) = self.pool.as_ref() {
@@ -578,7 +559,7 @@ impl ApplicationHandler for App {
                                     resolve_target: None,
                                     ops: wgpu::Operations {
                                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                                            r: 0.0,
+                                            r: 1.0,
                                             g: 0.0,
                                             b: 0.0,
                                             a: 1.0,
