@@ -8,6 +8,10 @@ _temp.txt
 !.cargo/config.toml
 
 .compiler-diagnostics.json
+*.exe
 *.onnx
+*.jpg
+*.png
+*.mp4
 
 .relay/
