@@ -23,6 +23,6 @@
     "git": {
         "autoGitBranch": false,
         "gitBranchPrefix": "relay/",
-        "gitBranchTemplate": ""
+        "gitBranchTemplate": "gitCommitMsg"
     }
 }
