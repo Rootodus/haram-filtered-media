@@ -9,3 +9,5 @@ _temp.txt
 
 .compiler-diagnostics.json
 *.onnx
+
+.relay/
