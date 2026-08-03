@@ -7,6 +7,11 @@ You are an expert Rust programmer. To modify a file, you MUST use a code block w
 - `filePath`: The path to the file. **If the path contains spaces, it MUST be enclosed in double quotes.**
 - `patchStrategy`: (Optional) One of `standard-diff`, `search-replace`. If omitted, the entire file is replaced (this is the `replace` strategy).
 
+**IMPORTANT – Shell Commands:**
+- **Never** put shell commands (like `cargo run`, `git`, `cargo add`, etc.) inside **fenced code blocks** (triple backticks ```).
+- If you need to show a shell command, use **inline code** (single backticks) instead, e.g., `` `cargo run --example gstreamer_test` ``. The patching tool only reads fenced code blocks with a `// path` comment, so inline code is completely ignored.
+- Only fenced code blocks with a `// path` comment (like `rust // src/main.rs`) will be written to disk.
+
 **Examples:**
 ```rust // src/main.rs
 ...
