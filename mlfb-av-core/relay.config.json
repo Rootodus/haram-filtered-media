@@ -1,29 +1,28 @@
 {
-  "$schema": "https://relay.noca.pro/schema.json",
-  "projectId": "mlfb-av-core",
-  "core": {
-    "logLevel": "info",
-    "enableNotifications": true,
-    "watchConfig": true
-  },
-  "watcher": {
-    "clipboardPollInterval": 2000,
-    "preferredStrategy": "auto",
-    "enableBulkProcessing": false,
-    "bulkSize": 5,
-    "bulkTimeout": 30000
-  },
-  "patch": {
-    "approvalMode": "auto",
-    "approvalOnErrorCount": 0,
-    "linter": "bun tsc --noEmit",
-    "preCommand": "",
-    "postCommand": "",
-    "minFileChanges": 0
-  },
-  "git": {
-    "autoGitBranch": false,
-    "gitBranchPrefix": "relay/",
-    "gitBranchTemplate": "gitCommitMsg"
-  }
+    "projectId": "mlfb-av-core",
+    "core": {
+        "logLevel": "info",
+        "enableNotifications": true,
+        "watchConfig": true
+    },
+    "watcher": {
+        "clipboardPollInterval": 2000,
+        "preferredStrategy": "auto",
+        "enableBulkProcessing": false,
+        "bulkSize": 5,
+        "bulkTimeout": 30000
+    },
+    "patch": {
+        "approvalMode": "auto",
+        "approvalOnErrorCount": 0,
+        "linter": "cargo check --all-targets",
+        "preCommand": "",
+        "postCommand": "",
+        "minFileChanges": 0
+    },
+    "git": {
+        "autoGitBranch": false,
+        "gitBranchPrefix": "relay/",
+        "gitBranchTemplate": "gitCommitMsg"
+    }
 }
