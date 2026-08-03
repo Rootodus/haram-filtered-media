@@ -12,6 +12,8 @@ crossbeam = "0.8.4"
 fast_image_resize = { version = "6.1.0", default-features = false, features = [
     "std"
 ] }
+gstreamer = "0.25.3"
+gstreamer-app = "0.25.2"
 image = { version = "0.25.10", default-features = false, features = [
     "jpeg",
     "png"
