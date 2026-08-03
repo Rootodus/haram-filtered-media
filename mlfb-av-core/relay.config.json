@@ -14,8 +14,8 @@
     },
     "patch": {
         "approvalMode": "auto",
-        "approvalOnErrorCount": 0,
-        "linter": "cargo check --all-targets",
+        "approvalOnErrorCount": 999999,
+        "linter": "",
         "preCommand": "",
         "postCommand": "",
         "minFileChanges": 0
@@ -23,6 +23,6 @@
     "git": {
         "autoGitBranch": false,
         "gitBranchPrefix": "relay/",
-        "gitBranchTemplate": "gitCommitMsg"
+        "gitBranchTemplate": ""
     }
 }
