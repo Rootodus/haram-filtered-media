@@ -12,3 +12,5 @@ fallbacks/
 temp.txt
 _temp.txt
 .compiler-diagnostics.json
+.aider*
+!.aider.conf.yml
