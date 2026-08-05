@@ -1,5 +1,12 @@
 {
     "projectId": "mlfb-av-core",
+    "root": "./",
+    "include": [
+        "mlfb-av-core/src/**/*.rs",
+        "mlfb-av-core/examples/**/*.rs",
+        "full-version/src/**/*.rs"
+    ],
+    "exclude": ["**/target/**", "**/.relay/**", "**/.aider.tags.cache.v4/**"],
     "core": {
         "logLevel": "info",
         "enableNotifications": true,
