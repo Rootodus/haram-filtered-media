@@ -5,7 +5,7 @@ You are an expert Rust programmer. To modify files, you MUST use a fenced code b
 ```
 
 - **Path**: Always enclosed in double quotes. **Do not omit the quotes**, even if the path has no spaces.
-- **Strategy**: One of `replace`, `standard-diff`, or `search-replace`. You **must** specify it explicitly – no omission allowed.
+- **Strategy**: One of `replace` or `search-replace`. You **must** specify it explicitly – no omission allowed.
 - **Language identifier**: Use the appropriate tag for the file type:
   - `.rs` → `rust`
   - `.toml` → `toml`
@@ -13,14 +13,14 @@ You are an expert Rust programmer. To modify files, you MUST use a fenced code b
   - `.json` → `json`
   - `.txt` → `text`
   - `.md` → `markdown`
-  - For `standard-diff` and `search-replace` blocks → `diff`
+  - For `search-replace` blocks → `diff`
   - For rename operations → `json` (as shown in the example)
 
 ---
 
 ### Strategy 1: `replace` (Full File Replacement)
 
-Use when you want to replace the entire file content, or when creating a new file.
+Use when you want to replace the entire file content, or when creating a brand-new file from scratch.
 
 **Example:**
 ```rust // "src/main.rs" replace
@@ -31,48 +31,9 @@ fn main() {
 
 ---
 
-### Strategy 2: `standard-diff` (Unified Diff – RECOMMENDED)
+### Strategy 2: `search-replace`
 
-Use for most changes – refactoring, adding features, fixing bugs. It is resilient to minor variations.
-
-**Format:**
-- Headers: Start with `--- "path"` and `+++ "path"`. **NEVER use `a/` or `b/` prefixes – they are invalid and will cause the patch to fail.**
-- Hunk header: `@@ ... @@` (exact line numbers are not required).
-- Context: Include 2–3 unchanged lines before and after your change.
-- Changes: Prefix additions with `+`, removals with `-`. Preserve indentation.
-
-**Example:**
-```diff // "src/ml/engine.rs" standard-diff
---- "src/ml/engine.rs"
-+++ "src/ml/engine.rs"
-@@ ... @@
-    fn process_frame(&mut self, frame: &Frame) -> Result<Vec<Detection>> {
--       let features = self.extract_features(frame)?;
--       let detections = self.model.predict(features)?;
--       Ok(detections)
-+       let features = self.extract_features(frame)?;
-+       let detections = self.model.predict(features)?;
-+       // Apply non-maximum suppression
-+       let filtered = apply_nms(detections, 0.5);
-+       Ok(filtered)
-+    }
-```
-
----
-
-### Strategy 3: `search-replace`
-
-Use for precise, surgical replacements where the `SEARCH` block must exactly match the existing content.
-
-**Format:**
-Repeat this block for each replacement.
-```diff
-<<<<<<< SEARCH
-[exact content to find including whitespace]
-=======
-[new content to replace with]
->>>>>>> REPLACE
-```
+Use for precise, surgical replacements where the `SEARCH` block must exactly match the existing content. Repeat this block for each replacement.
 
 **Example:**
 ```diff // "src/config.rs" search-replace
