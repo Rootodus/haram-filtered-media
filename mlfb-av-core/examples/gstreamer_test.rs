@@ -8,6 +8,30 @@ use std::sync::Once;
 
 static SAVE_FRAME: Once = Once::new();
 
+/// Convert NV12 (Y + interleaved UV) to RGB8 (BT.709).
+/// `y` is `width * height` bytes, `uv` is `(width/2) * (height/2) * 2` bytes.
+pub fn nv12_to_rgb8(y: &[u8], uv: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut rgb = Vec::with_capacity(width * height * 3);
+    for row in 0..height {
+        for col in 0..width {
+            let y_idx = row * width + col;
+            let uv_idx = (row / 2) * (width / 2) + (col / 2);
+            let y_val = y[y_idx] as f32;
+            let u_val = uv[uv_idx * 2] as f32 - 128.0;
+            let v_val = uv[uv_idx * 2 + 1] as f32 - 128.0;
+
+            // BT.709 matrix
+            let r = (y_val + 1.5748 * v_val).clamp(0.0, 255.0) as u8;
+            let g = (y_val - 0.1873 * u_val - 0.4681 * v_val).clamp(0.0, 255.0) as u8;
+            let b = (y_val + 1.8556 * u_val).clamp(0.0, 255.0) as u8;
+            rgb.push(r);
+            rgb.push(g);
+            rgb.push(b);
+        }
+    }
+    rgb
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize GStreamer
     gst::init()?;
@@ -15,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build pipeline
     let pipeline = gst::Pipeline::new();
 
-    // Create elements using ElementFactory::make() + builder pattern
+    // Create elements
     let src = gst::ElementFactory::make("filesrc")
         .property("location", "assets/video.mp4")
         .build()?;
@@ -24,18 +48,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let convert = gst::ElementFactory::make("videoconvert").build()?;
 
-    // Create AppSink using AppSink::builder()
-    let sink = AppSink::builder()
-        .caps(
-            &gst::Caps::builder("video/x-raw")
-                .field("format", "RGBA")
-                .field("width", 0) // 0 means "any"
-                .field("height", 0) // 0 means "any"
-                .build(),
-        )
-        .async_(true)
-        .drop(true)
-        .build();
+    // Create AppSink without caps – let negotiation decide
+    let sink = AppSink::builder().async_(true).drop(true).build();
 
     let sink_element = sink.upcast_ref::<gst::Element>().clone();
 
@@ -66,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set pipeline to playing
     pipeline.set_state(gst::State::Playing)?;
 
-    // Set up bus watch for errors and EOS
+    // Bus watch
     let bus = pipeline.bus().expect("Failed to get bus");
     let _watch_id = bus.add_watch(move |_, msg| {
         use gst::MessageView;
@@ -96,33 +110,83 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let structure = caps.structure(0).expect("No structure");
         let width = structure.get::<i32>("width").unwrap_or(0) as usize;
         let height = structure.get::<i32>("height").unwrap_or(0) as usize;
+        let format = structure.get::<&str>("format").unwrap_or("unknown");
         let timestamp = buffer.pts().unwrap_or_default();
+
+        println!("Frame format: {}", format);
 
         // Map buffer to get pixel data
         let map = buffer.map_readable()?;
 
         if frame_count == 0 {
             println!(
-                "First frame: {}x{}, timestamp: {:?}",
-                width, height, timestamp
+                "First frame: {}x{}, format: {}, timestamp: {:?}",
+                width, height, format, timestamp
             );
-            // Save as PNG
-            if width > 0 && height > 0 && map.len() >= width * height * 4 {
-                let data = map.as_slice();
-                SAVE_FRAME.call_once(|| {
-                    if let Some(img) =
-                        RgbImage::from_raw(width as u32, height as u32, data.to_vec())
-                    {
-                        if let Err(e) = img.save("gst_frame.png") {
-                            eprintln!("Failed to save PNG: {}", e);
-                        } else {
-                            println!("Saved gst_frame.png");
-                        }
-                    } else {
-                        eprintln!("Failed to create image");
+
+            // Handle different pixel formats
+            let rgb_data = match format {
+                "RGBA" => {
+                    // Drop alpha channel
+                    let data = map.as_slice();
+                    let mut rgb = Vec::with_capacity(width * height * 3);
+                    for chunk in data.chunks_exact(4) {
+                        rgb.push(chunk[0]);
+                        rgb.push(chunk[1]);
+                        rgb.push(chunk[2]);
                     }
-                });
-            }
+                    rgb
+                }
+                "RGB" => map.as_slice().to_vec(),
+                "NV12" => {
+                    // NV12: Y plane is width*height, UV plane is interleaved
+                    let y_plane = &map.as_slice()[0..width * height];
+                    let uv_plane = &map.as_slice()[width * height..];
+                    nv12_to_rgb8(y_plane, uv_plane, width, height)
+                }
+                "I420" => {
+                    // I420: Y plane, then U, then V (each 1/4 of the image)
+                    let y_plane = &map.as_slice()[0..width * height];
+                    let u_plane = &map.as_slice()
+                        [width * height..width * height + (width / 2) * (height / 2)];
+                    let v_plane = &map.as_slice()[width * height + (width / 2) * (height / 2)..];
+                    let mut rgb = Vec::with_capacity(width * height * 3);
+                    for row in 0..height {
+                        for col in 0..width {
+                            let y_idx = row * width + col;
+                            let uv_idx = (row / 2) * (width / 2) + (col / 2);
+                            let y_val = y_plane[y_idx] as f32;
+                            let u_val = u_plane[uv_idx] as f32 - 128.0;
+                            let v_val = v_plane[uv_idx] as f32 - 128.0;
+                            // BT.709
+                            let r = (y_val + 1.5748 * v_val).clamp(0.0, 255.0) as u8;
+                            let g =
+                                (y_val - 0.1873 * u_val - 0.4681 * v_val).clamp(0.0, 255.0) as u8;
+                            let b = (y_val + 1.8556 * u_val).clamp(0.0, 255.0) as u8;
+                            rgb.push(r);
+                            rgb.push(g);
+                            rgb.push(b);
+                        }
+                    }
+                    rgb
+                }
+                _ => {
+                    eprintln!("Unsupported format: {}", format);
+                    return Ok(());
+                }
+            };
+
+            SAVE_FRAME.call_once(|| {
+                if let Some(img) = RgbImage::from_raw(width as u32, height as u32, rgb_data) {
+                    if let Err(e) = img.save("gst_frame.png") {
+                        eprintln!("Failed to save PNG: {}", e);
+                    } else {
+                        println!("Saved gst_frame.png");
+                    }
+                } else {
+                    eprintln!("Failed to create image");
+                }
+            });
         }
 
         frame_count += 1;
@@ -132,7 +196,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Frames: {}, FPS: {:.1}", frame_count, fps);
         }
 
-        // Break after 300 frames
         if frame_count >= 300 {
             break;
         }
@@ -140,7 +203,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clean up
     pipeline.set_state(gst::State::Null)?;
-    // The watch is dropped automatically when bus is dropped
 
     Ok(())
 }
