@@ -1,7 +1,6 @@
 use crossbeam::queue::ArrayQueue;
 use mlfb_av_core::memory::{PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, SlotPool};
 use std::sync::Arc;
-use std::time::Instant;
 use wgpu::util::DeviceExt;
 use wgpu::{
     BackendOptions, Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,
@@ -14,25 +13,13 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
-static mut PRESENT_COUNT: usize = 0;
-static mut PRESENT_LAST_TIME: Option<Instant> = None;
 
-// ---- Symphonia + rav1d imports ----
-use symphonia::core::formats::FormatOptions;
-use symphonia::core::formats::probe::Hint;
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
-use symphonia::default::get_probe;
-
-use rav1d::include::dav1d::data::Dav1dData;
-use rav1d::include::dav1d::dav1d::{Dav1dContext, Dav1dSettings};
-use rav1d::include::dav1d::picture::Dav1dPicture;
-use rav1d::src::lib::{
-    dav1d_close, dav1d_data_create, dav1d_data_unref, dav1d_default_settings, dav1d_flush,
-    dav1d_get_picture, dav1d_open, dav1d_picture_unref, dav1d_send_data,
-};
-use std::mem::MaybeUninit;
-use std::ptr::NonNull;
+// ---- GStreamer imports ----
+use gst::glib::ControlFlow;
+use gst::prelude::*;
+use gst_app::AppSink;
+use gstreamer as gst;
+use gstreamer_app as gst_app;
 
 const WIDTH: u32 = 960;
 const HEIGHT: u32 = 540;
@@ -171,7 +158,7 @@ impl ApplicationHandler for App {
             format,
             width: WIDTH,
             height: HEIGHT,
-            present_mode: wgpu::PresentMode::Immediate,
+            present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
@@ -366,242 +353,271 @@ impl ApplicationHandler for App {
 
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        // ---- Ingest thread (video decoder) ----
+        // ---- Ingest thread (GStreamer) ----
         let pool_ingest = pool.clone();
         let video_ingested_prod = video_ingested.clone();
         let running_ingest = running.clone();
 
         let ingest_handle = std::thread::spawn(move || {
-            // ---- Open video with Symphonia ----
-            let file_path = "assets/video.mp4";
-            let source = std::fs::File::open(file_path).expect("Failed to open video file");
-            let mss = MediaSourceStream::new(Box::new(source), Default::default());
-            let hint = Hint::new();
-            let format_opts = FormatOptions::default();
-            let meta_opts = MetadataOptions::default();
-
-            let mut format_reader = get_probe()
-                .probe(&hint, mss, format_opts, meta_opts)
-                .expect("Failed to probe file");
-
-            let video_track = format_reader
-                .tracks()
-                .iter()
-                .find(|track| {
-                    track
-                        .codec_params
-                        .as_ref()
-                        .map_or(false, |cp| cp.is_video())
-                })
-                .cloned()
-                .expect("No video track");
-
-            println!("[INGEST] Using video track id: {}", video_track.id);
-
-            // ---- Init rav1d ----
-            let mut settings = MaybeUninit::<Dav1dSettings>::uninit();
-            unsafe {
-                dav1d_default_settings(NonNull::new(settings.as_mut_ptr()).unwrap());
+            // Initialize GStreamer (must be done per thread? Actually it's global, but we can init in main and reuse.
+            // We'll init here to be safe, but gst::init() can be called multiple times.
+            if let Err(e) = gst::init() {
+                eprintln!("[INGEST] GStreamer init failed: {}", e);
+                return;
             }
-            let settings = unsafe { settings.assume_init() };
 
-            let mut ctx_ptr: Option<Dav1dContext> = None;
-            let res = unsafe {
-                dav1d_open(
-                    Some(NonNull::from(&mut ctx_ptr)),
-                    Some(NonNull::from(&settings)),
-                )
+            // Build pipeline
+            let pipeline = match gst::Pipeline::new() {
+                p => p,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create pipeline: {}", e);
+                    return;
+                }
             };
-            if res.0 != 0 {
-                panic!("dav1d_open failed: {}", res.0);
-            }
-            let ctx = ctx_ptr.unwrap();
 
-            let mut obu_buffer = Vec::new();
+            // Create elements
+            let src = match gst::ElementFactory::make("filesrc")
+                .property("location", "assets/video.mp4")
+                .build()
+            {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create filesrc: {}", e);
+                    return;
+                }
+            };
+
+            let decodebin = match gst::ElementFactory::make("decodebin").build() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create decodebin: {}", e);
+                    return;
+                }
+            };
+
+            let convert = match gst::ElementFactory::make("videoconvert").build() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create videoconvert: {}", e);
+                    return;
+                }
+            };
+
+            let sink = match AppSink::builder().async_(true).drop(true).build() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create appsink: {}", e);
+                    return;
+                }
+            };
+
+            let sink_element = sink.upcast_ref::<gst::Element>().clone();
+
+            // Add elements to pipeline
+            if let Err(e) = pipeline.add_many(&[&src, &decodebin, &convert, &sink_element]) {
+                eprintln!("[INGEST] Failed to add elements: {}", e);
+                return;
+            }
+            if let Err(e) = gst::Element::link_many(&[&src, &decodebin]) {
+                eprintln!("[INGEST] Failed to link src to decodebin: {}", e);
+                return;
+            }
+            if let Err(e) = gst::Element::link_many(&[&convert, &sink_element]) {
+                eprintln!("[INGEST] Failed to link convert to appsink: {}", e);
+                return;
+            }
+
+            // Connect pad-added signal
+            let convert_clone = convert.clone();
+            decodebin.connect_pad_added(move |_, src_pad| {
+                let caps = src_pad.current_caps().expect("Failed to get caps");
+                let structure = caps.structure(0).expect("No structure");
+                if structure.name().starts_with("video/") {
+                    let sink_pad = convert_clone
+                        .static_pad("sink")
+                        .expect("convert has no sink pad");
+                    if sink_pad.is_linked() {
+                        return;
+                    }
+                    let src_pad = src_pad.clone();
+                    if let Err(e) = src_pad.link(&sink_pad) {
+                        eprintln!("[INGEST] Failed to link decodebin pad to convert: {}", e);
+                    }
+                }
+            });
+
+            // Set pipeline to playing
+            if let Err(e) = pipeline.set_state(gst::State::Playing) {
+                eprintln!("[INGEST] Failed to set pipeline to playing: {}", e);
+                return;
+            }
+
+            // Bus watch for errors
+            let bus = match pipeline.bus() {
+                Some(b) => b,
+                None => {
+                    eprintln!("[INGEST] No bus");
+                    return;
+                }
+            };
+            let _watch_id = match bus.add_watch(move |_, msg| {
+                use gst::MessageView;
+                match msg.view() {
+                    MessageView::Error(err) => {
+                        eprintln!("[INGEST] GStreamer error: {}", err.error());
+                        if let Some(debug) = err.debug() {
+                            eprintln!("[INGEST] Debug info: {}", debug);
+                        }
+                        ControlFlow::Break
+                    }
+                    MessageView::Eos(_) => {
+                        println!("[INGEST] End of stream");
+                        ControlFlow::Break
+                    }
+                    _ => ControlFlow::Continue,
+                }
+            }) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to add bus watch: {}", e);
+                    return;
+                }
+            };
+
             let target_w = WIDTH as usize;
             let target_h = HEIGHT as usize;
             let mut frame_count = 0;
 
+            // Pull samples
             while running_ingest.load(std::sync::atomic::Ordering::Acquire) {
-                match format_reader.next_packet() {
-                    Ok(Some(packet)) => {
-                        if packet.track_id != video_track.id {
-                            continue;
-                        }
-                        // Accumulate raw packet data (it's already OBU data)
-                        obu_buffer.extend_from_slice(&packet.data);
-
-                        if !obu_buffer.is_empty() {
-                            // Allocate internal buffer
-                            let mut dav1d_data = Dav1dData::default();
-                            let buf_ptr = unsafe {
-                                dav1d_data_create(
-                                    Some(NonNull::from(&mut dav1d_data)),
-                                    obu_buffer.len(),
-                                )
-                            };
-                            if buf_ptr.is_null() {
-                                eprintln!("[INGEST] dav1d_data_create failed");
-                                obu_buffer.clear();
-                                continue;
-                            }
-                            unsafe {
-                                std::ptr::copy_nonoverlapping(
-                                    obu_buffer.as_ptr(),
-                                    buf_ptr,
-                                    obu_buffer.len(),
-                                );
-                            }
-                            let res = unsafe {
-                                dav1d_send_data(Some(ctx), Some(NonNull::from(&mut dav1d_data)))
-                            };
-                            if res.0 != 0 {
-                                unsafe { dav1d_data_unref(Some(NonNull::from(&mut dav1d_data))) }
-                                obu_buffer.clear();
-                                if res.0 != -11 {
-                                    eprintln!("[INGEST] send_data error: {}", res.0);
-                                }
-                                continue;
-                            }
-                            obu_buffer.clear();
-
-                            // Try to retrieve decoded frames
-                            loop {
-                                let mut picture = MaybeUninit::<Dav1dPicture>::uninit();
-                                let res = unsafe {
-                                    dav1d_get_picture(
-                                        Some(ctx),
-                                        Some(NonNull::new(picture.as_mut_ptr()).unwrap()),
-                                    )
-                                };
-                                if res.0 == 0 {
-                                    let mut picture = unsafe { picture.assume_init() };
-                                    frame_count += 1;
-                                    if frame_count % 30 == 0 {
-                                        println!("[INGEST] Frame #{} decoded", frame_count);
-                                    }
-                                    if frame_count % 10 == 0 {
-                                        println!("[INGEST] Decoded frame #{}", frame_count);
-                                    }
-
-                                    let w = picture.p.w as usize;
-                                    let h = picture.p.h as usize;
-                                    let y_ptr = picture.data[0].unwrap().as_ptr() as *const u8;
-                                    let u_ptr = picture.data[1].unwrap().as_ptr() as *const u8;
-                                    let v_ptr = picture.data[2].unwrap().as_ptr() as *const u8;
-                                    let y_stride = picture.stride[0] as usize;
-                                    let uv_stride = picture.stride[1] as usize;
-
-                                    // Convert YUV to RGBA
-                                    let mut rgba = vec![0u8; w * h * 4];
-                                    for row in 0..h {
-                                        for col in 0..w {
-                                            let y_idx = row * y_stride + col;
-                                            let uv_idx = (row / 2) * uv_stride + (col / 2);
-                                            unsafe {
-                                                let y_val = *y_ptr.add(y_idx) as f32;
-                                                let u_val = *u_ptr.add(uv_idx) as f32 - 128.0;
-                                                let v_val = *v_ptr.add(uv_idx) as f32 - 128.0;
-                                                let r = (y_val + 1.5748 * v_val).clamp(0.0, 255.0)
-                                                    as u8;
-                                                let g = (y_val - 0.1873 * u_val - 0.4681 * v_val)
-                                                    .clamp(0.0, 255.0)
-                                                    as u8;
-                                                let b = (y_val + 1.8556 * u_val).clamp(0.0, 255.0)
-                                                    as u8;
-                                                let idx = (row * w + col) * 4;
-                                                rgba[idx] = r;
-                                                rgba[idx + 1] = g;
-                                                rgba[idx + 2] = b;
-                                                rgba[idx + 3] = 255;
-                                            }
-                                        }
-                                    }
-
-                                    // Resize to target dimensions
-                                    let src_img = fast_image_resize::images::Image::from_slice_u8(
-                                        w as u32,
-                                        h as u32,
-                                        &mut rgba,
-                                        fast_image_resize::PixelType::U8x4,
-                                    )
-                                    .unwrap();
-                                    let mut dst_img = fast_image_resize::images::Image::new(
-                                        target_w as u32,
-                                        target_h as u32,
-                                        fast_image_resize::PixelType::U8x4,
-                                    );
-                                    let mut resizer = fast_image_resize::Resizer::new();
-                                    let options = fast_image_resize::ResizeOptions::new()
-                                        .resize_alg(fast_image_resize::ResizeAlg::Convolution(
-                                            fast_image_resize::FilterType::Bilinear,
-                                        ));
-                                    resizer
-                                        .resize(&src_img, &mut dst_img, Some(&options))
-                                        .unwrap();
-                                    let resized_data = dst_img.buffer().to_vec();
-
-                                    // Claim a slot and push to queue
-                                    if let Some(packed) = pool_ingest.try_claim() {
-                                        pool_ingest.with_payload_mut(packed, |payload| {
-                                            payload.copy_from_slice(&resized_data);
-                                        });
-                                        while let Err(_) = video_ingested_prod.push(packed) {
-                                            std::thread::sleep(std::time::Duration::from_micros(
-                                                100,
-                                            ));
-                                        }
-                                    } else {
-                                        // No free slot; drop frame
-                                        std::thread::sleep(std::time::Duration::from_micros(100));
-                                    }
-
-                                    unsafe {
-                                        dav1d_picture_unref(Some(NonNull::from(&mut picture)))
-                                    }
-                                } else if res.0 == -11 {
-                                    break; // EAGAIN, no more frames ready
-                                } else {
-                                    eprintln!("[INGEST] get_picture error: {}", res.0);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        // End of stream – flush decoder
-                        println!("[INGEST] End of stream, flushing decoder");
-                        unsafe { dav1d_flush(ctx) };
-                        // Try to get any remaining frames
-                        loop {
-                            let mut picture = MaybeUninit::<Dav1dPicture>::uninit();
-                            let res = unsafe {
-                                dav1d_get_picture(
-                                    Some(ctx),
-                                    Some(NonNull::new(picture.as_mut_ptr()).unwrap()),
-                                )
-                            };
-                            if res.0 == 0 {
-                                let mut picture = unsafe { picture.assume_init() };
-                                // Process flush frame (simplified: just unref)
-                                unsafe { dav1d_picture_unref(Some(NonNull::from(&mut picture))) }
-                            } else {
-                                break;
-                            }
-                        }
-                        break;
-                    }
+                let sample = match sink.pull_sample() {
+                    Ok(s) => s,
                     Err(e) => {
-                        eprintln!("[INGEST] Demux error: {}", e);
+                        // EOS or error
+                        if e.message().contains("EOS") {
+                            println!("[INGEST] End of stream");
+                        } else {
+                            eprintln!("[INGEST] pull_sample error: {}", e);
+                        }
                         break;
                     }
+                };
+
+                let buffer = match sample.buffer() {
+                    Some(b) => b,
+                    None => {
+                        eprintln!("[INGEST] No buffer");
+                        continue;
+                    }
+                };
+                let caps = match sample.caps() {
+                    Some(c) => c,
+                    None => {
+                        eprintln!("[INGEST] No caps");
+                        continue;
+                    }
+                };
+                let structure = match caps.structure(0) {
+                    Some(s) => s,
+                    None => {
+                        eprintln!("[INGEST] No structure");
+                        continue;
+                    }
+                };
+
+                let width = structure.get::<i32>("width").unwrap_or(0) as usize;
+                let height = structure.get::<i32>("height").unwrap_or(0) as usize;
+                let format = structure.get::<&str>("format").unwrap_or("unknown");
+
+                // Map buffer
+                let map = match buffer.map_readable() {
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!("[INGEST] Failed to map buffer: {}", e);
+                        continue;
+                    }
+                };
+
+                // Convert NV12 to RGBA
+                let rgba = if format == "NV12" {
+                    let y_plane = &map.as_slice()[0..width * height];
+                    let uv_plane = &map.as_slice()[width * height..];
+                    let mut rgba = vec![0u8; width * height * 4];
+                    for row in 0..height {
+                        for col in 0..width {
+                            let y_idx = row * width + col;
+                            let uv_idx = (row / 2) * (width / 2) + (col / 2);
+                            let y_val = y_plane[y_idx] as f32;
+                            let u_val = uv_plane[uv_idx * 2] as f32 - 128.0;
+                            let v_val = uv_plane[uv_idx * 2 + 1] as f32 - 128.0;
+                            let r = (y_val + 1.5748 * v_val).clamp(0.0, 255.0) as u8;
+                            let g =
+                                (y_val - 0.1873 * u_val - 0.4681 * v_val).clamp(0.0, 255.0) as u8;
+                            let b = (y_val + 1.8556 * u_val).clamp(0.0, 255.0) as u8;
+                            let idx = (row * width + col) * 4;
+                            rgba[idx] = r;
+                            rgba[idx + 1] = g;
+                            rgba[idx + 2] = b;
+                            rgba[idx + 3] = 255;
+                        }
+                    }
+                    rgba
+                } else {
+                    eprintln!("[INGEST] Unsupported format: {}", format);
+                    continue;
+                };
+
+                // Resize to target dimensions
+                let src_img = match fast_image_resize::images::Image::from_slice_u8(
+                    width as u32,
+                    height as u32,
+                    &mut rgba.clone(),
+                    fast_image_resize::PixelType::U8x4,
+                ) {
+                    Ok(img) => img,
+                    Err(e) => {
+                        eprintln!("[INGEST] Failed to create src image: {}", e);
+                        continue;
+                    }
+                };
+                let mut dst_img = fast_image_resize::images::Image::new(
+                    target_w as u32,
+                    target_h as u32,
+                    fast_image_resize::PixelType::U8x4,
+                );
+                let mut resizer = fast_image_resize::Resizer::new();
+                let options = fast_image_resize::ResizeOptions::new().resize_alg(
+                    fast_image_resize::ResizeAlg::Convolution(
+                        fast_image_resize::FilterType::Bilinear,
+                    ),
+                );
+                if let Err(e) = resizer.resize(&src_img, &mut dst_img, Some(&options)) {
+                    eprintln!("[INGEST] Resize failed: {}", e);
+                    continue;
+                }
+                let resized_data = dst_img.buffer().to_vec();
+
+                // Claim a slot and push to queue
+                if let Some(packed) = pool_ingest.try_claim() {
+                    pool_ingest.with_payload_mut(packed, |payload| {
+                        payload.copy_from_slice(&resized_data);
+                    });
+                    while let Err(_) = video_ingested_prod.push(packed) {
+                        std::thread::sleep(std::time::Duration::from_micros(100));
+                    }
+                } else {
+                    // No free slot; drop frame
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+
+                frame_count += 1;
+                if frame_count % 10 == 0 {
+                    println!("[INGEST] Decoded frame #{}", frame_count);
                 }
             }
 
-            // Cleanup
-            unsafe { dav1d_flush(ctx) };
-            let mut ctx_ptr2 = Some(ctx);
-            unsafe { dav1d_close(Some(NonNull::from(&mut ctx_ptr2))) };
+            // Clean up
+            pipeline.set_state(gst::State::Null).ok();
             println!(
                 "[INGEST] Exiting ingest thread. Total frames decoded: {}",
                 frame_count
@@ -622,7 +638,6 @@ impl ApplicationHandler for App {
         let upload_handle = std::thread::spawn(move || {
             while running_upload.load(std::sync::atomic::Ordering::Acquire) {
                 if let Some(packed) = video_ingested_cons.pop() {
-                    println!("[UPLOAD] Popped frame from ingested queue");
                     let payload = pool_upload.with_payload_mut(packed, |p| p.to_vec());
                     let staging =
                         device_upload.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -659,21 +674,7 @@ impl ApplicationHandler for App {
                     pool_upload
                         .transition_state(packed, STATE_INGESTED, STATE_GPU_UPLOADED)
                         .unwrap();
-                    println!("[UPLOAD] Submitted frame to GPU");
                     video_gpu_upload_ready_prod.push(packed).unwrap();
-                    static mut UPLOAD_COUNT: usize = 0;
-                    unsafe {
-                        UPLOAD_COUNT += 1;
-                    }
-                    if unsafe { UPLOAD_COUNT } % 30 == 0 {
-                        println!("[UPLOAD] Total frames uploaded: {}", unsafe {
-                            UPLOAD_COUNT
-                        });
-                    }
-                    println!(
-                        "[UPLOAD] Pushed to gpu_upload_ready, queue len: {}",
-                        video_gpu_upload_ready_prod.len()
-                    );
                 } else {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
@@ -694,11 +695,8 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
-
             WindowEvent::RedrawRequested => {
                 // ---- Render ----
-                use std::time::Instant;
-
                 let surface = self.surface.as_ref().unwrap();
                 let device = self.device.as_ref().unwrap();
                 let queue = self.queue.as_ref().unwrap();
@@ -713,11 +711,6 @@ impl ApplicationHandler for App {
                     self.window.as_ref().unwrap().request_redraw();
                     return;
                 }
-
-                let _device_poll_result = device.poll(wgpu::PollType::Wait {
-                    submission_index: None,
-                    timeout: None,
-                });
 
                 match surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(frame) => {
@@ -761,23 +754,6 @@ impl ApplicationHandler for App {
                         queue.submit(Some(encoder.finish()));
                         queue.present(frame);
 
-                        unsafe {
-                            PRESENT_COUNT += 1;
-                            let now = Instant::now();
-                            if let Some(last) = PRESENT_LAST_TIME {
-                                if now.duration_since(last).as_secs() >= 1 {
-                                    #[allow(static_mut_refs)]
-                                    {
-                                        println!("[RENDER] Presented FPS: {}", PRESENT_COUNT);
-                                    }
-                                    PRESENT_COUNT = 0;
-                                    PRESENT_LAST_TIME = Some(now);
-                                }
-                            } else {
-                                PRESENT_LAST_TIME = Some(now);
-                            }
-                        }
-
                         // After presenting, pop the frame that was used and release its slot
                         if let Some(packed) = video_gpu_upload_ready.pop() {
                             pool.release_video(packed);
@@ -808,7 +784,6 @@ impl ApplicationHandler for App {
                         }
                     }
                     wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                        // Similar to Success, but also reconfigure
                         let view = frame
                             .texture
                             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -885,6 +860,12 @@ impl ApplicationHandler for App {
 }
 
 fn main() {
+    // Initialize GStreamer globally (once)
+    if let Err(e) = gst::init() {
+        eprintln!("GStreamer init failed: {}", e);
+        return;
+    }
+
     let event_loop = EventLoop::new().unwrap();
     let mut app = App::default();
     event_loop.run_app(&mut app).unwrap();
