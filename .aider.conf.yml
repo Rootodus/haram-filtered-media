@@ -1,6 +1,0 @@
-# Force Aider to use PowerShell 5.1 execution syntax parameters
-lint-cmd:
-  - "rust:Set-Location mlfb-av-core; if ($?) { cargo check }"
-
-# Keeps your automated compilation tracker active
-auto-lint: true
