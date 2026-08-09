@@ -1,0 +1,4 @@
+{
+    // This is for the custom LLM clipboard patcher tool to prevent it not working in subsequent runs.
+    "editor.formatOnSave": false
+}
