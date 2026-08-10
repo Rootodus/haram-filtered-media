@@ -23,6 +23,8 @@ use ort::{
     value::{Value, ValueType},
 };
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 pub struct PeopleSegFilter {
     session: Mutex<Session>,
@@ -161,6 +163,8 @@ impl PeopleSegFilter {
 
 impl VideoFilter for PeopleSegFilter {
     fn filter_frame(&self, rgba: &mut [u8], width: u32, height: u32) -> Result<()> {
+        let frame_start = Instant::now();
+
         let orig_width = width as usize;
         let orig_height = height as usize;
         if rgba.len() != orig_width * orig_height * 4 {
@@ -170,7 +174,9 @@ impl VideoFilter for PeopleSegFilter {
         let model_w = self.input_width as usize;
         let model_h = self.input_height as usize;
 
-        // --- Preprocessing: Image Resize ---
+        // --- Preprocessing ---
+        let pre_start = Instant::now();
+
         let src_image = Image::from_slice_u8(width, height, rgba, PixelType::U8x4)?;
         let mut dst_rgba = Image::new(model_w as u32, model_h as u32, PixelType::U8x4);
         let mut resizer = Resizer::new();
@@ -183,14 +189,17 @@ impl VideoFilter for PeopleSegFilter {
         for ch in 0..3 {
             for y in 0..model_h {
                 for x in 0..model_w {
-                    // FIX: Scale raw 0-255 u8 values down to 0.0-1.0 f32 range
                     let raw_pixel = dst_data[(y * model_w + x) * 4 + ch] as f32;
                     input_data.push(raw_pixel / 255.0);
                 }
             }
         }
 
-        // --- Core Model Inference Loop ---
+        let pre_dur = pre_start.elapsed();
+
+        // --- Inference ---
+        let inf_start = Instant::now();
+
         let input_tensor = Value::from_array(([1, 3, model_h, model_w], input_data))?;
 
         let mut session_guard = self
@@ -204,8 +213,11 @@ impl VideoFilter for PeopleSegFilter {
             .ok_or_else(|| anyhow!("Output tensor missing"))?;
         let (_, raw_slice) = output_tensor.try_extract_tensor::<f32>()?;
 
-        // --- 1. Re-interpret flat FFI float array as a 4D viewport ---
-        // FIX 1: Change the shape parameters to match your true [1, 1, 384, 640] layout
+        let inf_dur = inf_start.elapsed();
+
+        // --- Postprocessing ---
+        let post_start = Instant::now();
+
         let view4d = ndarray::ArrayView4::from_shape((1, 1, model_h, model_w), raw_slice)
             .map_err(|e| anyhow!("Array layout transposition error: {:?}", e))?;
 
@@ -219,17 +231,14 @@ impl VideoFilter for PeopleSegFilter {
                 let norm_x = x as f32 / orig_width as f32;
                 let model_x = ((norm_x * model_w as f32) as usize).min(model_w - 1);
 
-                // FIX 2: Target channel index 0 natively (since there is only one layer)
                 let confidence = view4d[[0, 0, model_y, model_x]];
 
-                // Keep the raw logit threshold filter boundary (> 0.0)
                 if confidence > self.mask_threshold {
                     combined_mask[row_offset + x] = 1;
                 }
             }
         }
 
-        // --- Mask Dilation & Blackout Pass ---
         if self.dilation_iterations > 0 {
             combined_mask = Self::dilate_mask(
                 &combined_mask,
@@ -252,6 +261,23 @@ impl VideoFilter for PeopleSegFilter {
                     rgba[px + 3] = 255;
                 }
             }
+        }
+
+        let post_dur = post_start.elapsed();
+        let total_dur = frame_start.elapsed();
+
+        // --- Print profile every 30 frames ---
+        static FRAME_COUNT: AtomicUsize = AtomicUsize::new(0);
+        let count = FRAME_COUNT.fetch_add(1, Ordering::Relaxed);
+        if count % 1 == 0 {
+            println!(
+                "[PROFILE] Frame {}: Pre={:.2}ms, Inf={:.2}ms, Post={:.2}ms, Total={:.2}ms",
+                count,
+                pre_dur.as_secs_f64() * 1000.0,
+                inf_dur.as_secs_f64() * 1000.0,
+                post_dur.as_secs_f64() * 1000.0,
+                total_dur.as_secs_f64() * 1000.0,
+            );
         }
 
         Ok(())
