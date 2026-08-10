@@ -107,7 +107,7 @@ impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // --- UNet People Segmentation ---
         let model = Arc::new(
-            PeopleSegFilter::new("models/peopleseg_1x3x384x640.onnx")
+            PeopleSegFilter::new("models/segmentation_latent_pruned.onnx")
                 .expect("Failed to load model"),
         );
 
