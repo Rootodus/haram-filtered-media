@@ -1,3 +1,5 @@
+IMPORTANT: This document became inaccurate shortly after it was created, so it needs to be updated or deleted.
+
 # ARCHITECTURE.md – mlfb-av-core
 Last updated: 2026-07-24  
 Status: Draft – changes require updating all affected tests/examples.
