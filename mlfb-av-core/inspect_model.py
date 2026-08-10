@@ -1,6 +1,7 @@
 import onnx
 
-model = onnx.load("models/peopleseg_1x3x384x640.onnx")
+# uv run python -c "import urllib.request; urllib.request.urlretrieve('https://github.com/onnx/models/raw/main/validated/vision/object_detection_segmentation/fcn/model/fcn-resnet50-12.onnx', 'models/segmentation_gpu.onnx')"
+model = onnx.load("models/segmentation_gpu.onnx")
 
 print("=== Model Info ===")
 print(f"IR Version: {model.ir_version}")
