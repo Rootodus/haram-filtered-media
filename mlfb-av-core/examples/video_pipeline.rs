@@ -17,10 +17,18 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
-use yscv_video::Mp4VideoReader;
 
-const WIDTH: u32 = 960; // 960 % 64 == 0
-const HEIGHT: u32 = 540; // keep 16:9 aspect
+// ---- GStreamer imports ----
+use gst::glib::ControlFlow;
+use gst_app::AppSink;
+use gstreamer as gst;
+use gstreamer::glib::object::Cast;
+use gstreamer::prelude::GstBinExtManual;
+use gstreamer::prelude::*;
+use gstreamer_app as gst_app;
+
+const WIDTH: u32 = 960;
+const HEIGHT: u32 = 540;
 const VIDEO_SLOT_SIZE: usize = (WIDTH * HEIGHT * 4) as usize;
 const N_V: usize = 128;
 
@@ -74,7 +82,6 @@ struct App {
     video_ingested: Option<Arc<ArrayQueue<PackedIndex>>>,
     video_ml_ready: Option<Arc<ArrayQueue<PackedIndex>>>,
     video_gpu_upload_ready: Option<Arc<ArrayQueue<PackedIndex>>>,
-    video_reader: Option<Mp4VideoReader>,
 
     ingest_handle: Option<std::thread::JoinHandle<()>>,
     ml_handle: Option<std::thread::JoinHandle<()>>,
@@ -98,7 +105,6 @@ impl Default for App {
             video_ingested: None,
             video_ml_ready: None,
             video_gpu_upload_ready: None,
-            video_reader: None,
             ingest_handle: None,
             ml_handle: None,
             upload_handle: None,
@@ -118,7 +124,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     winit::window::WindowAttributes::default()
-                        .with_title("Video Pipeline Test")
+                        .with_title("Video Pipeline (GStreamer + ML)")
                         .with_inner_size(winit::dpi::LogicalSize::new(WIDTH, HEIGHT)),
                 )
                 .unwrap(),
@@ -352,7 +358,7 @@ impl ApplicationHandler for App {
                 });
         self.render_pipeline = Some(render_pipeline);
 
-        // --- Video Pipeline ---
+        // --- Video Pipeline (queues) ---
         let pool = Arc::new(SlotPool::<VIDEO_SLOT_SIZE>::new(N_V));
         self.pool = Some(pool.clone());
 
@@ -365,20 +371,235 @@ impl ApplicationHandler for App {
 
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        // --- Open video reader on main thread ---
-        let reader = match Mp4VideoReader::open("assets/video.mp4".as_ref()) {
-            Ok(r) => {
-                println!("[MAIN] Video opened successfully.");
-                r
-            }
-            Err(e) => {
-                eprintln!("[MAIN] Failed to open video: {}", e);
+        // ---- Ingest thread (GStreamer) ----
+        let pool_ingest = pool.clone();
+        let video_ingested_prod = video_ingested.clone();
+        let running_ingest = running.clone();
+
+        let ingest_handle = std::thread::spawn(move || {
+            // Initialize GStreamer
+            if let Err(e) = gst::init() {
+                eprintln!("[INGEST] GStreamer init failed: {}", e);
                 return;
             }
-        };
-        self.video_reader = Some(reader);
 
-        // --- ML worker thread loop ---
+            // Build pipeline
+            let pipeline = gst::Pipeline::new();
+
+            // Create elements
+            let src = match gst::ElementFactory::make("filesrc")
+                .property("location", "assets/video.mp4")
+                .build()
+            {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create filesrc: {}", e);
+                    return;
+                }
+            };
+
+            let decodebin = match gst::ElementFactory::make("decodebin").build() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create decodebin: {}", e);
+                    return;
+                }
+            };
+
+            let convert = match gst::ElementFactory::make("videoconvert").build() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create videoconvert: {}", e);
+                    return;
+                }
+            };
+
+            let scale = match gst::ElementFactory::make("videoscale").build() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create videoscale: {}", e);
+                    return;
+                }
+            };
+
+            let sink = AppSink::builder()
+                .caps(
+                    &gst::Caps::builder("video/x-raw")
+                        .field("format", "RGBA")
+                        .field("width", WIDTH as i32)
+                        .field("height", HEIGHT as i32)
+                        .build(),
+                )
+                .async_(true)
+                .drop(true)
+                .build();
+            let sink_element = sink.upcast_ref::<gst::Element>().clone();
+
+            // Add elements to pipeline
+            if let Err(e) = pipeline.add_many(&[&src, &decodebin, &convert, &scale, &sink_element])
+            {
+                eprintln!("[INGEST] Failed to add elements: {}", e);
+                return;
+            }
+            if let Err(e) = gst::Element::link_many(&[&src, &decodebin]) {
+                eprintln!("[INGEST] Failed to link src to decodebin: {}", e);
+                return;
+            }
+            if let Err(e) = gst::Element::link_many(&[&convert, &scale, &sink_element]) {
+                eprintln!("[INGEST] Failed to link convert -> scale -> sink: {}", e);
+                return;
+            }
+
+            // Connect pad-added signal
+            let convert_clone = convert.clone();
+            decodebin.connect_pad_added(move |_, src_pad| {
+                let caps = src_pad.current_caps().expect("Failed to get caps");
+                let structure = caps.structure(0).expect("No structure");
+                if structure.name().starts_with("video/") {
+                    let sink_pad = convert_clone
+                        .static_pad("sink")
+                        .expect("convert has no sink pad");
+                    if sink_pad.is_linked() {
+                        return;
+                    }
+                    let src_pad = src_pad.clone();
+                    if let Err(e) = src_pad.link(&sink_pad) {
+                        eprintln!("[INGEST] Failed to link decodebin pad to convert: {}", e);
+                    }
+                }
+            });
+
+            // Set pipeline to playing
+            if let Err(e) = pipeline.set_state(gst::State::Playing) {
+                eprintln!("[INGEST] Failed to set pipeline to playing: {}", e);
+                return;
+            }
+
+            // Bus watch for errors
+            let bus = match pipeline.bus() {
+                Some(b) => b,
+                None => {
+                    eprintln!("[INGEST] No bus");
+                    return;
+                }
+            };
+            let _watch_id = match bus.add_watch(move |_, msg| {
+                use gst::MessageView;
+                match msg.view() {
+                    MessageView::Error(err) => {
+                        eprintln!("[INGEST] GStreamer error: {}", err.error());
+                        if let Some(debug) = err.debug() {
+                            eprintln!("[INGEST] Debug info: {}", debug);
+                        }
+                        ControlFlow::Break
+                    }
+                    MessageView::Eos(_) => {
+                        println!("[INGEST] End of stream");
+                        ControlFlow::Break
+                    }
+                    _ => ControlFlow::Continue,
+                }
+            }) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to add bus watch: {}", e);
+                    return;
+                }
+            };
+
+            let mut frame_count = 0;
+
+            // Pull samples
+            while running_ingest.load(std::sync::atomic::Ordering::Acquire) {
+                let sample = match sink.pull_sample() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        if e.message.contains("EOS") {
+                            println!("[INGEST] End of stream");
+                        } else {
+                            eprintln!("[INGEST] pull_sample error: {}", e.message);
+                        }
+                        break;
+                    }
+                };
+
+                let buffer = match sample.buffer() {
+                    Some(b) => b,
+                    None => {
+                        eprintln!("[INGEST] No buffer");
+                        continue;
+                    }
+                };
+                let caps = match sample.caps() {
+                    Some(c) => c,
+                    None => {
+                        eprintln!("[INGEST] No caps");
+                        continue;
+                    }
+                };
+                let structure = match caps.structure(0) {
+                    Some(s) => s,
+                    None => {
+                        eprintln!("[INGEST] No structure");
+                        continue;
+                    }
+                };
+
+                let format = structure.get::<&str>("format").unwrap_or("unknown");
+
+                if format != "RGBA" {
+                    eprintln!("[INGEST] Expected RGBA but got {}", format);
+                    continue;
+                }
+
+                // Map buffer
+                let map = match buffer.map_readable() {
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!("[INGEST] Failed to map buffer: {}", e);
+                        continue;
+                    }
+                };
+
+                let rgba = map.as_slice().to_vec();
+
+                if frame_count == 0 {
+                    println!(
+                        "[INGEST] First frame RGBA len: {} (expected {})",
+                        rgba.len(),
+                        WIDTH as usize * HEIGHT as usize * 4
+                    );
+                }
+
+                // Claim a slot and push to video_ingested queue
+                if let Some(packed) = pool_ingest.try_claim() {
+                    pool_ingest.with_payload_mut(packed, |payload| {
+                        payload.copy_from_slice(&rgba);
+                    });
+                    while let Err(_) = video_ingested_prod.push(packed) {
+                        std::thread::sleep(std::time::Duration::from_micros(100));
+                    }
+                } else {
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+
+                frame_count += 1;
+                if frame_count % 10 == 0 {
+                    println!("[INGEST] Decoded frame #{}", frame_count);
+                }
+            }
+
+            // Clean up
+            pipeline.set_state(gst::State::Null).ok();
+            println!(
+                "[INGEST] Exiting ingest thread. Total frames decoded: {}",
+                frame_count
+            );
+        });
+
+        self.ingest_handle = Some(ingest_handle);
+
+        // ---- ML worker thread ----
         let pool_ml = pool.clone();
         let video_ingested_cons = video_ingested.clone();
         let video_ml_ready_prod = video_ml_ready.clone();
@@ -388,17 +609,18 @@ impl ApplicationHandler for App {
         let ml_handle = std::thread::spawn(move || {
             while running_ml.load(std::sync::atomic::Ordering::Acquire) {
                 if let Some(packed) = video_ingested_cons.pop() {
-                    println!("[ML] Processing frame...");
                     let result = pool_ml.with_payload_mut(packed, |payload| {
                         model_ml.filter_frame(payload, WIDTH, HEIGHT)
                     });
                     if let Err(e) = result {
-                        eprintln!("ML inference failed: {}", e);
+                        eprintln!("[ML] Inference error: {}", e);
                     }
                     pool_ml
                         .transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                         .expect("State transition failed");
-                    video_ml_ready_prod.push(packed).unwrap();
+                    while let Err(_) = video_ml_ready_prod.push(packed) {
+                        std::thread::sleep(std::time::Duration::from_micros(100));
+                    }
                 } else {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
@@ -406,7 +628,7 @@ impl ApplicationHandler for App {
         });
         self.ml_handle = Some(ml_handle);
 
-        // Upload
+        // ---- Upload thread (consumes from video_ml_ready) ----
         let pool_upload = pool.clone();
         let video_ml_ready_cons = video_ml_ready.clone();
         let video_gpu_upload_ready_prod = video_gpu_upload_ready.clone();
@@ -414,6 +636,7 @@ impl ApplicationHandler for App {
         let queue_upload = self.queue.as_ref().unwrap().clone();
         let texture_upload = self.texture.as_ref().unwrap().clone();
         let running_upload = running.clone();
+
         let upload_handle = std::thread::spawn(move || {
             while running_upload.load(std::sync::atomic::Ordering::Acquire) {
                 if let Some(packed) = video_ml_ready_cons.pop() {
@@ -475,70 +698,7 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                // --- Main-thread video ingest ---
-                if let Some(reader) = self.video_reader.as_mut() {
-                    match reader.next_frame() {
-                        Ok(Some(frame)) => {
-                            // Convert RGB -> RGBA
-                            let rgb = &frame.rgb8_data;
-                            let width = frame.width as usize;
-                            let height = frame.height as usize;
-                            let mut rgba = Vec::with_capacity(width * height * 4);
-                            for chunk in rgb.chunks_exact(3) {
-                                rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
-                            }
-
-                            // Resize to target dimensions
-                            let src_img = fast_image_resize::images::Image::from_slice_u8(
-                                width as u32,
-                                height as u32,
-                                &mut rgba,
-                                fast_image_resize::PixelType::U8x4,
-                            )
-                            .unwrap();
-                            let mut dst_img = fast_image_resize::images::Image::new(
-                                WIDTH,
-                                HEIGHT,
-                                fast_image_resize::PixelType::U8x4,
-                            );
-                            let mut resizer = fast_image_resize::Resizer::new();
-                            let options = fast_image_resize::ResizeOptions::new().resize_alg(
-                                fast_image_resize::ResizeAlg::Convolution(
-                                    fast_image_resize::FilterType::Bilinear,
-                                ),
-                            );
-                            resizer
-                                .resize(&src_img, &mut dst_img, Some(&options))
-                                .unwrap();
-                            let resized_data = dst_img.buffer().to_vec();
-
-                            // Push to the queue
-                            if let Some(pool) = self.pool.as_ref() {
-                                if let Some(packed) = pool.try_claim() {
-                                    pool.with_payload_mut(packed, |payload| {
-                                        payload.copy_from_slice(&resized_data);
-                                    });
-                                    if let Some(queue) = self.video_ingested.as_ref() {
-                                        while let Err(_) = queue.push(packed) {
-                                            std::thread::sleep(std::time::Duration::from_micros(
-                                                100,
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            println!("[MAIN] End of video stream");
-                            self.video_reader = None;
-                        }
-                        Err(e) => {
-                            eprintln!("[MAIN] Decode error: {}", e);
-                            self.video_reader = None;
-                        }
-                    }
-                }
-
+                // ---- Render ----
                 let surface = self.surface.as_ref().unwrap();
                 let device = self.device.as_ref().unwrap();
                 let queue = self.queue.as_ref().unwrap();
@@ -548,13 +708,7 @@ impl ApplicationHandler for App {
                 let pool = self.pool.as_ref().unwrap();
                 let video_gpu_upload_ready = self.video_gpu_upload_ready.as_ref().unwrap();
 
-                // Pop any ready frame and release it (already uploaded).
-                if let Some(packed) = video_gpu_upload_ready.pop() {
-                    pool.release_video(packed);
-                }
-
                 let ready_count = video_gpu_upload_ready.len();
-                println!("[RENDER] Buffer count: {}", ready_count);
                 if ready_count < 1 {
                     self.window.as_ref().unwrap().request_redraw();
                     return;
@@ -601,6 +755,10 @@ impl ApplicationHandler for App {
 
                         queue.submit(Some(encoder.finish()));
                         queue.present(frame);
+
+                        if let Some(packed) = video_gpu_upload_ready.pop() {
+                            pool.release_video(packed);
+                        }
                     }
                     wgpu::CurrentSurfaceTexture::Timeout
                     | wgpu::CurrentSurfaceTexture::Occluded => {
@@ -666,6 +824,11 @@ impl ApplicationHandler for App {
 
                         queue.submit(Some(encoder.finish()));
                         queue.present(frame);
+
+                        if let Some(packed) = video_gpu_upload_ready.pop() {
+                            pool.release_video(packed);
+                        }
+
                         let size = self.window.as_ref().unwrap().inner_size();
                         if size.width > 0 && size.height > 0 {
                             let config = self.config.as_mut().unwrap();
@@ -680,20 +843,11 @@ impl ApplicationHandler for App {
                             surface.configure(device, config);
                         }
                     }
-                    wgpu::CurrentSurfaceTexture::Lost => {
-                        eprintln!("Surface lost");
-                    }
-                    wgpu::CurrentSurfaceTexture::Validation => {
-                        eprintln!("Validation error");
-                    }
+                    wgpu::CurrentSurfaceTexture::Lost => eprintln!("Surface lost"),
+                    wgpu::CurrentSurfaceTexture::Validation => eprintln!("Validation error"),
                 }
 
-                // Keep redrawing if video is still playing
-                if self.video_reader.is_some() {
-                    if let Some(window) = self.window.as_ref() {
-                        window.request_redraw();
-                    }
-                }
+                self.window.as_ref().unwrap().request_redraw();
             }
             _ => {}
         }
@@ -707,6 +861,12 @@ impl ApplicationHandler for App {
 }
 
 fn main() {
+    // Initialize GStreamer globally (once)
+    if let Err(e) = gst::init() {
+        eprintln!("GStreamer init failed: {}", e);
+        return;
+    }
+
     let event_loop = EventLoop::new().unwrap();
     let mut app = App::default();
     event_loop.run_app(&mut app).unwrap();
