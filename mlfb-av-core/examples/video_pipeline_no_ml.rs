@@ -397,7 +397,17 @@ impl ApplicationHandler for App {
                 }
             };
 
-            let sink = AppSink::builder().async_(true).drop(true).build();
+            let sink = AppSink::builder()
+                .caps(
+                    &gst::Caps::builder("video/x-raw")
+                        .field("format", "RGBA")
+                        .field("width", gst::IntRange::new(0, i32::MAX))
+                        .field("height", gst::IntRange::new(0, i32::MAX))
+                        .build(),
+                )
+                .async_(true)
+                .drop(true)
+                .build();
             let sink_element = sink.upcast_ref::<gst::Element>().clone();
 
             // Add elements to pipeline
@@ -516,6 +526,11 @@ impl ApplicationHandler for App {
                 let height = structure.get::<i32>("height").unwrap_or(0) as usize;
                 let format = structure.get::<&str>("format").unwrap_or("unknown");
 
+                if format != "RGBA" {
+                    eprintln!("[INGEST] Expected RGBA but got {}", format);
+                    continue;
+                }
+
                 // Map buffer
                 let map = match buffer.map_readable() {
                     Ok(m) => m,
@@ -525,62 +540,8 @@ impl ApplicationHandler for App {
                     }
                 };
 
-                // Get video info for stride and plane offsets
-                // Compute plane sizes from standard NV12 layout
-                let y_plane_size = width * height;
-                let uv_plane_size = width * height / 2;
-                let total_size = y_plane_size + uv_plane_size;
-
-                if map.as_slice().len() < total_size {
-                    eprintln!(
-                        "[INGEST] Buffer too small for NV12: {} < {}",
-                        map.as_slice().len(),
-                        total_size
-                    );
-                    continue;
-                }
-
-                // Convert NV12 to RGBA
-                let rgba = if format == "NV12" {
-                    let y_plane = &map.as_slice()[0..y_plane_size];
-                    let uv_plane = &map.as_slice()[y_plane_size..y_plane_size + uv_plane_size];
-                    let mut rgba = vec![0u8; width * height * 4];
-                    let y_stride = width;
-                    // UV plane is interleaved U,V. Each row has width/2 pairs.
-                    let uv_pair_stride = width / 2;
-                    for row in 0..height {
-                        for col in 0..width {
-                            let y_idx = row * y_stride + col;
-                            let uv_row = row / 2;
-                            let uv_col = col / 2;
-                            let uv_pair_idx = uv_row * uv_pair_stride + uv_col;
-                            let y_val = y_plane[y_idx] as f32;
-                            let u_val = uv_plane[uv_pair_idx * 2] as f32 - 128.0;
-                            let v_val = uv_plane[uv_pair_idx * 2 + 1] as f32 - 128.0;
-                            let r = (y_val + 1.5748 * v_val).clamp(0.0, 255.0) as u8;
-                            let g =
-                                (y_val - 0.1873 * u_val - 0.4681 * v_val).clamp(0.0, 255.0) as u8;
-                            let b = (y_val + 1.8556 * u_val).clamp(0.0, 255.0) as u8;
-                            let idx = (row * width + col) * 4;
-                            rgba[idx] = r;
-                            rgba[idx + 1] = g;
-                            rgba[idx + 2] = b;
-                            rgba[idx + 3] = 255;
-                        }
-                    }
-                    rgba
-                } else {
-                    eprintln!("[INGEST] Unsupported format: {}", format);
-                    continue;
-                };
-
-                // Debug: print first few pixels of original NV12 conversion
-                if frame_count == 0 {
-                    println!(
-                        "[INGEST] First 16 RGBA bytes: {:02x?}",
-                        &rgba[..16.min(rgba.len())]
-                    );
-                }
+                // Buffer is already RGBA – copy directly
+                let rgba = map.as_slice().to_vec();
 
                 // Option 1: Use resizing (original)
                 let mut rgba_clone = rgba.clone();
@@ -612,14 +573,6 @@ impl ApplicationHandler for App {
                     continue;
                 }
                 let resized_data = dst_img.buffer().to_vec();
-
-                // Debug: print first few pixels of resized data
-                if frame_count == 0 {
-                    println!(
-                        "[INGEST] First 16 resized RGBA bytes: {:02x?}",
-                        &resized_data[..16.min(resized_data.len())]
-                    );
-                }
 
                 // Claim a slot and push to queue
                 if let Some(packed) = pool_ingest.try_claim() {
