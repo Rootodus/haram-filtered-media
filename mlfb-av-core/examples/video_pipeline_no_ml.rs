@@ -16,10 +16,10 @@ use winit::{
 
 // ---- GStreamer imports ----
 use gst::glib::ControlFlow;
-use gst::prelude::*;
 use gst_app::AppSink;
 use gstreamer as gst;
 use gstreamer_app as gst_app;
+use gstreamer_video::prelude::*;
 
 const WIDTH: u32 = 960;
 const HEIGHT: u32 = 540;
@@ -367,13 +367,7 @@ impl ApplicationHandler for App {
             }
 
             // Build pipeline
-            let pipeline = match gst::Pipeline::new() {
-                p => p,
-                Err(e) => {
-                    eprintln!("[INGEST] Failed to create pipeline: {}", e);
-                    return;
-                }
-            };
+            let pipeline = gst::Pipeline::new();
 
             // Create elements
             let src = match gst::ElementFactory::make("filesrc")
@@ -403,14 +397,7 @@ impl ApplicationHandler for App {
                 }
             };
 
-            let sink = match AppSink::builder().async_(true).drop(true).build() {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("[INGEST] Failed to create appsink: {}", e);
-                    return;
-                }
-            };
-
+            let sink = AppSink::builder().async_(true).drop(true).build();
             let sink_element = sink.upcast_ref::<gst::Element>().clone();
 
             // Add elements to pipeline
@@ -494,10 +481,10 @@ impl ApplicationHandler for App {
                     Ok(s) => s,
                     Err(e) => {
                         // EOS or error
-                        if e.message().contains("EOS") {
+                        if e.message.contains("EOS") {
                             println!("[INGEST] End of stream");
                         } else {
-                            eprintln!("[INGEST] pull_sample error: {}", e);
+                            eprintln!("[INGEST] pull_sample error: {}", e.message);
                         }
                         break;
                     }
@@ -538,18 +525,38 @@ impl ApplicationHandler for App {
                     }
                 };
 
+                // Get video info for stride and plane offsets
+                // Compute plane sizes from standard NV12 layout
+                let y_plane_size = width * height;
+                let uv_plane_size = width * height / 2;
+                let total_size = y_plane_size + uv_plane_size;
+
+                if map.as_slice().len() < total_size {
+                    eprintln!(
+                        "[INGEST] Buffer too small for NV12: {} < {}",
+                        map.as_slice().len(),
+                        total_size
+                    );
+                    continue;
+                }
+
                 // Convert NV12 to RGBA
                 let rgba = if format == "NV12" {
-                    let y_plane = &map.as_slice()[0..width * height];
-                    let uv_plane = &map.as_slice()[width * height..];
+                    let y_plane = &map.as_slice()[0..y_plane_size];
+                    let uv_plane = &map.as_slice()[y_plane_size..y_plane_size + uv_plane_size];
                     let mut rgba = vec![0u8; width * height * 4];
+                    let y_stride = width;
+                    // UV plane is interleaved U,V. Each row has width/2 pairs.
+                    let uv_pair_stride = width / 2;
                     for row in 0..height {
                         for col in 0..width {
-                            let y_idx = row * width + col;
-                            let uv_idx = (row / 2) * (width / 2) + (col / 2);
+                            let y_idx = row * y_stride + col;
+                            let uv_row = row / 2;
+                            let uv_col = col / 2;
+                            let uv_pair_idx = uv_row * uv_pair_stride + uv_col;
                             let y_val = y_plane[y_idx] as f32;
-                            let u_val = uv_plane[uv_idx * 2] as f32 - 128.0;
-                            let v_val = uv_plane[uv_idx * 2 + 1] as f32 - 128.0;
+                            let u_val = uv_plane[uv_pair_idx * 2] as f32 - 128.0;
+                            let v_val = uv_plane[uv_pair_idx * 2 + 1] as f32 - 128.0;
                             let r = (y_val + 1.5748 * v_val).clamp(0.0, 255.0) as u8;
                             let g =
                                 (y_val - 0.1873 * u_val - 0.4681 * v_val).clamp(0.0, 255.0) as u8;
@@ -567,11 +574,20 @@ impl ApplicationHandler for App {
                     continue;
                 };
 
-                // Resize to target dimensions
+                // Debug: print first few pixels of original NV12 conversion
+                if frame_count == 0 {
+                    println!(
+                        "[INGEST] First 16 RGBA bytes: {:02x?}",
+                        &rgba[..16.min(rgba.len())]
+                    );
+                }
+
+                // Option 1: Use resizing (original)
+                let mut rgba_clone = rgba.clone();
                 let src_img = match fast_image_resize::images::Image::from_slice_u8(
                     width as u32,
                     height as u32,
-                    &mut rgba.clone(),
+                    &mut rgba_clone,
                     fast_image_resize::PixelType::U8x4,
                 ) {
                     Ok(img) => img,
@@ -596,6 +612,14 @@ impl ApplicationHandler for App {
                     continue;
                 }
                 let resized_data = dst_img.buffer().to_vec();
+
+                // Debug: print first few pixels of resized data
+                if frame_count == 0 {
+                    println!(
+                        "[INGEST] First 16 resized RGBA bytes: {:02x?}",
+                        &resized_data[..16.min(resized_data.len())]
+                    );
+                }
 
                 // Claim a slot and push to queue
                 if let Some(packed) = pool_ingest.try_claim() {
