@@ -541,7 +541,25 @@ impl ApplicationHandler for App {
                 };
 
                 // Buffer is already RGBA – copy directly
-                let rgba = map.as_slice().to_vec();
+                let rgba = map.as_slice().to_vec(); // Diagnostic for first frame
+
+                if frame_count == 0 {
+                    println!(
+                        "[INGEST] First frame RGBA buffer len: {}, expected: {}",
+                        rgba.len(),
+                        width * height * 4
+                    );
+                    if rgba.len() >= 16 {
+                        println!("[INGEST] First 16 RGBA bytes: {:02x?}", &rgba[..16]);
+                    }
+                    // Check if buffer is all zeros or all 255
+                    let sum: u32 = rgba.iter().take(16).map(|&b| b as u32).sum();
+                    if sum == 0 {
+                        println!("[INGEST] WARNING: First 16 bytes are all zero!");
+                    } else if sum == 16 * 255 {
+                        println!("[INGEST] WARNING: First 16 bytes are all 255!");
+                    }
+                }
 
                 // Option 1: Use resizing (original)
                 let mut rgba_clone = rgba.clone();
