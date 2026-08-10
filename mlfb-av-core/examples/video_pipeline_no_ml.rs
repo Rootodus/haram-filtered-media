@@ -659,26 +659,6 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                use std::time::Instant;
-                static mut LAST_FRAME_TIME: Option<Instant> = None;
-                static mut FRAME_COUNT: u32 = 0;
-
-                unsafe {
-                    FRAME_COUNT += 1;
-                    let now = Instant::now();
-                    if let Some(last) = LAST_FRAME_TIME {
-                        if now.duration_since(last).as_secs() >= 1 {
-                            #[allow(static_mut_refs)]
-                            {
-                                println!("[RENDER] FPS: {}", FRAME_COUNT);
-                            }
-                            FRAME_COUNT = 0;
-                            LAST_FRAME_TIME = Some(now);
-                        }
-                    } else {
-                        LAST_FRAME_TIME = Some(now);
-                    }
-                }
                 // ---- Render ----
                 let surface = self.surface.as_ref().unwrap();
                 let device = self.device.as_ref().unwrap();
