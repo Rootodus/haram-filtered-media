@@ -396,13 +396,19 @@ impl ApplicationHandler for App {
                     return;
                 }
             };
-
+            let scale = match gst::ElementFactory::make("videoscale").build() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("[INGEST] Failed to create videoscale: {}", e);
+                    return;
+                }
+            };
             let sink = AppSink::builder()
                 .caps(
                     &gst::Caps::builder("video/x-raw")
                         .field("format", "RGBA")
-                        .field("width", gst::IntRange::new(0, i32::MAX))
-                        .field("height", gst::IntRange::new(0, i32::MAX))
+                        .field("width", WIDTH as i32)
+                        .field("height", HEIGHT as i32)
                         .build(),
                 )
                 .async_(true)
@@ -411,16 +417,19 @@ impl ApplicationHandler for App {
             let sink_element = sink.upcast_ref::<gst::Element>().clone();
 
             // Add elements to pipeline
-            if let Err(e) = pipeline.add_many(&[&src, &decodebin, &convert, &sink_element]) {
+            if let Err(e) = pipeline.add_many(&[&src, &decodebin, &convert, &scale, &sink_element])
+            {
                 eprintln!("[INGEST] Failed to add elements: {}", e);
                 return;
             }
+            // Link src -> decodebin (pad-added handles the rest)
             if let Err(e) = gst::Element::link_many(&[&src, &decodebin]) {
                 eprintln!("[INGEST] Failed to link src to decodebin: {}", e);
                 return;
             }
-            if let Err(e) = gst::Element::link_many(&[&convert, &sink_element]) {
-                eprintln!("[INGEST] Failed to link convert to appsink: {}", e);
+            // Link convert -> scale -> sink
+            if let Err(e) = gst::Element::link_many(&[&convert, &scale, &sink_element]) {
+                eprintln!("[INGEST] Failed to link convert -> scale -> sink: {}", e);
                 return;
             }
 
@@ -481,8 +490,6 @@ impl ApplicationHandler for App {
                 }
             };
 
-            let target_w = WIDTH as usize;
-            let target_h = HEIGHT as usize;
             let mut frame_count = 0;
 
             // Pull samples
@@ -522,8 +529,6 @@ impl ApplicationHandler for App {
                     }
                 };
 
-                let width = structure.get::<i32>("width").unwrap_or(0) as usize;
-                let height = structure.get::<i32>("height").unwrap_or(0) as usize;
                 let format = structure.get::<&str>("format").unwrap_or("unknown");
 
                 if format != "RGBA" {
@@ -540,62 +545,25 @@ impl ApplicationHandler for App {
                     }
                 };
 
-                // Buffer is already RGBA – copy directly
-                let rgba = map.as_slice().to_vec(); // Diagnostic for first frame
+                // Buffer is already RGBA and at target resolution (960x540)
+                let rgba = map.as_slice().to_vec();
 
+                // Diagnostic for first frame
                 if frame_count == 0 {
                     println!(
                         "[INGEST] First frame RGBA buffer len: {}, expected: {}",
                         rgba.len(),
-                        width * height * 4
+                        WIDTH as usize * HEIGHT as usize * 4
                     );
                     if rgba.len() >= 16 {
                         println!("[INGEST] First 16 RGBA bytes: {:02x?}", &rgba[..16]);
                     }
-                    // Check if buffer is all zeros or all 255
-                    let sum: u32 = rgba.iter().take(16).map(|&b| b as u32).sum();
-                    if sum == 0 {
-                        println!("[INGEST] WARNING: First 16 bytes are all zero!");
-                    } else if sum == 16 * 255 {
-                        println!("[INGEST] WARNING: First 16 bytes are all 255!");
-                    }
                 }
 
-                // Option 1: Use resizing (original)
-                let mut rgba_clone = rgba.clone();
-                let src_img = match fast_image_resize::images::Image::from_slice_u8(
-                    width as u32,
-                    height as u32,
-                    &mut rgba_clone,
-                    fast_image_resize::PixelType::U8x4,
-                ) {
-                    Ok(img) => img,
-                    Err(e) => {
-                        eprintln!("[INGEST] Failed to create src image: {}", e);
-                        continue;
-                    }
-                };
-                let mut dst_img = fast_image_resize::images::Image::new(
-                    target_w as u32,
-                    target_h as u32,
-                    fast_image_resize::PixelType::U8x4,
-                );
-                let mut resizer = fast_image_resize::Resizer::new();
-                let options = fast_image_resize::ResizeOptions::new().resize_alg(
-                    fast_image_resize::ResizeAlg::Convolution(
-                        fast_image_resize::FilterType::Bilinear,
-                    ),
-                );
-                if let Err(e) = resizer.resize(&src_img, &mut dst_img, Some(&options)) {
-                    eprintln!("[INGEST] Resize failed: {}", e);
-                    continue;
-                }
-                let resized_data = dst_img.buffer().to_vec();
-
-                // Claim a slot and push to queue
+                // Claim a slot and push to queue (no resize needed)
                 if let Some(packed) = pool_ingest.try_claim() {
                     pool_ingest.with_payload_mut(packed, |payload| {
-                        payload.copy_from_slice(&resized_data);
+                        payload.copy_from_slice(&rgba);
                     });
                     while let Err(_) = video_ingested_prod.push(packed) {
                         std::thread::sleep(std::time::Duration::from_micros(100));
@@ -691,6 +659,26 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
+                use std::time::Instant;
+                static mut LAST_FRAME_TIME: Option<Instant> = None;
+                static mut FRAME_COUNT: u32 = 0;
+
+                unsafe {
+                    FRAME_COUNT += 1;
+                    let now = Instant::now();
+                    if let Some(last) = LAST_FRAME_TIME {
+                        if now.duration_since(last).as_secs() >= 1 {
+                            #[allow(static_mut_refs)]
+                            {
+                                println!("[RENDER] FPS: {}", FRAME_COUNT);
+                            }
+                            FRAME_COUNT = 0;
+                            LAST_FRAME_TIME = Some(now);
+                        }
+                    } else {
+                        LAST_FRAME_TIME = Some(now);
+                    }
+                }
                 // ---- Render ----
                 let surface = self.surface.as_ref().unwrap();
                 let device = self.device.as_ref().unwrap();
