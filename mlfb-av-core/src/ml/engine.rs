@@ -40,14 +40,59 @@ pub fn init_session(path: &str) -> Result<Session> {
     #[cfg(target_os = "windows")]
     {
         use ort::ep::{DirectMLExecutionProvider, OpenVINOExecutionProvider};
+
+        // --- 1. Attempt DirectML first, with CPU fallback disabled ---
+        let mut dml_builder =
+            Session::builder().map_err(|e| anyhow!("Failed to create DirectML builder: {}", e))?;
+
+        // Chain with `map_err` for each step (no `?` on Result<_, ort::Error>)
+        dml_builder = dml_builder
+            .with_optimization_level(GraphOptimizationLevel::Level1)
+            .map_err(|e| anyhow!("Failed to set DirectML optimization level: {:?}", e))?;
+
+        dml_builder = dml_builder
+            .with_intra_threads(1)
+            .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
+
+        // **DISABLE CPU FALLBACK** – this will cause `commit_from_file` to fail if any operator cannot run on DirectML
+        dml_builder = dml_builder
+            .with_disable_cpu_fallback()
+            .map_err(|e| anyhow!("Failed to disable CPU fallback for DirectML: {:?}", e))?;
+        dml_builder = dml_builder
+            .with_execution_providers([DirectMLExecutionProvider::default().build()])
+            .map_err(|e| anyhow!("Failed to set DirectML provider: {:?}", e))?;
+
+        match dml_builder.commit_from_file(path) {
+            Ok(s) => {
+                println!("SUCCESS: DirectML hardware backend is active (CPU fallback disabled).");
+                return Ok(s);
+            }
+            Err(e) => {
+                println!(
+                    "DirectML failed to initialize with CPU fallback disabled: {}\n\
+                This confirms the model contains operators unsupported by DirectML (likely `Resize`).",
+                    e
+                );
+                // Fall through to OpenVINO (also with CPU fallback disabled)
+            }
+        }
+
+        // --- 2. Fallback to OpenVINO (also disable CPU fallback) ---
         let mut ov_builder =
-            Session::builder().map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
+            Session::builder().map_err(|e| anyhow!("Failed to create OpenVINO builder: {}", e))?;
+
         ov_builder = ov_builder
             .with_optimization_level(GraphOptimizationLevel::Level1)
             .map_err(|e| anyhow!("Failed to set OpenVINO optimization level: {:?}", e))?;
+
         ov_builder = ov_builder
             .with_intra_threads(1)
             .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
+
+        ov_builder = ov_builder
+            .with_disable_cpu_fallback()
+            .map_err(|e| anyhow!("Failed to disable CPU fallback for OpenVINO: {:?}", e))?;
+
         ov_builder = ov_builder
             .with_execution_providers([OpenVINOExecutionProvider::default()
                 .with_device_type("GPU")
@@ -56,37 +101,21 @@ pub fn init_session(path: &str) -> Result<Session> {
 
         match ov_builder.commit_from_file(path) {
             Ok(s) => {
-                println!("SUCCESS: Intel OpenVINO iGPU hardware backend is active.");
+                println!(
+                    "SUCCESS: Intel OpenVINO iGPU hardware backend is active (CPU fallback disabled)."
+                );
                 return Ok(s);
             }
-            Err(_) => {
-                println!("Intel OpenVINO not found or failed. Attempting DirectML...");
-                let mut dml_builder = Session::builder()
-                    .map_err(|e| anyhow!("Failed to create DirectML builder: {}", e))?;
-                dml_builder = dml_builder
-                    .with_optimization_level(GraphOptimizationLevel::Level1)
-                    .map_err(|e| anyhow!("Failed to set DirectML optimization level: {:?}", e))?;
-                dml_builder = dml_builder
-                    .with_intra_threads(1)
-                    .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
-                dml_builder = dml_builder
-                    .with_execution_providers([DirectMLExecutionProvider::default().build()])
-                    .map_err(|e| anyhow!("Failed to set DirectML provider: {:?}", e))?;
-
-                match dml_builder.commit_from_file(path) {
-                    Ok(s) => {
-                        println!(
-                            "SUCCESS: DirectML (AMD/NVIDIA/Generic Windows iGPU) hardware backend is active."
-                        );
-                        return Ok(s);
-                    }
-                    Err(e) => {
-                        println!(
-                            "DirectML failed to initialize: {}. Dropping down to raw CPU...",
-                            e
-                        );
-                    }
-                }
+            Err(e) => {
+                println!(
+                    "OpenVINO also failed with CPU fallback disabled: {}\n\
+                This confirms the model has unsupported operators for both backends.",
+                    e
+                );
+                // We deliberately do NOT fall back to CPU – we want to see the error.
+                return Err(anyhow!(
+                    "No viable GPU execution provider without CPU fallback. The model likely contains unsupported operators (e.g., `Resize`)."
+                ));
             }
         }
     }
