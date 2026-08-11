@@ -1,22 +1,16 @@
 // ============================================================================
 // ASSET ACKNOWLEDGMENT & ATTRIBUTION:
-// This module executes inference against an optimized, standalone UNet weight
-// binary acquired from the open-source community.
+// This module utilizes the PPHumanSeg (Paddle-to-ONNX) model, licensed under Apache 2.0.
+// Source: https://huggingface.co/opencv/human_segmentation_pphumanseg/resolve/main/human_segmentation_pphumanseg_2023mar.onnx
 //
-// Source Project: PINTO Model Zoo
-// Asset Model Target: 466_People_Segmentation (UNet Architecture)
-// Curator/Converter: Katsuya Hyodo (pinto0309)
-// Source Repository: https://github.com/PINTO0309/PINTO_model_zoo
-// Upstream Model Research: Vladimir Iglovikov (people_segmentation)
-// Upstream Asset License: MIT
-//
-// NOTE: The real-time pixel normalization, image resizing, and 4D tensor
-// indexing layout maps implemented below are custom native Rust pipeline
-// components written to interface directly with the standalone ONNX matrix.
+// This model replaces previous architectures to bypass custom PyTorch coordinate
+// transformations (e.g., pytorch_half_pixel), enabling native, zero-CPU-fallback
+// execution on Intel Iris Xe hardware via DirectML/OpenVINO.
 // ============================================================================
 
 use crate::filter::VideoFilter;
 use anyhow::{Result, anyhow};
+use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image};
 use ort::{
     session::Session,
     value::{Value, ValueType},
@@ -29,6 +23,9 @@ pub struct PeopleSegFilter {
     session: Mutex<Session>,
     input_name: String,
     output_name: String,
+    model_height: u32,
+    model_width: u32,
+    num_classes: u32, // typically 2 (background, person)
     mask_threshold: f32,
     dilation_kernel_size: u32,
     dilation_iterations: u32,
@@ -37,34 +34,10 @@ pub struct PeopleSegFilter {
 
 impl PeopleSegFilter {
     pub fn new(path: &str) -> Result<Self> {
-        // Direct clean call to parent module's initialization engine
         let session = super::init_session(path)?;
 
-        let output_shape = match session.outputs()[0].dtype() {
-            ValueType::Tensor { shape, .. } => shape.clone(),
-            _ => return Err(anyhow!("Expected tensor output")),
-        };
-
-        // ====================================================================
-        // THE SANITY CHECK: Print the actual hidden output dimensions
-        // ====================================================================
-        println!(
-            "DEBUG CRITICAL: True Model Output Shape is: {:?}",
-            output_shape
-        );
-        // ====================================================================
-
         let input_name = session.inputs()[0].name().to_string();
-        let output_names: Vec<String> = session
-            .outputs()
-            .iter()
-            .map(|o| o.name().to_string())
-            .collect();
-
-        if output_names.is_empty() {
-            return Err(anyhow!("Expected at least 1 output tensor, got 0"));
-        }
-        let output_name = output_names[0].clone();
+        let output_name = session.outputs()[0].name().to_string();
 
         let input_shape = match session.inputs()[0].dtype() {
             ValueType::Tensor { shape, .. } => shape,
@@ -75,29 +48,56 @@ impl PeopleSegFilter {
             return Err(anyhow!("Expected input tensor of rank 4"));
         }
 
-        // Check batch and channel dimensions: they must be 1 and 3, unless dynamic (-1)
+        // We expect static dimensions: [1, 3, H, W]
         let batch = input_shape[0];
-        if batch != -1 && batch != 1 {
-            return Err(anyhow!("Batch dimension must be 1 (or dynamic)"));
-        }
         let channels = input_shape[1];
-        if channels != -1 && channels != 3 {
-            return Err(anyhow!("Channel dimension must be 3 (or dynamic)"));
+        let height = input_shape[2];
+        let width = input_shape[3];
+
+        if batch != 1 {
+            return Err(anyhow!("Batch dimension must be 1"));
         }
-        // We don't need to store height and width; they will be taken from the frame.
+        if channels != 3 {
+            return Err(anyhow!("Channel dimension must be 3"));
+        }
+        if height <= 0 || width <= 0 {
+            return Err(anyhow!("Height and width must be positive integers"));
+        }
+
+        let model_height = height as u32;
+        let model_width = width as u32;
+
+        // Get output shape to know number of classes
+        let output_shape = match session.outputs()[0].dtype() {
+            ValueType::Tensor { shape, .. } => shape,
+            _ => return Err(anyhow!("Expected tensor output")),
+        };
+        let num_classes = if output_shape.len() == 4 {
+            output_shape[1] as u32
+        } else {
+            2 // fallback
+        };
+
+        println!(
+            "DEBUG: Model input: {}x{}, output classes: {}",
+            model_height, model_width, num_classes
+        );
 
         Ok(Self {
             session: Mutex::new(session),
             input_name,
             output_name,
-            mask_threshold: 0.0,
+            model_height,
+            model_width,
+            num_classes,
+            mask_threshold: 0.5,
             dilation_kernel_size: 5,
             dilation_iterations: 3,
             mask_buf: Mutex::new(Vec::new()),
         })
     }
 
-    /// Dilate a binary mask using a square kernel. (Isolated helper)
+    /// Dilate a binary mask using a square kernel. (Unchanged)
     fn dilate_mask(
         mask: &[u8],
         width: usize,
@@ -175,27 +175,36 @@ impl VideoFilter for PeopleSegFilter {
             return Err(anyhow!("Buffer size mismatch"));
         }
 
-        // FCN-ResNet50 downsamples by factor 8.
-        let latent_w = orig_w / 8;
-        let latent_h = orig_h / 8;
+        let model_h = self.model_height as usize;
+        let model_w = self.model_width as usize;
 
-        // --- Preprocess: RGBA → RGB, normalise ---
+        // --- Preprocess: downscale RGBA to model size, then convert to RGB ---
         let pre_start = Instant::now();
-        let mut input_data = Vec::with_capacity(3 * orig_h * orig_w);
-        for y in 0..orig_h {
-            let row = y * orig_w * 4;
-            for x in 0..orig_w {
-                let idx = row + x * 4;
-                input_data.push(rgba[idx] as f32 / 255.0);
-                input_data.push(rgba[idx + 1] as f32 / 255.0);
-                input_data.push(rgba[idx + 2] as f32 / 255.0);
+
+        // 1. Downscale using fast_image_resize (cheap because target is small)
+        let src_image = Image::from_slice_u8(width, height, rgba, PixelType::U8x4)?;
+        let mut dst_rgba = Image::new(model_w as u32, model_h as u32, PixelType::U8x4);
+        let mut resizer = Resizer::new();
+        let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
+        resizer.resize(&src_image, &mut dst_rgba, Some(&options))?;
+
+        // 2. Convert RGBA to RGB and normalise to [0,1]
+        let mut input_data = Vec::with_capacity(3 * model_h * model_w);
+        let dst_data = dst_rgba.buffer();
+        for ch in 0..3 {
+            for y in 0..model_h {
+                let row = y * model_w;
+                for x in 0..model_w {
+                    let idx = (row + x) * 4 + ch;
+                    input_data.push(dst_data[idx] as f32 / 255.0);
+                }
             }
         }
         let pre_dur = pre_start.elapsed();
 
         // --- Inference ---
         let inf_start = Instant::now();
-        let input_tensor = Value::from_array(([1, 3, orig_h, orig_w], input_data))?;
+        let input_tensor = Value::from_array(([1, 3, model_h, model_w], input_data))?;
 
         let mut session_guard = self.session.lock().unwrap();
         let outputs = session_guard.run(ort::inputs![self.input_name.as_str() => input_tensor])?;
@@ -205,30 +214,40 @@ impl VideoFilter for PeopleSegFilter {
         let (_, raw_slice) = output_tensor.try_extract_tensor::<f32>()?;
         let inf_dur = inf_start.elapsed();
 
-        // --- Postprocess: extract class 15 and upscale ---
+        // --- Postprocess: extract class 1 (person) and upscale to original ---
         let post_start = Instant::now();
-        let view = ndarray::ArrayView4::from_shape((1, 21, latent_h, latent_w), raw_slice)
-            .map_err(|e| anyhow!("Shape error: {:?}", e))?;
+
+        // Interpret output as [1, num_classes, model_h, model_w]
+        let view = ndarray::ArrayView4::from_shape(
+            (1, self.num_classes as usize, model_h, model_w),
+            raw_slice,
+        )
+        .map_err(|e| anyhow!("Shape error: {:?}", e))?;
 
         let mut mask_buf = self.mask_buf.lock().unwrap();
         mask_buf.clear();
         mask_buf.resize(orig_w * orig_h, 0);
 
-        let scale_x = latent_w as f32 / orig_w as f32;
-        let scale_y = latent_h as f32 / orig_h as f32;
+        // Nearest-neighbour upscale from model_h/model_w to orig_h/orig_w
+        let scale_x = model_w as f32 / orig_w as f32;
+        let scale_y = model_h as f32 / orig_h as f32;
+
+        // We assume class index 1 is "person" (0 = background)
+        let person_class = 1; // adjust if needed
 
         for y in 0..orig_h {
-            let lat_y = (y as f32 * scale_y) as usize;
+            let model_y = (y as f32 * scale_y) as usize;
             let row_offset = y * orig_w;
             for x in 0..orig_w {
-                let lat_x = (x as f32 * scale_x) as usize;
-                let confidence = view[[0, 15, lat_y, lat_x]];
+                let model_x = (x as f32 * scale_x) as usize;
+                let confidence = view[[0, person_class, model_y, model_x]];
                 if confidence > self.mask_threshold {
                     mask_buf[row_offset + x] = 1;
                 }
             }
         }
 
+        // Optional dilation
         if self.dilation_iterations > 0 {
             *mask_buf = Self::dilate_mask(
                 &mask_buf,
@@ -239,6 +258,7 @@ impl VideoFilter for PeopleSegFilter {
             );
         }
 
+        // Apply blackout
         for y in 0..orig_h {
             let row_offset = y * orig_w;
             for x in 0..orig_w {
