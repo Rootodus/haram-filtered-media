@@ -1,5 +1,11 @@
 // ============================================================================
-// PPHumanSeg ONNX model (Apache 2.0) – optimised for Intel iGPU via DirectML
+// ASSET ACKNOWLEDGMENT & ATTRIBUTION:
+// This module utilizes the PPHumanSeg (Paddle-to-ONNX) model, licensed under Apache 2.0.
+// Source: https://huggingface.co/opencv/human_segmentation_pphumanseg/resolve/main/human_segmentation_pphumanseg_2023mar.onnx
+//
+// This model replaces previous architectures to bypass custom PyTorch coordinate
+// transformations (e.g., pytorch_half_pixel), enabling native, zero-CPU-fallback
+// execution on Intel Iris Xe hardware via DirectML/OpenVINO.
 // ============================================================================
 
 use crate::filter::VideoFilter;
