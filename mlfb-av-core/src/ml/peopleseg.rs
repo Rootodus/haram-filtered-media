@@ -17,7 +17,6 @@
 
 use crate::filter::VideoFilter;
 use anyhow::{Result, anyhow};
-use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image};
 use ort::{
     session::Session,
     value::{Value, ValueType},
@@ -30,11 +29,10 @@ pub struct PeopleSegFilter {
     session: Mutex<Session>,
     input_name: String,
     output_name: String,
-    pub input_height: u32,
-    pub input_width: u32,
     mask_threshold: f32,
     dilation_kernel_size: u32,
     dilation_iterations: u32,
+    mask_buf: Mutex<Vec<u8>>,
 }
 
 impl PeopleSegFilter {
@@ -69,26 +67,33 @@ impl PeopleSegFilter {
         let output_name = output_names[0].clone();
 
         let input_shape = match session.inputs()[0].dtype() {
-            ValueType::Tensor { shape, .. } => shape.clone(),
+            ValueType::Tensor { shape, .. } => shape,
             _ => return Err(anyhow!("Expected tensor input")),
         };
 
-        if input_shape.len() != 4 || input_shape[0] != 1 || input_shape[1] != 3 {
-            return Err(anyhow!("Expected input shape (1, 3, H, W)"));
+        if input_shape.len() != 4 {
+            return Err(anyhow!("Expected input tensor of rank 4"));
         }
 
-        let input_height = input_shape[2] as u32;
-        let input_width = input_shape[3] as u32;
+        // Check batch and channel dimensions: they must be 1 and 3, unless dynamic (-1)
+        let batch = input_shape[0];
+        if batch != -1 && batch != 1 {
+            return Err(anyhow!("Batch dimension must be 1 (or dynamic)"));
+        }
+        let channels = input_shape[1];
+        if channels != -1 && channels != 3 {
+            return Err(anyhow!("Channel dimension must be 3 (or dynamic)"));
+        }
+        // We don't need to store height and width; they will be taken from the frame.
 
         Ok(Self {
             session: Mutex::new(session),
             input_name,
             output_name,
-            input_height,
-            input_width,
             mask_threshold: 0.0,
             dilation_kernel_size: 5,
             dilation_iterations: 3,
+            mask_buf: Mutex::new(Vec::new()),
         })
     }
 
@@ -164,96 +169,81 @@ impl PeopleSegFilter {
 impl VideoFilter for PeopleSegFilter {
     fn filter_frame(&self, rgba: &mut [u8], width: u32, height: u32) -> Result<()> {
         let frame_start = Instant::now();
-
-        let orig_width = width as usize;
-        let orig_height = height as usize;
-        if rgba.len() != orig_width * orig_height * 4 {
+        let orig_w = width as usize;
+        let orig_h = height as usize;
+        if rgba.len() != orig_w * orig_h * 4 {
             return Err(anyhow!("Buffer size mismatch"));
         }
 
-        let model_w = self.input_width as usize;
-        let model_h = self.input_height as usize;
+        // FCN-ResNet50 downsamples by factor 8.
+        let latent_w = orig_w / 8;
+        let latent_h = orig_h / 8;
 
-        // --- Preprocessing ---
+        // --- Preprocess: RGBA → RGB, normalise ---
         let pre_start = Instant::now();
-
-        let src_image = Image::from_slice_u8(width, height, rgba, PixelType::U8x4)?;
-        let mut dst_rgba = Image::new(model_w as u32, model_h as u32, PixelType::U8x4);
-        let mut resizer = Resizer::new();
-        let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
-        resizer.resize(&src_image, &mut dst_rgba, Some(&options))?;
-
-        let mut input_data = Vec::with_capacity(3 * model_h * model_w);
-        let dst_data = dst_rgba.buffer();
-
-        for ch in 0..3 {
-            for y in 0..model_h {
-                for x in 0..model_w {
-                    let raw_pixel = dst_data[(y * model_w + x) * 4 + ch] as f32;
-                    input_data.push(raw_pixel / 255.0);
-                }
+        let mut input_data = Vec::with_capacity(3 * orig_h * orig_w);
+        for y in 0..orig_h {
+            let row = y * orig_w * 4;
+            for x in 0..orig_w {
+                let idx = row + x * 4;
+                input_data.push(rgba[idx] as f32 / 255.0);
+                input_data.push(rgba[idx + 1] as f32 / 255.0);
+                input_data.push(rgba[idx + 2] as f32 / 255.0);
             }
         }
-
         let pre_dur = pre_start.elapsed();
 
         // --- Inference ---
         let inf_start = Instant::now();
+        let input_tensor = Value::from_array(([1, 3, orig_h, orig_w], input_data))?;
 
-        let input_tensor = Value::from_array(([1, 3, model_h, model_w], input_data))?;
-
-        let mut session_guard = self
-            .session
-            .lock()
-            .map_err(|_| anyhow!("Failed to acquire safe lock on ONNX session state"))?;
-
+        let mut session_guard = self.session.lock().unwrap();
         let outputs = session_guard.run(ort::inputs![self.input_name.as_str() => input_tensor])?;
         let output_tensor = outputs
             .get(self.output_name.as_str())
             .ok_or_else(|| anyhow!("Output tensor missing"))?;
         let (_, raw_slice) = output_tensor.try_extract_tensor::<f32>()?;
-
         let inf_dur = inf_start.elapsed();
 
-        // --- Postprocessing ---
+        // --- Postprocess: extract class 15 and upscale ---
         let post_start = Instant::now();
+        let view = ndarray::ArrayView4::from_shape((1, 21, latent_h, latent_w), raw_slice)
+            .map_err(|e| anyhow!("Shape error: {:?}", e))?;
 
-        let view4d = ndarray::ArrayView4::from_shape((1, 1, model_h, model_w), raw_slice)
-            .map_err(|e| anyhow!("Array layout transposition error: {:?}", e))?;
+        let mut mask_buf = self.mask_buf.lock().unwrap();
+        mask_buf.clear();
+        mask_buf.resize(orig_w * orig_h, 0);
 
-        let mut combined_mask = vec![0u8; orig_width * orig_height];
-        for y in 0..orig_height {
-            let norm_y = y as f32 / orig_height as f32;
-            let model_y = ((norm_y * model_h as f32) as usize).min(model_h - 1);
-            let row_offset = y * orig_width;
+        let scale_x = latent_w as f32 / orig_w as f32;
+        let scale_y = latent_h as f32 / orig_h as f32;
 
-            for x in 0..orig_width {
-                let norm_x = x as f32 / orig_width as f32;
-                let model_x = ((norm_x * model_w as f32) as usize).min(model_w - 1);
-
-                let confidence = view4d[[0, 0, model_y, model_x]];
-
+        for y in 0..orig_h {
+            let lat_y = (y as f32 * scale_y) as usize;
+            let row_offset = y * orig_w;
+            for x in 0..orig_w {
+                let lat_x = (x as f32 * scale_x) as usize;
+                let confidence = view[[0, 15, lat_y, lat_x]];
                 if confidence > self.mask_threshold {
-                    combined_mask[row_offset + x] = 1;
+                    mask_buf[row_offset + x] = 1;
                 }
             }
         }
 
         if self.dilation_iterations > 0 {
-            combined_mask = Self::dilate_mask(
-                &combined_mask,
-                orig_width,
-                orig_height,
+            *mask_buf = Self::dilate_mask(
+                &mask_buf,
+                orig_w,
+                orig_h,
                 self.dilation_kernel_size as usize,
                 self.dilation_iterations as usize,
             );
         }
 
-        for y in 0..orig_height {
-            let row_offset = y * orig_width;
-            for x in 0..orig_width {
+        for y in 0..orig_h {
+            let row_offset = y * orig_w;
+            for x in 0..orig_w {
                 let idx = row_offset + x;
-                if combined_mask[idx] == 1 {
+                if mask_buf[idx] == 1 {
                     let px = idx * 4;
                     rgba[px] = 0;
                     rgba[px + 1] = 0;
@@ -266,7 +256,6 @@ impl VideoFilter for PeopleSegFilter {
         let post_dur = post_start.elapsed();
         let total_dur = frame_start.elapsed();
 
-        // --- Print profile every 30 frames ---
         static FRAME_COUNT: AtomicUsize = AtomicUsize::new(0);
         let count = FRAME_COUNT.fetch_add(1, Ordering::Relaxed);
         if count % 1 == 0 {

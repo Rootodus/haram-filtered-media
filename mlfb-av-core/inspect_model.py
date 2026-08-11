@@ -1,7 +1,7 @@
 import onnx
 
-# uv run python -c "import urllib.request; urllib.request.urlretrieve('https://github.com/onnx/models/raw/main/validated/vision/object_detection_segmentation/fcn/model/fcn-resnet50-12.onnx', 'models/segmentation_gpu.onnx')"
-model = onnx.load("models/segmentation_gpu.onnx")
+# uv run python -c "import urllib.request; urllib.request.urlretrieve('https://huggingface.co/opencv/human_segmentation_pphumanseg/resolve/main/human_segmentation_pphumanseg_2023mar.onnx', 'models/pphumanseg.onnx')"
+model = onnx.load("models/pphumanseg.onnx")
 
 print("=== Model Info ===")
 print(f"IR Version: {model.ir_version}")
