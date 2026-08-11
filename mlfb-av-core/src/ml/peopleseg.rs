@@ -1,11 +1,5 @@
 // ============================================================================
-// ASSET ACKNOWLEDGMENT & ATTRIBUTION:
-// This module utilizes the PPHumanSeg (Paddle-to-ONNX) model, licensed under Apache 2.0.
-// Source: https://huggingface.co/opencv/human_segmentation_pphumanseg/resolve/main/human_segmentation_pphumanseg_2023mar.onnx
-//
-// This model replaces previous architectures to bypass custom PyTorch coordinate
-// transformations (e.g., pytorch_half_pixel), enabling native, zero-CPU-fallback
-// execution on Intel Iris Xe hardware via DirectML/OpenVINO.
+// PPHumanSeg ONNX model (Apache 2.0) – optimised for Intel iGPU via DirectML
 // ============================================================================
 
 use crate::filter::VideoFilter;
@@ -18,17 +12,6 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-/// Precomputed bilinear mapping for a single output pixel.
-#[derive(Debug, Clone, Copy)]
-struct UpscaleEntry {
-    src_y0: usize,
-    src_y1: usize,
-    frac_y: f32,
-    src_x0: usize,
-    src_x1: usize,
-    frac_x: f32,
-}
-
 pub struct PeopleSegFilter {
     session: Mutex<Session>,
     input_name: String,
@@ -39,8 +22,11 @@ pub struct PeopleSegFilter {
     mask_threshold: f32,
     dilation_kernel_size: u32,
     dilation_iterations: u32,
-    // Lazy‑built lookup table for bilinear upscale
-    upscale_lut: Mutex<Option<Vec<UpscaleEntry>>>,
+    // Reusable buffers (no allocations per frame)
+    mask_low: Mutex<Vec<u8>>,
+    // Precomputed nearest‑neighbour maps (lazy, built once)
+    src_y_map: Mutex<Option<Vec<usize>>>,
+    src_x_map: Mutex<Option<Vec<usize>>>,
 }
 
 impl PeopleSegFilter {
@@ -76,6 +62,7 @@ impl PeopleSegFilter {
 
         let model_h = height as usize;
         let model_w = width as usize;
+        let plane_stride = model_h * model_w;
 
         let output_shape = match session.outputs()[0].dtype() {
             ValueType::Tensor { shape, .. } => shape,
@@ -105,77 +92,25 @@ impl PeopleSegFilter {
             num_classes,
             mask_threshold: 0.5,
             dilation_kernel_size: 3,
-            dilation_iterations: 1,
-            upscale_lut: Mutex::new(None),
+            dilation_iterations: 0, // disabled by default – enable if needed
+            mask_low: Mutex::new(Vec::with_capacity(plane_stride)),
+            src_y_map: Mutex::new(None),
+            src_x_map: Mutex::new(None),
         })
     }
 
-    /// Build the lookup table for bilinear upscale from low‑res (model_h×model_w) to target (target_w×target_h).
-    fn build_upscale_lut(
-        low_w: usize,
-        low_h: usize,
-        target_w: usize,
-        target_h: usize,
-    ) -> Vec<UpscaleEntry> {
-        let scale_x = low_w as f32 / target_w as f32;
-        let scale_y = low_h as f32 / target_h as f32;
-        let mut lut = Vec::with_capacity(target_w * target_h);
+    /// Build nearest‑neighbour row and column maps for a given target resolution.
+    fn build_nearest_maps(&self, target_w: usize, target_h: usize) -> (Vec<usize>, Vec<usize>) {
+        let model_w = self.model_w;
+        let model_h = self.model_h;
 
-        for y_out in 0..target_h {
-            let src_y_float = (y_out as f32 + 0.5) * scale_y - 0.5;
-            let src_y0 = src_y_float.clamp(0.0, (low_h - 1) as f32).floor() as usize;
-            let src_y1 = (src_y0 + 1).min(low_h - 1);
-            let frac_y = src_y_float - src_y0 as f32;
+        let src_y_map: Vec<usize> = (0..target_h).map(|y| (y * model_h) / target_h).collect();
+        let src_x_map: Vec<usize> = (0..target_w).map(|x| (x * model_w) / target_w).collect();
 
-            for x_out in 0..target_w {
-                let src_x_float = (x_out as f32 + 0.5) * scale_x - 0.5;
-                let src_x0 = src_x_float.clamp(0.0, (low_w - 1) as f32).floor() as usize;
-                let src_x1 = (src_x0 + 1).min(low_w - 1);
-                let frac_x = src_x_float - src_x0 as f32;
-
-                lut.push(UpscaleEntry {
-                    src_y0,
-                    src_y1,
-                    frac_y,
-                    src_x0,
-                    src_x1,
-                    frac_x,
-                });
-            }
-        }
-        lut
+        (src_y_map, src_x_map)
     }
 
-    /// Fast bilinear upscale using precomputed lookup table.
-    fn bilinear_upscale_lut(
-        mask_low: &[u8],
-        low_w: usize,
-        target_w: usize,
-        target_h: usize,
-        lut: &[UpscaleEntry],
-        mask_out: &mut [u8],
-    ) {
-        debug_assert_eq!(lut.len(), target_w * target_h);
-
-        for y in 0..target_h {
-            let row_base = y * target_w;
-            for x in 0..target_w {
-                let entry = &lut[row_base + x];
-                let v00 = mask_low[entry.src_y0 * low_w + entry.src_x0] as f32;
-                let v10 = mask_low[entry.src_y0 * low_w + entry.src_x1] as f32;
-                let v01 = mask_low[entry.src_y1 * low_w + entry.src_x0] as f32;
-                let v11 = mask_low[entry.src_y1 * low_w + entry.src_x1] as f32;
-
-                let val = v00 * (1.0 - entry.frac_x) * (1.0 - entry.frac_y)
-                    + v10 * entry.frac_x * (1.0 - entry.frac_y)
-                    + v01 * (1.0 - entry.frac_x) * entry.frac_y
-                    + v11 * entry.frac_x * entry.frac_y;
-                mask_out[row_base + x] = if val > 0.5 { 1 } else { 0 };
-            }
-        }
-    }
-
-    /// Dilate a binary mask using a square kernel.
+    /// Dilate a binary mask using a square kernel. (Kept for optional use)
     fn dilate_mask(
         mask: &[u8],
         width: usize,
@@ -310,22 +245,34 @@ impl VideoFilter for PeopleSegFilter {
         let (_, raw_slice) = output_tensor.try_extract_tensor::<f32>()?;
         let inf_dur = inf_start.elapsed();
 
-        // --- 3. Postprocess: extract class 1, low‑res dilation, bilinear upscale with LUT ---
+        // --- 3. Postprocess: fused upscale + blackout ---
         let post_start = Instant::now();
 
-        // Ensure the LUT is built for this resolution (lazy, thread‑safe)
-        let mut guard = self.upscale_lut.lock();
-        if guard.is_none() {
-            *guard = Some(Self::build_upscale_lut(model_w, model_h, orig_w, orig_h));
-        }
-        let lut = guard.as_ref().unwrap();
+        // Build or retrieve the nearest‑neighbour maps (lazy, once)
+        let mut y_guard = self.src_y_map.lock();
+        let mut x_guard = self.src_x_map.lock();
 
+        if y_guard.is_none() || x_guard.is_none() {
+            let (y_map, x_map) = self.build_nearest_maps(orig_w, orig_h);
+            *y_guard = Some(y_map);
+            *x_guard = Some(x_map);
+        }
+
+        // Take references that live as long as the guards
+        let src_y_map = y_guard.as_ref().unwrap();
+        let src_x_map = x_guard.as_ref().unwrap();
+
+        // Interpret output as [1, num_classes, model_h, model_w]
         let view =
             ndarray::ArrayView4::from_shape((1, self.num_classes, model_h, model_w), raw_slice)
                 .map_err(|e| anyhow!("Shape error: {:?}", e))?;
 
-        // Create low‑res mask from class 1
-        let mut mask_low = vec![0u8; plane_stride];
+        // Reuse mask_low buffer
+        let mut mask_low = self.mask_low.lock();
+        mask_low.clear();
+        mask_low.resize(plane_stride, 0);
+
+        // Extract class 1 (person) into mask_low
         for y in 0..model_h {
             let row = y * model_w;
             for x in 0..model_w {
@@ -338,37 +285,27 @@ impl VideoFilter for PeopleSegFilter {
             }
         }
 
-        // Apply dilation on low‑res mask
-        let mask_low_dilated = if self.dilation_iterations > 0 && self.dilation_kernel_size > 1 {
-            Self::dilate_mask(
+        // Optional dilation (if enabled)
+        if self.dilation_iterations > 0 && self.dilation_kernel_size > 1 {
+            let dilated = Self::dilate_mask(
                 &mask_low,
                 model_w,
                 model_h,
                 self.dilation_kernel_size as usize,
                 self.dilation_iterations as usize,
-            )
-        } else {
-            mask_low
-        };
+            );
+            *mask_low = dilated;
+        }
 
-        // Upscale to original resolution using the LUT
-        let mut mask_full = vec![0u8; orig_w * orig_h];
-        Self::bilinear_upscale_lut(
-            &mask_low_dilated,
-            model_w,
-            orig_w,
-            orig_h,
-            lut,
-            &mut mask_full,
-        );
-
-        // Apply blackout
+        // Fused loop: upscale + blackout in one pass
         for y in 0..orig_h {
-            let row_offset = y * orig_w;
+            let src_y = src_y_map[y];
+            let src_row = src_y * model_w;
+            let dst_row = y * orig_w * 4;
             for x in 0..orig_w {
-                let idx = row_offset + x;
-                if mask_full[idx] == 1 {
-                    let px = idx * 4;
+                let src_x = src_x_map[x];
+                if mask_low[src_row + src_x] == 1 {
+                    let px = dst_row + x * 4;
                     rgba[px] = 0;
                     rgba[px + 1] = 0;
                     rgba[px + 2] = 0;
@@ -376,6 +313,8 @@ impl VideoFilter for PeopleSegFilter {
                 }
             }
         }
+
+        // Guards go out of scope here, releasing the locks
 
         let post_dur = post_start.elapsed();
         let total_dur = frame_start.elapsed();
