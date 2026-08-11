@@ -4,7 +4,7 @@ import numpy as np
 # Force DirectML only, no CPU fallback
 providers = ["DmlExecutionProvider"]  # CPU not included
 # uv run python -c "import urllib.request; urllib.request.urlretrieve('https://huggingface.co/opencv/human_segmentation_pphumanseg/resolve/main/human_segmentation_pphumanseg_2023mar.onnx', 'models/pphumanseg.onnx')"
-session = ort.InferenceSession("models/pphumanseg.onnx", providers=providers)
+session = ort.InferenceSession("../models/pphumanseg.onnx", providers=providers)
 
 print("Providers:", session.get_providers())
 
