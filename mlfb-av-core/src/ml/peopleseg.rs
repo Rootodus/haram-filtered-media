@@ -5,7 +5,7 @@
 //
 // This model replaces previous architectures to bypass custom PyTorch coordinate
 // transformations (e.g., pytorch_half_pixel), enabling native, zero-CPU-fallback
-// execution on Intel Iris Xe hardware via DirectML/OpenVINO.
+// execution on Intel Iris Xe hardware via DirectML.
 // ============================================================================
 
 use crate::filter::VideoFilter;
