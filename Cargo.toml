@@ -1,0 +1,3 @@
+[workspace]
+resolver = "2"
+members = ["crates/hfm-core", "crates/hfm-web"]
