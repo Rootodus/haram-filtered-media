@@ -36,84 +36,33 @@ pub fn init_session(path: &str) -> Result<Session> {
         }
     }
 
-    // --- 2. WINDOWS TRACK ---
     #[cfg(target_os = "windows")]
     {
-        use ort::ep::{DirectMLExecutionProvider, OpenVINOExecutionProvider};
+        use ort::ep::DirectMLExecutionProvider;
 
-        // --- 1. Attempt OpenVINO first, with CPU fallback disabled ---
-        let mut ov_builder =
-            Session::builder().map_err(|e| anyhow!("Failed to create OpenVINO builder: {}", e))?;
-
-        ov_builder = ov_builder
+        let mut builder =
+            Session::builder().map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
+        builder = builder
             .with_optimization_level(GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow!("Failed to set OpenVINO optimization level: {:?}", e))?;
-
-        ov_builder = ov_builder
+            .map_err(|e| anyhow!("Failed to set optimization level: {:?}", e))?;
+        builder = builder
             .with_intra_threads(1)
             .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
-
-        // ov_builder = ov_builder
-        //     .with_disable_cpu_fallback()
-        //     .map_err(|e| anyhow!("Failed to disable CPU fallback for OpenVINO: {:?}", e))?;
-
-        ov_builder = ov_builder
-            .with_execution_providers([OpenVINOExecutionProvider::default()
-                .with_device_type("GPU")
-                .build()])
-            .map_err(|e| anyhow!("Failed to set OpenVINO provider: {:?}", e))?;
-
-        match ov_builder.commit_from_file(path) {
-            Ok(s) => {
-                println!(
-                    "SUCCESS: Intel OpenVINO iGPU hardware backend is active (CPU fallback disabled)."
-                );
-                return Ok(s);
-            }
-            Err(e) => {
-                println!(
-                    "OpenVINO failed to initialize with CPU fallback disabled: {}\n\
-                Falling back to DirectML...",
-                    e
-                );
-            }
-        }
-
-        // --- 2. Fallback to DirectML (also with CPU fallback disabled) ---
-        let mut dml_builder =
-            Session::builder().map_err(|e| anyhow!("Failed to create DirectML builder: {}", e))?;
-
-        dml_builder = dml_builder
-            .with_optimization_level(GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow!("Failed to set DirectML optimization level: {:?}", e))?;
-
-        dml_builder = dml_builder
-            .with_intra_threads(1)
-            .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
-
-        // dml_builder = dml_builder
-        //     .with_disable_cpu_fallback()
-        //     .map_err(|e| anyhow!("Failed to disable CPU fallback for DirectML: {:?}", e))?;
-
-        dml_builder = dml_builder
+        // Keep CPU fallback disabled for DirectML (it works)
+        builder = builder
+            .with_disable_cpu_fallback()
+            .map_err(|e| anyhow!("Failed to disable CPU fallback: {:?}", e))?;
+        builder = builder
             .with_execution_providers([DirectMLExecutionProvider::default().build()])
             .map_err(|e| anyhow!("Failed to set DirectML provider: {:?}", e))?;
 
-        match dml_builder.commit_from_file(path) {
+        match builder.commit_from_file(path) {
             Ok(s) => {
-                println!("SUCCESS: DirectML hardware backend is active (CPU fallback disabled).");
+                println!("SUCCESS: DirectML hardware backend is active.");
                 return Ok(s);
             }
             Err(e) => {
-                println!(
-                    "DirectML also failed with CPU fallback disabled: {}\n\
-                No viable GPU execution provider.",
-                    e
-                );
-                return Err(anyhow!(
-                    "No GPU execution provider without CPU fallback. \
-                The model may contain unsupported operators for both OpenVINO and DirectML."
-                ));
+                println!("DirectML failed: {}. Falling back to CPU.", e);
             }
         }
     }
