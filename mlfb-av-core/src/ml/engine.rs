@@ -53,9 +53,9 @@ pub fn init_session(path: &str) -> Result<Session> {
             .with_intra_threads(1)
             .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
 
-        ov_builder = ov_builder
-            .with_disable_cpu_fallback()
-            .map_err(|e| anyhow!("Failed to disable CPU fallback for OpenVINO: {:?}", e))?;
+        // ov_builder = ov_builder
+        //     .with_disable_cpu_fallback()
+        //     .map_err(|e| anyhow!("Failed to disable CPU fallback for OpenVINO: {:?}", e))?;
 
         ov_builder = ov_builder
             .with_execution_providers([OpenVINOExecutionProvider::default()
@@ -91,9 +91,9 @@ pub fn init_session(path: &str) -> Result<Session> {
             .with_intra_threads(1)
             .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
 
-        dml_builder = dml_builder
-            .with_disable_cpu_fallback()
-            .map_err(|e| anyhow!("Failed to disable CPU fallback for DirectML: {:?}", e))?;
+        // dml_builder = dml_builder
+        //     .with_disable_cpu_fallback()
+        //     .map_err(|e| anyhow!("Failed to disable CPU fallback for DirectML: {:?}", e))?;
 
         dml_builder = dml_builder
             .with_execution_providers([DirectMLExecutionProvider::default().build()])
