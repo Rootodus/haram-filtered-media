@@ -5,100 +5,37 @@ edition = "2024"
 publish = false
 
 [dependencies]
-tokio = { version = "1.52.3", features = [
+anyhow = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
+chromiumoxide = { workspace = true, features = ["rustls", "fetcher", "zip8"] }
+encase = { workspace = true }
+env_logger = { workspace = true }
+futures = { workspace = true }
+glam = { workspace = true, features = ["std", "bytemuck", "encase"] }
+image = { workspace = true }
+libloading = { workspace = true }
+log = { workspace = true }
+ndarray = { workspace = true }
+ort = { workspace = true, features = ["directml"] }
+pollster = { workspace = true }
+raw-window-handle = { workspace = true }
+remove_dir_all = { workspace = true }
+renderdoc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = [
     "rt-multi-thread",
     "macros",
     "net",
     "sync",
     "io-util",
-    "signal",
+    "signal"
 ] }
-winit = "0.30"
-wgpu = { version = "30.0", default-features = false, features = [
-    "dx12",
-    "wgsl",
-] }
-raw-window-handle = "0.6.2"
-pollster = "1.0.1"
-# Avoid rc.13+ until Microsoft fixes the upstream quantization casting bug
-# (CAST_F32_TO_F16) which causes instant hardware panics on runtime.
-ort = { version = "=2.0.0-rc.12", features = ["directml"] }
-ndarray = "0.17.2"
-futures = "0.3.32"
-tokenizers = { version = "0.23.1", default-features = false, features = [
-    "onig",
-] }
-anyhow = "1.0.103"
-bytemuck = { version = "1.25.1", features = ["derive"] }
-encase = "0.12.0"
-glam = { version = "0.33.2", features = ["bytemuck", "encase"] }
-renderdoc = "0.12.1"
-log = "0.4.33"
-env_logger = "0.11.11"
-libloading = "0.9.0"
-chromiumoxide = { version = "0.9.1", default-features = false, features = [
-    "rustls",
-    "fetcher",
-    "zip8",
-] }
-image = "0.25.10"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
-remove_dir_all = "1.0.0"
-tempfile = "3.27.0"
+tokenizers = { workspace = true, features = ["onig"] }
+wgpu = { workspace = true, features = ["dx12", "wgsl"] }
+winit = { workspace = true }
 
 [dev-dependencies]
-criterion = "0.8.2"
-flamegraph = "0.6.13"
-
-# =========================================================================
-# DAILY DEVELOPMENT
-# =========================================================================
-[profile.dev]
-opt-level = 0
-split-debuginfo = "unpacked"
-debug = "line-tables-only"
-
-[profile.dev.package."*"]
-opt-level = 2
-debug = false
-
-[profile.dev.build-override]
-opt-level = 0
-
-# =========================================================================
-# BENCHMARKING
-# =========================================================================
-[profile.bench]
-lto = "fat"
-codegen-units = 1
-
-# =========================================================================
-# TESTING (Integration & Stress Tests)
-# =========================================================================
-[profile.test]
-opt-level = 1
-debug = "line-tables-only"
-
-# =========================================================================
-# PROFILING VIA TOOLS
-# =========================================================================
-[profile.profiling]
-inherits = "release"
-debug = true
-
-# =========================================================================
-# LOCAL PROFILING
-# =========================================================================
-[profile.release]
-lto = "thin"
-
-# =========================================================================
-# FINAL USER DISTRIBUTION
-# =========================================================================
-[profile.final-release]
-inherits = "release"
-lto = "fat"
-codegen-units = 1
-panic = "abort"
-strip = true
+criterion = { workspace = true }
+flamegraph = { workspace = true }

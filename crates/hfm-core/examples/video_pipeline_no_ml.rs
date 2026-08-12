@@ -1,5 +1,5 @@
 use crossbeam::queue::ArrayQueue;
-use mlfb_av_core::memory::{PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, SlotPool};
+use hfm_core::memory::{PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, SlotPool};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use wgpu::{

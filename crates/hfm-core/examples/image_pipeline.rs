@@ -1,9 +1,9 @@
 use crossbeam::queue::ArrayQueue;
-use mlfb_av_core::filter::VideoFilter;
-use mlfb_av_core::memory::{
-    PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool,
+use hfm_core::filter::VideoFilter;
+use hfm_core::memory::{
+    PackedIndex, SlotPool, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED,
 };
-use mlfb_av_core::ml::PeopleSegFilter;
+use hfm_core::ml::PeopleSegFilter;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use wgpu::{

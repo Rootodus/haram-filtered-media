@@ -1,4 +1,4 @@
-use mlfb_av_core::memory::{STATE_CONSUMED, STATE_INGESTED, SlotPool};
+use hfm_core::memory::{STATE_CONSUMED, STATE_INGESTED, SlotPool};
 use std::sync::Arc;
 use std::thread;
 

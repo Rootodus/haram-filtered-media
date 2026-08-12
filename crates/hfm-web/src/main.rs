@@ -1,10 +1,10 @@
-use ml_filtered_browser::browser::{BrowserSession, capture_screenshot, extract_dom_nodes};
-use ml_filtered_browser::debug_config::DebugConfig;
-use ml_filtered_browser::inference::run_inference;
-use ml_filtered_browser::render::{App, CustomAppEvent};
-use ml_filtered_browser::shared_state::SharedAppState;
-use ml_filtered_browser::tokenizer::tokenize;
-use ml_filtered_browser::types::{DomNode, FrameData, SEQ_LEN, VisualAction};
+use hfm_web::browser::{BrowserSession, capture_screenshot, extract_dom_nodes};
+use hfm_web::debug_config::DebugConfig;
+use hfm_web::inference::run_inference;
+use hfm_web::render::{App, CustomAppEvent};
+use hfm_web::shared_state::SharedAppState;
+use hfm_web::tokenizer::tokenize;
+use hfm_web::types::{DomNode, FrameData, SEQ_LEN, VisualAction};
 
 use anyhow::Result;
 use ort::session::Session;
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Load ONNX model (must be done before inference)
     let _ = ort::init().commit();
-    ml_filtered_browser::tokenizer::init_tokenizer("tokenizer.json")?;
+    hfm_web::tokenizer::init_tokenizer("tokenizer.json")?;
 
     let model_paths = vec!["model.onnx"];
     let mut sessions = Vec::with_capacity(model_paths.len());
@@ -191,7 +191,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     for _ in 0..5 {
         for session_arc in &sessions {
             let mut session_guard = session_arc.lock().unwrap();
-            let _ = ml_filtered_browser::inference::run_inference(
+            let _ = hfm_web::inference::run_inference(
                 &mut session_guard,
                 &input_ids_arc,
                 &attention_mask_arc,
@@ -310,7 +310,7 @@ async fn run_browser_frame_loop(
 #[tokio::test]
 async fn test_browser() {
     use futures::StreamExt;
-    use ml_filtered_browser::browser;
+    use hfm_web::browser;
 
     let (browser, mut handler, _profile_dir) =
         browser::session::BrowserSession::launch().await.unwrap();

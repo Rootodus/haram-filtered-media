@@ -5,40 +5,34 @@ edition = "2024"
 publish = false
 
 [dependencies]
-anyhow = "1.0.104"
-core_affinity = "0.8.3"
-cpal = "0.18.1"
-crossbeam = "0.8.4"
-fast_image_resize = { version = "6.1.0", default-features = false, features = [
-    "std"
-] }
-gstreamer = "0.25.3"
-gstreamer-app = "0.25.2"
-gstreamer-video = "0.25.3"
-image = { version = "0.25.10", default-features = false, features = [
-    "jpeg",
-    "png"
-] }
-minstant = "0.1.7"
-mp4 = "0.14.0"
-ndarray = "0.17.2"
-# Avoid rc.13+ until Microsoft fixes the upstream quantization casting bug
-# (CAST_F32_TO_F16) which causes instant hardware panics on runtime.
-ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+anyhow = { workspace = true }
+core_affinity = { workspace = true }
+cpal = { workspace = true }
+crossbeam = { workspace = true }
+fast_image_resize = { workspace = true, features = ["std"] }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+gstreamer-video = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png"] }
+log = { workspace = true }
+minstant = { workspace = true }
+mp4 = { workspace = true }
+ndarray = { workspace = true }
+ort = { workspace = true, features = [
     "download-binaries",
     "copy-dylibs",
     "tls-native",
     "std",
     "ndarray",
-    "directml",
+    "directml"
 ] }
-parking_lot = "0.12.5"
-rav1d = { version = "1.1.0", features = ["bitdepth_8"] }
-rfd = "0.17.2"
-ringbuf = "0.5.1"
-rust_h264 = "0.4.0"
-shared_memory = "0.12.4"
-symphonia = { version = "0.6.0", features = [
+parking_lot = { workspace = true }
+rav1d = { workspace = true, features = ["bitdepth_8"] }
+rfd = { workspace = true }
+ringbuf = { workspace = true }
+rust_h264 = { workspace = true }
+shared_memory = { workspace = true }
+symphonia = { workspace = true, features = [
     "isomp4",
     "mp3",
     "flac",
@@ -46,101 +40,36 @@ symphonia = { version = "0.6.0", features = [
     "aac",
     "exp-video-codecs"
 ] }
-thiserror = "2.0.20"
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", default-features = false, features = [
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
     "fmt",
     "ansi",
     "registry",
     "sharded-slab"
 ] }
-yscv-video = "0.1.11"
+yscv-video = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wgpu = { version = "30.0.0", default-features = false, features = [
-    "dx12",
-    "wgsl"
-] }
-winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
+wgpu = { workspace = true, features = ["dx12", "wgsl"] }
+winit = { workspace = true, features = ["rwh_06"] }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-wgpu = { version = "30.0.0", default-features = false, features = [
-    "metal",
-    "wgsl"
-] }
-winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
+wgpu = { workspace = true, features = ["metal", "wgsl"] }
+winit = { workspace = true, features = ["rwh_06"] }
 
 [target.'cfg(all(not(target_os = "windows"), not(target_vendor = "apple")))'.dependencies]
-wgpu = { version = "30.0.0", default-features = false, features = [
-    "vulkan",
-    "wgsl"
-] }
-winit = { version = "0.30.13", default-features = false, features = [
-    "x11",
-    "wayland",
-    "rwh_06"
-] }
+wgpu = { workspace = true, features = ["vulkan", "wgsl"] }
+winit = { workspace = true, features = ["x11", "wayland", "rwh_06"] }
 
 [dev-dependencies]
-bytemuck = { version = "1.25.2", features = ["derive"] }
-dhat = "0.3.3"
-hdrhistogram = "7.6.0"
-loom = "0.7.2"
-pollster = "1.0.1"
-proptest = "1.11.0"
-static_assertions = "1.1.0"
+bytemuck = { workspace = true, features = ["derive"] }
+dhat = { workspace = true }
+hdrhistogram = { workspace = true }
+loom = { workspace = true }
+pollster = { workspace = true }
+proptest = { workspace = true }
+static_assertions = { workspace = true }
 
 [build-dependencies]
-naga = { version = "30.0.0", default-features = false, features = ["wgsl-in"] }
-
-# =========================================================================
-# DAILY DEVELOPMENT
-# =========================================================================
-[profile.dev]
-opt-level = 0
-split-debuginfo = "unpacked"
-debug = "line-tables-only"
-
-[profile.dev.package."*"]
-opt-level = 2
-debug = false
-
-[profile.dev.build-override]
-opt-level = 0
-
-# =========================================================================
-# BENCHMARKING
-# =========================================================================
-[profile.bench]
-lto = "fat"
-codegen-units = 1
-
-# =========================================================================
-# TESTING (Integration & Stress Tests)
-# =========================================================================
-[profile.test]
-opt-level = 1
-debug = "line-tables-only"
-
-# =========================================================================
-# PROFILING VIA TOOLS
-# =========================================================================
-[profile.profiling]
-inherits = "release"
-debug = true
-
-# =========================================================================
-# LOCAL PROFILING
-# =========================================================================
-[profile.release]
-lto = "thin"
-
-# =========================================================================
-# FINAL USER DISTRIBUTION
-# =========================================================================
-[profile.final-release]
-# Do not use panic = "abort" because code could rely/relies on catch_unwind
-inherits = "release"
-lto = "fat"
-codegen-units = 1
-strip = true
+naga = { workspace = true, features = ["wgsl-in"] }

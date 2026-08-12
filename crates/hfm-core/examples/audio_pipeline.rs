@@ -1,15 +1,13 @@
-use mlfb_av_core::audio::{CALLBACK_SAMPLES, CHANNELS, SAMPLE_RATE, SPSC_CAPACITY};
-use mlfb_av_core::memory::{
-    PackedIndex, STATE_CONSUMED, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool,
-};
+use hfm_core::audio::{CALLBACK_SAMPLES, CHANNELS, SAMPLE_RATE, SPSC_CAPACITY};
+use hfm_core::memory::{PackedIndex, SlotPool, STATE_CONSUMED, STATE_INGESTED, STATE_ML_COMMITTED};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam::queue::ArrayQueue;
 use minstant::Instant;
-use ringbuf::HeapRb;
 use ringbuf::traits::*;
-use std::sync::Arc;
+use ringbuf::HeapRb;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
