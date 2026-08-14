@@ -2155,6 +2155,7 @@ dependencies = [
  "core_affinity",
  "cpal",
  "crossbeam",
+ "crossbeam-channel",
  "dhat",
  "fast_image_resize",
  "gstreamer",
