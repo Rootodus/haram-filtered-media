@@ -1,4 +1,6 @@
 use crossbeam::queue::ArrayQueue;
+use crossbeam_channel::{Receiver, Sender, bounded};
+use gst::{SeekFlags, SeekType, SeekValue};
 use hfm_core::buffer::{MediaBuffer, Pts, VideoFrame};
 use hfm_core::filter::VideoFilter;
 use hfm_core::memory::{
