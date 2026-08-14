@@ -15,6 +15,7 @@ pub struct Slot<const SIZE: usize> {
     pub payload: [u8; SIZE],
     pub generation: u32,
     pub state: u8,
+    pub pts_ns: u64,
 }
 
 impl<const SIZE: usize> Slot<SIZE> {
@@ -23,6 +24,7 @@ impl<const SIZE: usize> Slot<SIZE> {
             payload: [0u8; SIZE],
             generation: 0,
             state: STATE_FREE,
+            pts_ns: 0,
         }
     }
 }
@@ -140,6 +142,24 @@ impl<const SIZE: usize> SlotPool<SIZE> {
         let (idx, _) = Self::unpack_index(packed);
         let state = self.state.lock();
         state.slots[idx].generation
+    }
+
+    pub fn set_pts_ns(&self, packed: PackedIndex, pts_ns: u64) {
+        let (idx, generation) = Self::unpack_index(packed);
+        let mut state = self.state.lock();
+        let slot = &mut state.slots[idx];
+        debug_assert_eq!(slot.generation, generation);
+        debug_assert_ne!(slot.state, STATE_FREE);
+        slot.pts_ns = pts_ns;
+    }
+
+    pub fn get_pts_ns(&self, packed: PackedIndex) -> u64 {
+        let (idx, generation) = Self::unpack_index(packed);
+        let state = self.state.lock();
+        let slot = &state.slots[idx];
+        debug_assert_eq!(slot.generation, generation);
+        debug_assert_ne!(slot.state, STATE_FREE);
+        slot.pts_ns
     }
 }
 

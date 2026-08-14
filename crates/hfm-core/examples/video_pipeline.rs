@@ -581,6 +581,12 @@ impl App {
             };
             let rgba = map.as_slice().to_vec();
 
+            // --- Extract PTS from GStreamer buffer ---
+            let pts_ns = match buffer.pts() {
+                Some(pts) => pts.nseconds(),
+                None => 0,
+            };
+
             if frame_count == 0 {
                 println!(
                     "[INGEST] First frame RGBA len: {} (expected {})",
@@ -593,6 +599,9 @@ impl App {
                 pool.with_payload_mut(packed, |payload| {
                     payload.copy_from_slice(&rgba);
                 });
+                // --- Store PTS in the slot ---
+                pool.set_pts_ns(packed, pts_ns);
+
                 while let Err(_) = video_ingested_prod.push(packed) {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
@@ -620,7 +629,6 @@ impl App {
         model: Arc<PeopleSegFilter>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
-        let mut frame_counter = 0u64;
         while running.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(packed) = video_ingested_cons.pop() {
                 let result = pool
@@ -631,18 +639,22 @@ impl App {
                 pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                     .expect("State transition failed");
 
+                // --- Read the real PTS from the slot ---
+                let pts_ns = pool.get_pts_ns(packed);
+                let pts = Pts(pts_ns);
+
                 // Build a VideoFrame and push to buffer
-                let pts = Pts(frame_counter * 33_333_333); // placeholder: ~30 fps
                 let data = pool.with_payload_mut(packed, |p| p.to_vec());
                 let frame = VideoFrame {
                     pts,
                     slot: packed,
                     data,
                 };
+                eprintln!("[ML] Frame slot {} PTS: {} ns", packed, pts_ns);
                 if let Err(_) = buffer.push_video(frame) {
                     eprintln!("[ML] Buffer full, dropping frame");
                 }
-                frame_counter += 1;
+                // frame_counter is no longer needed – remove it
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
