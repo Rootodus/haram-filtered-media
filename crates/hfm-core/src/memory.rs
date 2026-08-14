@@ -109,15 +109,11 @@ impl<const SIZE: usize> SlotPool<SIZE> {
         let (idx, generation) = Self::unpack_index(packed);
         let mut state = self.state.lock();
         let slot = &mut state.slots[idx];
-        // These are now always checked, not just in debug.
-        assert_eq!(slot.generation, generation, "Generation mismatch");
-        assert_eq!(slot.state, expected_state, "State mismatch");
-        let new_gen = slot.generation.wrapping_add(1);
-        slot.generation = new_gen;
+        debug_assert_eq!(slot.generation, generation);
+        debug_assert_eq!(slot.state, expected_state);
+        slot.generation = slot.generation.wrapping_add(1);
         slot.state = STATE_FREE;
         state.free.push_back(idx);
-        // Optional debug: print the new generation
-        eprintln!("Released slot {} with new generation {}", idx, new_gen);
     }
 
     /// Execute a closure with a mutable reference to the payload.
