@@ -1,6 +1,6 @@
 use crossbeam::queue::ArrayQueue;
-use crossbeam_channel::{Receiver, Sender, bounded};
-use gst::{SeekFlags, SeekType, SeekValue};
+use crossbeam_channel::Sender;
+use gst::{ClockTime, SeekFlags};
 use hfm_core::buffer::{MediaBuffer, Pts, VideoFrame};
 use hfm_core::filter::VideoFilter;
 use hfm_core::memory::{
@@ -23,7 +23,6 @@ use winit::{
 
 // ---- GStreamer imports ----
 use gst::glib::ControlFlow;
-use gst_app::AppSink;
 use gstreamer as gst;
 use gstreamer::glib::object::Cast;
 use gstreamer::prelude::GstBinExtManual;
@@ -69,6 +68,13 @@ const QUAD_VERTICES: [Vertex; 6] = [
     },
 ];
 
+/// Seek command sent from the main thread to the ingest thread.
+#[derive(Debug)]
+enum SeekCommand {
+    Forward(u64),  // nanoseconds to jump forward
+    Backward(u64), // nanoseconds to jump backward
+}
+
 struct App {
     window: Option<Arc<Window>>,
     surface: Option<Surface<'static>>,
@@ -92,6 +98,7 @@ struct App {
 
     // New: media buffer
     buffer: Option<Arc<MediaBuffer>>,
+    seek_sender: Option<Sender<SeekCommand>>,
 }
 
 impl App {
@@ -363,18 +370,29 @@ impl App {
         let buffer = Arc::new(MediaBuffer::new(5.0, 30.0, 44100, 2048));
         self.buffer = Some(buffer.clone());
 
+        // --- Create the seek command channel ---
+        let (seek_tx, seek_rx) = crossbeam::channel::bounded(1);
+        self.seek_sender = Some(seek_tx);
+
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        // --- Ingest thread (unchanged) ---
+        // --- Ingest thread (receives seek commands) ---
         let pool_ingest = pool.clone();
         let video_ingested_prod = video_ingested.clone();
         let running_ingest = running.clone();
+        let buffer_ingest = buffer.clone();
         let ingest_handle = std::thread::spawn(move || {
-            Self::ingest_thread_loop(pool_ingest, video_ingested_prod, running_ingest);
+            Self::ingest_thread_loop(
+                pool_ingest,
+                video_ingested_prod,
+                buffer_ingest,
+                seek_rx, // <-- receiver passed here
+                running_ingest,
+            );
         });
         self.ingest_handle = Some(ingest_handle);
 
-        // --- ML thread (modified: pushes to buffer) ---
+        // --- ML thread (unchanged) ---
         let pool_ml = pool.clone();
         let video_ingested_cons = video_ingested.clone();
         let buffer_ml = buffer.clone();
@@ -391,7 +409,7 @@ impl App {
         });
         self.ml_handle = Some(ml_handle);
 
-        // --- Upload thread (modified: pops from buffer) ---
+        // --- Upload thread (unchanged) ---
         let pool_upload = pool.clone();
         let buffer_upload = buffer.clone();
         let video_gpu_upload_ready_prod = video_gpu_upload_ready.clone();
@@ -419,6 +437,8 @@ impl App {
     fn ingest_thread_loop(
         pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         video_ingested_prod: Arc<ArrayQueue<PackedIndex>>,
+        buffer: Arc<MediaBuffer>,
+        seek_rx: crossbeam::channel::Receiver<SeekCommand>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
         // Initialize GStreamer (once)
@@ -461,7 +481,7 @@ impl App {
                 return;
             }
         };
-        let sink = AppSink::builder()
+        let sink = gst_app::AppSink::builder()
             .caps(
                 &gst::Caps::builder("video/x-raw")
                     .field("format", "RGBA")
@@ -541,9 +561,46 @@ impl App {
             }
         };
 
+        let mut seeking = false;
         let mut frame_count = 0;
 
         while running.load(std::sync::atomic::Ordering::Acquire) {
+            // --- Check for seek commands ---
+            if let Ok(cmd) = seek_rx.try_recv() {
+                if !seeking {
+                    let delta_ns = match cmd {
+                        SeekCommand::Forward(delta) => delta as i64,
+                        SeekCommand::Backward(delta) => -(delta as i64),
+                    };
+                    // Flush the buffer first
+                    buffer.flush();
+
+                    // Get current position
+                    let current_pos = pipeline
+                        .query_position::<ClockTime>()
+                        .unwrap_or_else(|| ClockTime::from_seconds(0));
+
+                    let current_ns = current_pos.nseconds() as i64;
+                    let new_ns = (current_ns + delta_ns).max(0);
+                    let new_pos = ClockTime::from_nseconds(new_ns as u64);
+
+                    // Perform absolute seek
+                    let seek_res = pipeline.seek_simple(SeekFlags::FLUSH, new_pos);
+
+                    if seek_res.is_ok() {
+                        println!("[SEEK] Jumped to {} ns", new_ns);
+                        seeking = true;
+                    } else {
+                        eprintln!("[SEEK] Failed to seek");
+                        // Revert buffer state (seek_completed will put it back to Empty/Active)
+                        buffer.seek_completed();
+                    }
+                } else {
+                    eprintln!("[SEEK] Already seeking, ignoring command");
+                }
+            }
+
+            // --- Pull the next sample (may block) ---
             let sample = match sink.pull_sample() {
                 Ok(s) => s,
                 Err(e) => {
@@ -556,7 +613,7 @@ impl App {
                 }
             };
 
-            let buffer = match sample.buffer() {
+            let buffer_gst = match sample.buffer() {
                 Some(b) => b,
                 None => continue,
             };
@@ -574,7 +631,7 @@ impl App {
                 continue;
             }
 
-            let map = match buffer.map_readable() {
+            let map = match buffer_gst.map_readable() {
                 Ok(m) => m,
                 Err(e) => {
                     eprintln!("[INGEST] Failed to map buffer: {}", e);
@@ -583,11 +640,8 @@ impl App {
             };
             let rgba = map.as_slice().to_vec();
 
-            // --- Extract PTS from GStreamer buffer ---
-            let pts_ns = match buffer.pts() {
-                Some(pts) => pts.nseconds(),
-                None => 0,
-            };
+            // Extract PTS from GStreamer buffer
+            let pts_ns = buffer_gst.pts().map(|pts| pts.nseconds()).unwrap_or(0);
 
             if frame_count == 0 {
                 println!(
@@ -601,7 +655,6 @@ impl App {
                 pool.with_payload_mut(packed, |payload| {
                     payload.copy_from_slice(&rgba);
                 });
-                // --- Store PTS in the slot ---
                 pool.set_pts_ns(packed, pts_ns);
 
                 while let Err(_) = video_ingested_prod.push(packed) {
@@ -609,6 +662,12 @@ impl App {
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
+            }
+
+            // If we were seeking, this is the first frame after seek; mark seek as completed
+            if seeking {
+                buffer.seek_completed();
+                seeking = false;
             }
 
             frame_count += 1;
@@ -631,6 +690,7 @@ impl App {
         model: Arc<PeopleSegFilter>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
+        eprintln!("[ML] Buffer address: {:?}", &*buffer as *const _);
         while running.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(packed) = video_ingested_cons.pop() {
                 let result = pool
@@ -653,8 +713,18 @@ impl App {
                     data,
                 };
                 eprintln!("[ML] Frame slot {} PTS: {} ns", packed, pts_ns);
-                if let Err(_) = buffer.push_video(frame) {
-                    eprintln!("[ML] Buffer full, dropping frame");
+                match buffer.push_video(frame) {
+                    Ok(()) => {
+                        // Print the current buffer length to confirm it's increasing
+                        eprintln!(
+                            "[ML] Pushed frame slot {}, buffer len: {}",
+                            packed,
+                            buffer.video_len()
+                        );
+                    }
+                    Err(_) => {
+                        eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
+                    }
                 }
                 // frame_counter is no longer needed – remove it
             } else {
@@ -672,11 +742,39 @@ impl App {
         texture: wgpu::Texture,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
+        std::panic::set_hook(Box::new(|panic_info| {
+            eprintln!("[UPLOAD] PANIC: {:?}", panic_info);
+            if let Some(location) = panic_info.location() {
+                eprintln!(
+                    "[UPLOAD] Panic location: {}:{}",
+                    location.file(),
+                    location.line()
+                );
+            }
+        }));
+        eprintln!("[UPLOAD] Thread started");
+        eprintln!("[UPLOAD] Buffer address: {:?}", &*buffer as *const _);
+        let mut loop_count = 0;
         while running.load(std::sync::atomic::Ordering::Acquire) {
+            loop_count += 1;
+            if loop_count % 100 == 0 {
+                eprintln!("[UPLOAD] Loop iteration {}", loop_count);
+            }
+            let len_before_pop = buffer.video_len();
+            if len_before_pop > 0 {
+                eprintln!("[UPLOAD] Buffer has {} frames before pop", len_before_pop);
+            }
             // Pop from buffer
+            eprintln!("[UPLOAD] Before pop_video");
             if let Some(frame) = buffer.pop_video() {
+                eprintln!("[UPLOAD] Pop succeeded");
+                eprintln!("[UPLOAD] Popped frame slot {}", frame.slot);
                 // Upload frame.data to GPU
                 let payload = frame.data;
+                eprintln!(
+                    "[UPLOAD] About to create staging buffer for slot {}",
+                    frame.slot
+                );
                 let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Frame Staging"),
                     contents: &payload,
@@ -707,13 +805,23 @@ impl App {
                     },
                 );
                 queue.submit(Some(encoder.finish()));
+                eprintln!("[UPLOAD] GPU upload submitted");
 
                 // Transition state to GPU_UPLOADED and push slot to upload-ready queue
-                pool.transition_state(frame.slot, STATE_ML_COMMITTED, STATE_GPU_UPLOADED)
-                    .unwrap();
+                if let Err(e) =
+                    pool.transition_state(frame.slot, STATE_ML_COMMITTED, STATE_GPU_UPLOADED)
+                {
+                    eprintln!("[UPLOAD] Transition state failed: {}", e);
+                    continue; // or break, but continue keeps the loop alive
+                }
+                eprintln!("[UPLOAD] Transition state succeeded");
                 while let Err(_) = video_gpu_upload_ready_prod.push(frame.slot) {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
+                eprintln!(
+                    "[UPLOAD] Pushed slot {} to video_gpu_upload_ready",
+                    frame.slot
+                );
 
                 // Optional throttling based on buffer fill level
                 let fill = buffer.fill_level_secs();
@@ -722,6 +830,15 @@ impl App {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
             } else {
+                eprintln!("[UPLOAD] Pop returned None");
+                // Print buffer length every 10 seconds (approx)
+                static mut EMPTY_COUNT: usize = 0;
+                unsafe {
+                    EMPTY_COUNT += 1;
+                    if EMPTY_COUNT % 100 == 0 {
+                        eprintln!("[UPLOAD] Buffer empty, current len: {}", buffer.video_len());
+                    }
+                }
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
         }
@@ -731,6 +848,12 @@ impl App {
     // Rendering
     // ------------------------------------------------------------------------
     fn render_frame(&mut self) {
+        static RENDER_COUNT: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let count = RENDER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count % 300 == 0 {
+            eprintln!("[RENDER] render_frame called (frame #{})", count);
+        }
         let surface = self.surface.as_ref().unwrap();
         let device = self.device.as_ref().unwrap();
         let queue = self.queue.as_ref().unwrap();
@@ -741,13 +864,18 @@ impl App {
         let video_gpu_upload_ready = self.video_gpu_upload_ready.as_ref().unwrap();
 
         let ready_count = video_gpu_upload_ready.len();
+        if ready_count > 0 {
+            eprintln!("[RENDER] video_gpu_upload_ready has {} frames", ready_count);
+        }
         if ready_count < 1 {
             self.window.as_ref().unwrap().request_redraw();
             return;
         }
 
+        eprintln!("[RENDER] About to get current texture");
         match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => {
+                eprintln!("[RENDER] Got surface texture, about to render pass");
                 let view = frame
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
@@ -788,6 +916,10 @@ impl App {
                 queue.present(frame);
 
                 if let Some(packed) = video_gpu_upload_ready.pop() {
+                    eprintln!(
+                        "[RENDER] Popped slot {} from video_gpu_upload_ready",
+                        packed
+                    );
                     pool.release_video(packed);
                 }
             }
@@ -891,6 +1023,28 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => self.render_frame(),
+            WindowEvent::KeyboardInput {
+                event:
+                    winit::event::KeyEvent {
+                        logical_key: winit::keyboard::Key::Named(named_key),
+                        state: winit::event::ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => {
+                const SEEK_DELTA_NS: u64 = 10_000_000_000; // 10 seconds
+                if let Some(sender) = &self.seek_sender {
+                    match named_key {
+                        winit::keyboard::NamedKey::ArrowLeft => {
+                            let _ = sender.send(SeekCommand::Backward(SEEK_DELTA_NS));
+                        }
+                        winit::keyboard::NamedKey::ArrowRight => {
+                            let _ = sender.send(SeekCommand::Forward(SEEK_DELTA_NS));
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -922,6 +1076,7 @@ impl Default for App {
             ml_handle: None,
             upload_handle: None,
             buffer: None, // added
+            seek_sender: None,
         }
     }
 }
