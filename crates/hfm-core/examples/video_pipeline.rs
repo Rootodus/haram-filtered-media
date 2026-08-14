@@ -1,4 +1,5 @@
 use crossbeam::queue::ArrayQueue;
+use hfm_core::buffer::{MediaBuffer, Pts, VideoFrame};
 use hfm_core::filter::VideoFilter;
 use hfm_core::memory::{
     PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool,
@@ -80,12 +81,15 @@ struct App {
 
     pool: Option<Arc<SlotPool<VIDEO_SLOT_SIZE>>>,
     video_ingested: Option<Arc<ArrayQueue<PackedIndex>>>,
-    video_ml_ready: Option<Arc<ArrayQueue<PackedIndex>>>,
+    // video_ml_ready removed – replaced by buffer
     video_gpu_upload_ready: Option<Arc<ArrayQueue<PackedIndex>>>,
 
     ingest_handle: Option<std::thread::JoinHandle<()>>,
     ml_handle: Option<std::thread::JoinHandle<()>>,
     upload_handle: Option<std::thread::JoinHandle<()>>,
+
+    // New: media buffer
+    buffer: Option<Arc<MediaBuffer>>,
 }
 
 impl App {
@@ -349,15 +353,17 @@ impl App {
         self.pool = Some(pool.clone());
 
         let video_ingested = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
-        let video_ml_ready = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
         let video_gpu_upload_ready = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
         self.video_ingested = Some(video_ingested.clone());
-        self.video_ml_ready = Some(video_ml_ready.clone());
         self.video_gpu_upload_ready = Some(video_gpu_upload_ready.clone());
+
+        // Create MediaBuffer (5 seconds, 30 fps, 44.1 kHz, 2048 samples)
+        let buffer = Arc::new(MediaBuffer::new(5.0, 30.0, 44100, 2048));
+        self.buffer = Some(buffer.clone());
 
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        // --- Ingest thread ---
+        // --- Ingest thread (unchanged) ---
         let pool_ingest = pool.clone();
         let video_ingested_prod = video_ingested.clone();
         let running_ingest = running.clone();
@@ -366,26 +372,26 @@ impl App {
         });
         self.ingest_handle = Some(ingest_handle);
 
-        // --- ML thread ---
+        // --- ML thread (modified: pushes to buffer) ---
         let pool_ml = pool.clone();
         let video_ingested_cons = video_ingested.clone();
-        let video_ml_ready_prod = video_ml_ready.clone();
+        let buffer_ml = buffer.clone();
         let model_ml = model.clone();
         let running_ml = running.clone();
         let ml_handle = std::thread::spawn(move || {
             Self::ml_thread_loop(
                 pool_ml,
                 video_ingested_cons,
-                video_ml_ready_prod,
+                buffer_ml,
                 model_ml,
                 running_ml,
             );
         });
         self.ml_handle = Some(ml_handle);
 
-        // --- Upload thread ---
+        // --- Upload thread (modified: pops from buffer) ---
         let pool_upload = pool.clone();
-        let video_ml_ready_cons = video_ml_ready.clone();
+        let buffer_upload = buffer.clone();
         let video_gpu_upload_ready_prod = video_gpu_upload_ready.clone();
         let device_upload = self.device.as_ref().unwrap().clone();
         let queue_upload = self.queue.as_ref().unwrap().clone();
@@ -394,7 +400,7 @@ impl App {
         let upload_handle = std::thread::spawn(move || {
             Self::upload_thread_loop(
                 pool_upload,
-                video_ml_ready_cons,
+                buffer_upload,
                 video_gpu_upload_ready_prod,
                 device_upload,
                 queue_upload,
@@ -610,10 +616,11 @@ impl App {
     fn ml_thread_loop(
         pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         video_ingested_cons: Arc<ArrayQueue<PackedIndex>>,
-        video_ml_ready_prod: Arc<ArrayQueue<PackedIndex>>,
+        buffer: Arc<MediaBuffer>,
         model: Arc<PeopleSegFilter>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
+        let mut frame_counter = 0u64;
         while running.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(packed) = video_ingested_cons.pop() {
                 let result = pool
@@ -623,9 +630,19 @@ impl App {
                 }
                 pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                     .expect("State transition failed");
-                while let Err(_) = video_ml_ready_prod.push(packed) {
-                    std::thread::sleep(std::time::Duration::from_micros(100));
+
+                // Build a VideoFrame and push to buffer
+                let pts = Pts(frame_counter * 33_333_333); // placeholder: ~30 fps
+                let data = pool.with_payload_mut(packed, |p| p.to_vec());
+                let frame = VideoFrame {
+                    pts,
+                    slot: packed,
+                    data,
+                };
+                if let Err(_) = buffer.push_video(frame) {
+                    eprintln!("[ML] Buffer full, dropping frame");
                 }
+                frame_counter += 1;
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
@@ -634,7 +651,7 @@ impl App {
 
     fn upload_thread_loop(
         pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
-        video_ml_ready_cons: Arc<ArrayQueue<PackedIndex>>,
+        buffer: Arc<MediaBuffer>,
         video_gpu_upload_ready_prod: Arc<ArrayQueue<PackedIndex>>,
         device: Device,
         queue: Queue,
@@ -642,8 +659,10 @@ impl App {
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
         while running.load(std::sync::atomic::Ordering::Acquire) {
-            if let Some(packed) = video_ml_ready_cons.pop() {
-                let payload = pool.with_payload_mut(packed, |p| p.to_vec());
+            // Pop from buffer
+            if let Some(frame) = buffer.pop_video() {
+                // Upload frame.data to GPU
+                let payload = frame.data;
                 let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Frame Staging"),
                     contents: &payload,
@@ -674,9 +693,18 @@ impl App {
                     },
                 );
                 queue.submit(Some(encoder.finish()));
-                pool.transition_state(packed, STATE_ML_COMMITTED, STATE_GPU_UPLOADED)
+
+                // Transition state to GPU_UPLOADED and push slot to upload-ready queue
+                pool.transition_state(frame.slot, STATE_ML_COMMITTED, STATE_GPU_UPLOADED)
                     .unwrap();
-                while let Err(_) = video_gpu_upload_ready_prod.push(packed) {
+                while let Err(_) = video_gpu_upload_ready_prod.push(frame.slot) {
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+
+                // Optional throttling based on buffer fill level
+                let fill = buffer.fill_level_secs();
+                if fill < 1.0 {
+                    // Slow down consumption to allow ML to catch up
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
             } else {
@@ -875,11 +903,11 @@ impl Default for App {
             bind_group: None,
             pool: None,
             video_ingested: None,
-            video_ml_ready: None,
             video_gpu_upload_ready: None,
             ingest_handle: None,
             ml_handle: None,
             upload_handle: None,
+            buffer: None, // added
         }
     }
 }

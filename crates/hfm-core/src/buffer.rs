@@ -22,6 +22,7 @@ pub struct Pts(pub u64);
 #[derive(Debug, Clone)]
 pub struct VideoFrame {
     pub pts: Pts,
+    pub slot: usize, // slot index in SlotPool; used to release the slot after upload
     pub data: Vec<u8>, // length = width * height * 4
 }
 
@@ -224,6 +225,7 @@ mod tests {
     fn dummy_video(pts: u64) -> VideoFrame {
         VideoFrame {
             pts: Pts(pts),
+            slot: 0, // added slot field
             data: vec![0u8; 4 * 960 * 540],
         }
     }
