@@ -1,3 +1,5 @@
+//! IMPORTANT: This file does not use the refactored version compared to video_pipeline.rs
+
 use crossbeam::queue::ArrayQueue;
 use hfm_core::memory::{PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, SlotPool};
 use std::sync::Arc;
