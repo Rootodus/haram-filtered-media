@@ -1,16 +1,16 @@
 # ARCHITECTURE.md – haram-filtered-media (hfm-core)
-Last updated: 2026-08-12  
+Last updated: 2026-08-14  
 Status: Living document – update only when core invariants change.
 
 ## Core Invariants (Non‑Negotiable)
 1. **Audio priority**: The CPAL callback must be lock‑free, allocation‑free, and complete in < 100 µs. If the SPSC ring buffer is empty, it outputs silence – never blocks.
-2. **Video backpressure**: Ingest must never block. If downstream queues (ML, upload) are full, video frames are dropped immediately. This guarantees the ingest thread stays responsive.
+2. **Video backpressure**: Ingest uses a blocking push with a retry loop. If downstream queues (ML, upload) are full, the ingest thread waits until space is available. Frames are **never dropped**; this ensures completeness at the cost of possible ingest slowdown.
 3. **Zero heap allocations in hot paths**: All audio/video buffers, staging buffers, and command encoders are pre‑allocated at startup. No `Vec` growth, `Box`, or `String` in the render, ML inference, or audio callback loops.
 4. **No `std::sync::Mutex` in hot paths**: Use `parking_lot::Mutex` (non‑poisoning) or lock‑free queues (`crossbeam`). `std::sync::Mutex` is only allowed for setup/shutdown.
 
 ## Pipeline Overview
 - **Ingest**: GStreamer (files) or Chromiumoxide (web) → raw RGBA frames (960×540).
-- **SlotPool**: Fixed‑capacity memory pool. State transitions: `FREE → INGESTED → ML_COMMITTED → GPU_UPLOADED → FREE`. Protected by `parking_lot::Mutex`; lock‑free is not currently used.
+- **SlotPool**: Fixed‑capacity memory pool. State transitions: `FREE → INGESTED → ML_COMMITTED → GPU_UPLOADED → FREE`. Protected by `parking_lot::Mutex`.
 - **ML Filter**: PPHumanSeg (ONNX, Apache 2.0).
   - Preprocess: Box‑filter downscale to 192×192 → planar RGB `f32`.
   - Inference: DirectML (Windows), ~8 ms per frame.
@@ -28,6 +28,13 @@ Status: Living document – update only when core invariants change.
 - `hfm-core`: Library crate (shared pipeline, SlotPool, ML, renderer).
 - `hfm-web`: Binary crate (headless browser source via `chromiumoxide`).
 - `hfm-player`: Binary crate (standalone local media player, moved from examples).
+
+## Planned Features (Short‑Term, Subject to Change)
+- **Text filtering**: Sentiment analysis on DOM text (already prototyped in web).
+- **Audio ML**: Music removal / vocal isolation (ONNX model integration).
+- **Web source integration**: Connect `chromiumoxide` screenshot capture to SlotPool.
+- **Playback controls**: Seek, buffer, and frame cache.
+- **GUI**: Optional `egui` overlay for controls and debug information.
 
 ## Performance Target
 - Steady‑state frame time: < 20 ms (currently ~10–12 ms on Intel Iris Xe iGPU).
