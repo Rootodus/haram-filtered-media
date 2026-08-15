@@ -4,5 +4,6 @@ pub mod detection;
 pub mod filter;
 pub mod memory;
 pub mod ml;
+pub mod pipeline;
 
 pub use filter::{AudioFilter, VideoFilter};

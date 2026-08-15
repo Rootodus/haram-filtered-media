@@ -1,13 +1,15 @@
-use crossbeam::queue::ArrayQueue;
-use crossbeam_channel::Sender;
-use hfm_core::buffer::{MediaBuffer, Pts, VideoFrame};
-use hfm_core::filter::VideoFilter;
-use hfm_core::memory::{
-    PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool,
-};
+// examples/video_pipeline.rs
+use gst::glib::ControlFlow;
+use gstreamer as gst;
+use gstreamer::glib::object::Cast;
+use gstreamer::prelude::GstBinExtManual;
+use gstreamer::prelude::*;
+use gstreamer_app as gst_app;
+
+use gst::{ClockTime, SeekFlags};
 use hfm_core::ml::PeopleSegFilter;
+use hfm_core::pipeline::{FrameSource, HEIGHT, VideoPipeline, WIDTH};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use wgpu::util::DeviceExt;
 use wgpu::{
     BackendOptions, Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,
@@ -21,20 +23,118 @@ use winit::{
     window::{Window, WindowId},
 };
 
-// ---- GStreamer imports ----
-use gst::glib::ControlFlow;
-use gst::{ClockTime, SeekFlags};
-use gstreamer as gst;
-use gstreamer::glib::object::Cast;
-use gstreamer::prelude::GstBinExtManual;
-use gstreamer::prelude::*;
-use gstreamer_app as gst_app;
+// ---- GStreamer source implementation ----
+struct GstSource {
+    pipeline: gst::Pipeline,
+    sink: gst_app::AppSink,
+    _seekable: bool,
+}
 
-const WIDTH: u32 = 960;
-const HEIGHT: u32 = 540;
-const VIDEO_SLOT_SIZE: usize = (WIDTH * HEIGHT * 4) as usize;
-const N_V: usize = 128;
+impl GstSource {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        gst::init()?;
 
+        let pipeline = gst::Pipeline::new();
+        let video_path = format!("{}/assets/video.mp4", env!("CARGO_MANIFEST_DIR"));
+        let src = gst::ElementFactory::make("filesrc")
+            .property("location", video_path)
+            .build()?;
+        let decodebin = gst::ElementFactory::make("decodebin").build()?;
+        let convert = gst::ElementFactory::make("videoconvert").build()?;
+        let scale = gst::ElementFactory::make("videoscale").build()?;
+        let sink = gst_app::AppSink::builder()
+            .caps(
+                &gst::Caps::builder("video/x-raw")
+                    .field("format", "RGBA")
+                    .field("width", WIDTH as i32)
+                    .field("height", HEIGHT as i32)
+                    .build(),
+            )
+            .async_(true)
+            .drop(true)
+            .build();
+        let sink_element = sink.upcast_ref::<gst::Element>().clone();
+
+        pipeline.add_many(&[&src, &decodebin, &convert, &scale, &sink_element])?;
+        gst::Element::link_many(&[&src, &decodebin])?;
+        gst::Element::link_many(&[&convert, &scale, &sink_element])?;
+
+        let convert_clone = convert.clone();
+        decodebin.connect_pad_added(move |_, src_pad| {
+            let caps = src_pad.current_caps().expect("Failed to get caps");
+            let structure = caps.structure(0).expect("No structure");
+            if structure.name().starts_with("video/") {
+                let sink_pad = convert_clone
+                    .static_pad("sink")
+                    .expect("convert has no sink pad");
+                if sink_pad.is_linked() {
+                    return;
+                }
+                let src_pad = src_pad.clone();
+                if let Err(e) = src_pad.link(&sink_pad) {
+                    eprintln!("Failed to link decodebin pad to convert: {}", e);
+                }
+            }
+        });
+
+        pipeline.set_state(gst::State::Playing)?;
+
+        // Watch bus for errors
+        let bus = pipeline.bus().expect("No bus");
+        let _guard = bus.add_watch(move |_, msg| {
+            use gst::MessageView;
+            match msg.view() {
+                MessageView::Error(err) => {
+                    eprintln!("GStreamer error: {}", err.error());
+                    if let Some(debug) = err.debug() {
+                        eprintln!("Debug info: {}", debug);
+                    }
+                    ControlFlow::Break
+                }
+                MessageView::Eos(_) => {
+                    println!("End of stream");
+                    ControlFlow::Break
+                }
+                _ => ControlFlow::Continue,
+            }
+        })?;
+
+        Ok(Self {
+            pipeline,
+            sink,
+            _seekable: true,
+        })
+    }
+}
+
+impl FrameSource for GstSource {
+    fn pull_frame(&mut self) -> Option<(Vec<u8>, u64)> {
+        let sample = match self.sink.pull_sample() {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+        let buffer = sample.buffer()?;
+        let map = buffer.map_readable().ok()?;
+        let data = map.as_slice().to_vec();
+        let pts_ns = buffer.pts().map(|c| c.nseconds()).unwrap_or(0);
+        Some((data, pts_ns))
+    }
+
+    fn seek(&mut self, delta_ns: i64) -> Result<(), String> {
+        let current_pos = self
+            .pipeline
+            .query_position::<ClockTime>()
+            .unwrap_or_else(|| ClockTime::from_seconds(0));
+        let current_ns = current_pos.nseconds() as i64;
+        let new_ns = (current_ns + delta_ns).max(0);
+        let new_pos = ClockTime::from_nseconds(new_ns as u64);
+        self.pipeline
+            .seek_simple(SeekFlags::FLUSH, new_pos)
+            .map_err(|e| format!("Seek failed: {:?}", e))
+    }
+}
+
+// ---- WGPU renderer ----
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
@@ -69,13 +169,6 @@ const QUAD_VERTICES: [Vertex; 6] = [
     },
 ];
 
-/// Seek command sent from the main thread to the ingest thread.
-#[derive(Debug)]
-enum SeekCommand {
-    Forward(u64),  // nanoseconds to jump forward
-    Backward(u64), // nanoseconds to jump backward
-}
-
 struct App {
     window: Option<Arc<Window>>,
     surface: Option<Surface<'static>>,
@@ -87,32 +180,34 @@ struct App {
     texture: Option<wgpu::Texture>,
     sampler: Option<wgpu::Sampler>,
     bind_group: Option<wgpu::BindGroup>,
+    pipeline: Option<VideoPipeline>,
+}
 
-    pool: Option<Arc<SlotPool<VIDEO_SLOT_SIZE>>>,
-    video_ingested: Option<Arc<ArrayQueue<PackedIndex>>>,
-    // video_ml_ready removed – replaced by buffer
-    video_gpu_upload_ready: Option<Arc<ArrayQueue<PackedIndex>>>,
-
-    ingest_handle: Option<std::thread::JoinHandle<()>>,
-    ml_handle: Option<std::thread::JoinHandle<()>>,
-    upload_handle: Option<std::thread::JoinHandle<()>>,
-
-    // New: media buffer
-    buffer: Option<Arc<MediaBuffer>>,
-    seek_sender: Option<Sender<SeekCommand>>,
-    seek_gen: Option<Arc<AtomicU64>>,
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            window: None,
+            surface: None,
+            device: None,
+            queue: None,
+            config: None,
+            render_pipeline: None,
+            vertex_buffer: None,
+            texture: None,
+            sampler: None,
+            bind_group: None,
+            pipeline: None,
+        }
+    }
 }
 
 impl App {
-    // ------------------------------------------------------------------------
-    // GPU & Surface
-    // ------------------------------------------------------------------------
     fn init_gpu(&mut self, event_loop: &ActiveEventLoop) -> (Instance, wgpu::Adapter) {
         let window = Arc::new(
             event_loop
                 .create_window(
                     winit::window::WindowAttributes::default()
-                        .with_title("Video Pipeline (GStreamer + ML)")
+                        .with_title("Video Pipeline")
                         .with_inner_size(winit::dpi::LogicalSize::new(WIDTH, HEIGHT)),
                 )
                 .unwrap(),
@@ -179,9 +274,6 @@ impl App {
         self.config = Some(config);
     }
 
-    // ------------------------------------------------------------------------
-    // Render Pipeline
-    // ------------------------------------------------------------------------
     fn init_texture_and_sampler(&mut self) {
         let device = self.device.as_ref().unwrap();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -268,10 +360,6 @@ impl App {
             ],
         });
         self.bind_group = Some(bind_group);
-
-        // Store the layout for pipeline creation
-        // We'll just keep it in a local variable and pass to pipeline
-        // For now we don't store it, but we'll create pipeline with it.
     }
 
     fn init_render_pipeline(&mut self) {
@@ -283,8 +371,6 @@ impl App {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/texture_quad.wgsl").into()),
         });
 
-        // We need the bind group layout. We'll recreate it here or store it in a field.
-        // For simplicity, we recreate it.
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Video Bind Group Layout"),
             entries: &[
@@ -356,490 +442,14 @@ impl App {
         self.render_pipeline = Some(render_pipeline);
     }
 
-    // ------------------------------------------------------------------------
-    // Video Pipeline (Queues, Threads)
-    // ------------------------------------------------------------------------
-    fn init_video_pipeline(&mut self, model: Arc<PeopleSegFilter>) {
-        let pool = Arc::new(SlotPool::<VIDEO_SLOT_SIZE>::new(N_V));
-        self.pool = Some(pool.clone());
-
-        let video_ingested = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
-        let video_gpu_upload_ready = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
-        self.video_ingested = Some(video_ingested.clone());
-        self.video_gpu_upload_ready = Some(video_gpu_upload_ready.clone());
-
-        // Create MediaBuffer (5 seconds, 30 fps, 44.1 kHz, 2048 samples)
-        let buffer = Arc::new(MediaBuffer::new(5.0, 30.0, 44100, 2048));
-        self.buffer = Some(buffer.clone());
-
-        // --- Seek channel ---
-        let (seek_tx, seek_rx) = crossbeam::channel::bounded(1);
-        self.seek_sender = Some(seek_tx);
-
-        let seek_gen = Arc::new(AtomicU64::new(0));
-        self.seek_gen = Some(seek_gen.clone());
-
-        let running = Arc::new(AtomicBool::new(true));
-
-        // Ingest thread
-        let pool_ingest = pool.clone();
-        let video_ingested_prod = video_ingested.clone();
-        let running_ingest = running.clone();
-        let buffer_ingest = buffer.clone();
-        let seek_gen_ingest = seek_gen.clone();
-        let ingest_handle = std::thread::spawn(move || {
-            Self::ingest_thread_loop(
-                pool_ingest,
-                video_ingested_prod,
-                buffer_ingest,
-                seek_rx,
-                seek_gen_ingest,
-                running_ingest,
-            );
-        });
-        self.ingest_handle = Some(ingest_handle);
-
-        // ML thread
-        let pool_ml = pool.clone();
-        let video_ingested_cons = video_ingested.clone();
-        let buffer_ml = buffer.clone();
-        let model_ml = model.clone();
-        let running_ml = running.clone();
-        let seek_gen_ml = seek_gen.clone();
-        let ml_handle = std::thread::spawn(move || {
-            Self::ml_thread_loop(
-                pool_ml,
-                video_ingested_cons,
-                buffer_ml,
-                model_ml,
-                seek_gen_ml,
-                running_ml,
-            );
-        });
-        self.ml_handle = Some(ml_handle);
-
-        // --- Upload thread (unchanged) ---
-        let pool_upload = pool.clone();
-        let buffer_upload = buffer.clone();
-        let video_gpu_upload_ready_prod = video_gpu_upload_ready.clone();
-        let device_upload = self.device.as_ref().unwrap().clone();
-        let queue_upload = self.queue.as_ref().unwrap().clone();
-        let texture_upload = self.texture.as_ref().unwrap().clone();
-        let running_upload = running.clone();
-        let upload_handle = std::thread::spawn(move || {
-            Self::upload_thread_loop(
-                pool_upload,
-                buffer_upload,
-                video_gpu_upload_ready_prod,
-                device_upload,
-                queue_upload,
-                texture_upload,
-                running_upload,
-            );
-        });
-        self.upload_handle = Some(upload_handle);
+    fn init_pipeline(&mut self) {
+        let source = GstSource::new().expect("Failed to create GStreamer source");
+        let model = PeopleSegFilter::new("models/pphumanseg.onnx").expect("Failed to load model");
+        let mut pipeline = VideoPipeline::new(Box::new(source), model);
+        pipeline.start();
+        self.pipeline = Some(pipeline);
     }
 
-    // ------------------------------------------------------------------------
-    // Thread loops (static helper functions)
-    // ------------------------------------------------------------------------
-    fn ingest_thread_loop(
-        pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
-        video_ingested_prod: Arc<ArrayQueue<PackedIndex>>,
-        buffer: Arc<MediaBuffer>,
-        seek_rx: crossbeam::channel::Receiver<SeekCommand>,
-        seek_gen: Arc<AtomicU64>,
-        running: Arc<AtomicBool>,
-    ) {
-        // Initialize GStreamer (once)
-        if let Err(e) = gst::init() {
-            eprintln!("[INGEST] GStreamer init failed: {}", e);
-            return;
-        }
-
-        // Build pipeline (manual: filesrc → decodebin → videoconvert → videoscale → appsink)
-        let pipeline = gst::Pipeline::new();
-        let video_path = format!("{}/assets/video.mp4", env!("CARGO_MANIFEST_DIR"));
-        let src = match gst::ElementFactory::make("filesrc")
-            .property("location", video_path)
-            .build()
-        {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("[INGEST] Failed to create filesrc: {}", e);
-                return;
-            }
-        };
-        let decodebin = match gst::ElementFactory::make("decodebin").build() {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("[INGEST] Failed to create decodebin: {}", e);
-                return;
-            }
-        };
-        let convert = match gst::ElementFactory::make("videoconvert").build() {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("[INGEST] Failed to create videoconvert: {}", e);
-                return;
-            }
-        };
-        let scale = match gst::ElementFactory::make("videoscale").build() {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("[INGEST] Failed to create videoscale: {}", e);
-                return;
-            }
-        };
-        let sink = gst_app::AppSink::builder()
-            .caps(
-                &gst::Caps::builder("video/x-raw")
-                    .field("format", "RGBA")
-                    .field("width", WIDTH as i32)
-                    .field("height", HEIGHT as i32)
-                    .build(),
-            )
-            .async_(true)
-            .drop(true)
-            .build();
-        let sink_element = sink.upcast_ref::<gst::Element>().clone();
-
-        if let Err(e) = pipeline.add_many(&[&src, &decodebin, &convert, &scale, &sink_element]) {
-            eprintln!("[INGEST] Failed to add elements: {}", e);
-            return;
-        }
-        if let Err(e) = gst::Element::link_many(&[&src, &decodebin]) {
-            eprintln!("[INGEST] Failed to link src to decodebin: {}", e);
-            return;
-        }
-        if let Err(e) = gst::Element::link_many(&[&convert, &scale, &sink_element]) {
-            eprintln!("[INGEST] Failed to link convert -> scale -> sink: {}", e);
-            return;
-        }
-
-        let convert_clone = convert.clone();
-        decodebin.connect_pad_added(move |_, src_pad| {
-            let caps = src_pad.current_caps().expect("Failed to get caps");
-            let structure = caps.structure(0).expect("No structure");
-            if structure.name().starts_with("video/") {
-                let sink_pad = convert_clone
-                    .static_pad("sink")
-                    .expect("convert has no sink pad");
-                if sink_pad.is_linked() {
-                    return;
-                }
-                let src_pad = src_pad.clone();
-                if let Err(e) = src_pad.link(&sink_pad) {
-                    eprintln!("[INGEST] Failed to link decodebin pad to convert: {}", e);
-                }
-            }
-        });
-
-        if let Err(e) = pipeline.set_state(gst::State::Playing) {
-            eprintln!("[INGEST] Failed to set pipeline to playing: {}", e);
-            return;
-        }
-
-        let bus = match pipeline.bus() {
-            Some(b) => b,
-            None => {
-                eprintln!("[INGEST] No bus");
-                return;
-            }
-        };
-        let _watch_id = match bus.add_watch(move |_, msg| {
-            use gst::MessageView;
-            match msg.view() {
-                MessageView::Error(err) => {
-                    eprintln!("[INGEST] GStreamer error: {}", err.error());
-                    if let Some(debug) = err.debug() {
-                        eprintln!("[INGEST] Debug info: {}", debug);
-                    }
-                    ControlFlow::Break
-                }
-                MessageView::Eos(_) => {
-                    println!("[INGEST] End of stream");
-                    ControlFlow::Break
-                }
-                _ => ControlFlow::Continue,
-            }
-        }) {
-            Ok(id) => id,
-            Err(e) => {
-                eprintln!("[INGEST] Failed to add bus watch: {}", e);
-                return;
-            }
-        };
-
-        let mut frame_count = 0;
-        let mut seeking = false;
-
-        while running.load(Ordering::Acquire) {
-            // --- Check for seek commands ---
-            if let Ok(cmd) = seek_rx.try_recv() {
-                // Always increment generation and flush buffer
-                seek_gen.fetch_add(1, Ordering::Release);
-                buffer.flush();
-
-                // Perform the GStreamer seek only if not already seeking
-                if !seeking {
-                    seeking = true;
-                    let delta_ns = match cmd {
-                        SeekCommand::Forward(delta) => delta as i64,
-                        SeekCommand::Backward(delta) => -(delta as i64),
-                    };
-                    let current_pos = pipeline
-                        .query_position::<ClockTime>()
-                        .unwrap_or_else(|| ClockTime::from_seconds(0));
-                    let current_ns = current_pos.nseconds() as i64;
-                    let new_ns = (current_ns + delta_ns).max(0);
-                    let new_pos = ClockTime::from_nseconds(new_ns as u64);
-                    let seek_res = pipeline.seek_simple(SeekFlags::FLUSH, new_pos);
-
-                    if seek_res.is_ok() {
-                        println!("[SEEK] Jumped to {} ns", new_ns);
-                    } else {
-                        eprintln!("[SEEK] Failed to seek");
-                        // On failure, we can clear the seeking flag immediately
-                        seeking = false;
-                    }
-                    // If seek succeeded, we keep `seeking = true` until the first new frame is pulled.
-                } else {
-                    // We are already seeking; the generation was incremented and buffer flushed,
-                    // but the GStreamer seek will happen later.
-                    eprintln!(
-                        "[SEEK] Already seeking, skipping GStreamer seek but generation advanced"
-                    );
-                }
-            }
-
-            // --- Pull the next sample ---
-            let sample = match sink.pull_sample() {
-                Ok(s) => s,
-                Err(e) => {
-                    if e.message.contains("EOS") {
-                        println!("[INGEST] End of stream");
-                    } else {
-                        eprintln!("[INGEST] pull_sample error: {}", e.message);
-                    }
-                    break;
-                }
-            };
-
-            let buffer_gst = match sample.buffer() {
-                Some(b) => b,
-                None => continue,
-            };
-            let caps = match sample.caps() {
-                Some(c) => c,
-                None => continue,
-            };
-            let structure = match caps.structure(0) {
-                Some(s) => s,
-                None => continue,
-            };
-            let format = structure.get::<&str>("format").unwrap_or("unknown");
-            if format != "RGBA" {
-                eprintln!("[INGEST] Expected RGBA but got {}", format);
-                continue;
-            }
-
-            let map = match buffer_gst.map_readable() {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("[INGEST] Failed to map buffer: {}", e);
-                    continue;
-                }
-            };
-            let rgba = map.as_slice().to_vec();
-
-            let pts_ns = buffer_gst.pts().map(|pts| pts.nseconds()).unwrap_or(0);
-
-            if frame_count == 0 {
-                println!(
-                    "[INGEST] First frame RGBA len: {} (expected {})",
-                    rgba.len(),
-                    WIDTH as usize * HEIGHT as usize * 4
-                );
-            }
-
-            if let Some(packed) = pool.try_claim() {
-                pool.with_payload_mut(packed, |payload| {
-                    payload.copy_from_slice(&rgba);
-                });
-                pool.set_pts_ns(packed, pts_ns);
-
-                while let Err(_) = video_ingested_prod.push(packed) {
-                    std::thread::sleep(std::time::Duration::from_micros(100));
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_micros(100));
-            }
-
-            if let Some(packed) = pool.try_claim() {
-                pool.with_payload_mut(packed, |payload| {
-                    payload.copy_from_slice(&rgba);
-                });
-                pool.set_pts_ns(packed, pts_ns);
-
-                // Set the slot's seek_gen to the current generation
-                let current_gen = seek_gen.load(Ordering::Acquire);
-                pool.set_seek_gen(packed, current_gen);
-
-                while let Err(_) = video_ingested_prod.push(packed) {
-                    std::thread::sleep(std::time::Duration::from_micros(100));
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_micros(100));
-            }
-
-            // After pulling a sample, if we were seeking, clear the flag.
-            if seeking {
-                seeking = false;
-            }
-
-            frame_count += 1;
-            if frame_count % 10 == 0 {
-                println!("[INGEST] Decoded frame #{}", frame_count);
-            }
-        }
-
-        pipeline.set_state(gst::State::Null).ok();
-        println!(
-            "[INGEST] Exiting ingest thread. Total frames decoded: {}",
-            frame_count
-        );
-    }
-
-    fn ml_thread_loop(
-        pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
-        video_ingested_cons: Arc<ArrayQueue<PackedIndex>>,
-        buffer: Arc<MediaBuffer>,
-        model: Arc<PeopleSegFilter>,
-        seek_gen: Arc<AtomicU64>,
-        running: Arc<AtomicBool>,
-    ) {
-        while running.load(Ordering::Acquire) {
-            if let Some(packed) = video_ingested_cons.pop() {
-                // Check generation before inference
-                let slot_gen = pool.get_seek_gen(packed);
-                let current_gen = seek_gen.load(Ordering::Acquire);
-                if slot_gen != current_gen {
-                    pool.discard_slot(packed);
-                    continue;
-                }
-
-                // Run inference
-                let _result = pool
-                    .with_payload_mut(packed, |payload| model.filter_frame(payload, WIDTH, HEIGHT));
-
-                // Check generation after inference
-                let current_gen_after = seek_gen.load(Ordering::Acquire);
-                if slot_gen != current_gen_after {
-                    pool.discard_slot(packed);
-                    continue;
-                }
-
-                // Transition state
-                pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
-                    .expect("State transition failed");
-
-                let pts_ns = pool.get_pts_ns(packed);
-                let pts = Pts(pts_ns);
-                let data = pool.with_payload_mut(packed, |p| p.to_vec());
-
-                // Build VideoFrame with seek_gen
-                let frame = VideoFrame {
-                    pts,
-                    slot: packed,
-                    data,
-                    seek_gen: slot_gen, // carry the generation with the frame
-                };
-
-                // Push to buffer – the buffer will reject it if a flush occurred
-                if let Err(_) = buffer.push_video(frame) {
-                    eprintln!(
-                        "[ML] Buffer rejected or full, dropping frame slot {}",
-                        packed
-                    );
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_micros(100));
-            }
-        }
-    }
-
-    fn upload_thread_loop(
-        pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
-        buffer: Arc<MediaBuffer>,
-        video_gpu_upload_ready_prod: Arc<ArrayQueue<PackedIndex>>,
-        device: Device,
-        queue: Queue,
-        texture: wgpu::Texture,
-        running: Arc<std::sync::atomic::AtomicBool>,
-    ) {
-        while running.load(std::sync::atomic::Ordering::Acquire) {
-            // Pop from buffer
-            if let Some(frame) = buffer.pop_video() {
-                // Upload frame.data to GPU
-                let payload = frame.data;
-                let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Frame Staging"),
-                    contents: &payload,
-                    usage: wgpu::BufferUsages::COPY_SRC,
-                });
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Copy Encoder"),
-                });
-                encoder.copy_buffer_to_texture(
-                    wgpu::TexelCopyBufferInfo {
-                        buffer: &staging,
-                        layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(4 * WIDTH),
-                            rows_per_image: Some(HEIGHT),
-                        },
-                    },
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::Extent3d {
-                        width: WIDTH,
-                        height: HEIGHT,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                queue.submit(Some(encoder.finish()));
-
-                // Transition state to GPU_UPLOADED and push slot to upload-ready queue
-                if let Err(e) =
-                    pool.transition_state(frame.slot, STATE_ML_COMMITTED, STATE_GPU_UPLOADED)
-                {
-                    eprintln!("[UPLOAD] Transition state failed: {}", e);
-                    continue; // or break, but continue keeps the loop alive
-                }
-                while let Err(_) = video_gpu_upload_ready_prod.push(frame.slot) {
-                    std::thread::sleep(std::time::Duration::from_micros(100));
-                }
-
-                // Optional throttling based on buffer fill level
-                let fill = buffer.fill_level_secs();
-                if fill < 1.0 {
-                    // Slow down consumption to allow ML to catch up
-                    std::thread::sleep(std::time::Duration::from_micros(100));
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_micros(100));
-            }
-        }
-    }
-
-    // ------------------------------------------------------------------------
-    // Rendering
-    // ------------------------------------------------------------------------
     fn render_frame(&mut self) {
         let surface = self.surface.as_ref().unwrap();
         let device = self.device.as_ref().unwrap();
@@ -847,15 +457,44 @@ impl App {
         let render_pipeline = self.render_pipeline.as_ref().unwrap();
         let vertex_buffer = self.vertex_buffer.as_ref().unwrap();
         let bind_group = self.bind_group.as_ref().unwrap();
-        let pool = self.pool.as_ref().unwrap();
-        let video_gpu_upload_ready = self.video_gpu_upload_ready.as_ref().unwrap();
 
-        let ready_count = video_gpu_upload_ready.len();
-        if ready_count < 1 {
-            self.window.as_ref().unwrap().request_redraw();
-            return;
+        // Try to get a processed frame
+        if let Some(frame) = self.pipeline.as_ref().unwrap().pop_processed_frame() {
+            // Upload to GPU
+            let payload = frame.data;
+            let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Frame Staging"),
+                contents: &payload,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Copy Encoder"),
+            });
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &staging,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * WIDTH),
+                        rows_per_image: Some(HEIGHT),
+                    },
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: self.texture.as_ref().unwrap(),
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: WIDTH,
+                    height: HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit(Some(encoder.finish()));
         }
 
+        // Render the quad
         match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => {
                 let view = frame
@@ -896,74 +535,14 @@ impl App {
 
                 queue.submit(Some(encoder.finish()));
                 queue.present(frame);
-
-                if let Some(packed) = video_gpu_upload_ready.pop() {
-                    pool.release_video(packed);
-                }
             }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                if let Some(window) = self.window.as_ref() {
-                    window.request_redraw();
-                }
-            }
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.reconfigure_surface();
-                if let Some(window) = self.window.as_ref() {
-                    window.request_redraw();
-                }
-            }
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                // Present anyway, then reconfigure
-                let view = frame
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Render Encoder"),
-                });
-                {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("Render Pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    pass.set_pipeline(render_pipeline);
-                    pass.set_bind_group(0, bind_group, &[]);
-                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                    pass.draw(0..6, 0..1);
-                }
-                queue.submit(Some(encoder.finish()));
-                queue.present(frame);
-
-                if let Some(packed) = video_gpu_upload_ready.pop() {
-                    pool.release_video(packed);
-                }
-
-                self.reconfigure_surface();
-            }
-            wgpu::CurrentSurfaceTexture::Lost => eprintln!("Surface lost"),
-            wgpu::CurrentSurfaceTexture::Validation => eprintln!("Validation error"),
+            _ => {}
         }
 
         self.window.as_ref().unwrap().request_redraw();
     }
 
-    fn reconfigure_surface(&mut self) {
+    fn _reconfigure_surface(&mut self) {
         let size = self.window.as_ref().unwrap().inner_size();
         if size.width > 0 && size.height > 0 {
             let config = self.config.as_mut().unwrap();
@@ -989,10 +568,7 @@ impl ApplicationHandler for App {
         self.init_vertex_buffer();
         self.init_bind_group();
         self.init_render_pipeline();
-
-        let model =
-            Arc::new(PeopleSegFilter::new("models/pphumanseg.onnx").expect("Failed to load model"));
-        self.init_video_pipeline(model);
+        self.init_pipeline();
 
         self.window.as_ref().unwrap().request_redraw();
     }
@@ -1010,14 +586,14 @@ impl ApplicationHandler for App {
                     },
                 ..
             } => {
-                const SEEK_DELTA_NS: u64 = 10_000_000_000; // 10 seconds
-                if let Some(sender) = &self.seek_sender {
+                const SEEK_DELTA_NS: i64 = 10_000_000_000;
+                if let Some(pipeline) = self.pipeline.as_ref() {
                     match named_key {
                         winit::keyboard::NamedKey::ArrowLeft => {
-                            let _ = sender.send(SeekCommand::Backward(SEEK_DELTA_NS));
+                            let _ = pipeline.seek(-SEEK_DELTA_NS);
                         }
                         winit::keyboard::NamedKey::ArrowRight => {
-                            let _ = sender.send(SeekCommand::Forward(SEEK_DELTA_NS));
+                            let _ = pipeline.seek(SEEK_DELTA_NS);
                         }
                         _ => {}
                     }
@@ -1034,38 +610,7 @@ impl ApplicationHandler for App {
     }
 }
 
-impl Default for App {
-    fn default() -> Self {
-        Self {
-            window: None,
-            surface: None,
-            device: None,
-            queue: None,
-            config: None,
-            render_pipeline: None,
-            vertex_buffer: None,
-            texture: None,
-            sampler: None,
-            bind_group: None,
-            pool: None,
-            video_ingested: None,
-            video_gpu_upload_ready: None,
-            ingest_handle: None,
-            ml_handle: None,
-            upload_handle: None,
-            buffer: None,
-            seek_sender: None,
-            seek_gen: None,
-        }
-    }
-}
-
 fn main() {
-    if let Err(e) = gst::init() {
-        eprintln!("GStreamer init failed: {}", e);
-        return;
-    }
-
     let event_loop = EventLoop::new().unwrap();
     let mut app = App::default();
     event_loop.run_app(&mut app).unwrap();

@@ -293,11 +293,17 @@ mod tests {
         assert_eq!(buf.video_len(), 0);
         assert!(matches!(*buf.state.lock(), BufferState::Seeking));
 
-        buf.push_video(dummy_video(500)).unwrap();
+        // Frame after flush must have the new generation (1)
+        let mut frame = dummy_video(500);
+        frame.seek_gen = 1;
+        buf.push_video(frame).unwrap();
         assert_eq!(buf.video_len(), 1);
         buf.seek_completed();
         assert!(matches!(*buf.state.lock(), BufferState::Active));
 
-        assert!(buf.push_video(dummy_video(600)).is_ok());
+        // Push another frame with seek_gen 1 (same generation) – ok
+        let mut frame2 = dummy_video(600);
+        frame2.seek_gen = 1;
+        assert!(buf.push_video(frame2).is_ok());
     }
 }
