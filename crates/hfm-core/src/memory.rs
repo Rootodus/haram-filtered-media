@@ -203,7 +203,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "Failing due to generation mismatch; investigate later"]
     fn test_claim_release_single() {
         const SIZE: usize = 128;
         let pool = SlotPool::<SIZE>::new(4);
