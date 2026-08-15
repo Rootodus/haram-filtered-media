@@ -690,14 +690,10 @@ impl App {
         model: Arc<PeopleSegFilter>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
-        eprintln!("[ML] Buffer address: {:?}", &*buffer as *const _);
         while running.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(packed) = video_ingested_cons.pop() {
-                let result = pool
+                let _result = pool
                     .with_payload_mut(packed, |payload| model.filter_frame(payload, WIDTH, HEIGHT));
-                if let Err(e) = result {
-                    eprintln!("[ML] Inference error: {}", e);
-                }
                 pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                     .expect("State transition failed");
 
@@ -712,7 +708,6 @@ impl App {
                     slot: packed,
                     data,
                 };
-                eprintln!("[ML] Frame slot {} PTS: {} ns", packed, pts_ns);
                 if let Err(_) = buffer.push_video(frame) {
                     eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
                 }
@@ -731,34 +726,11 @@ impl App {
         texture: wgpu::Texture,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
-        std::panic::set_hook(Box::new(|panic_info| {
-            eprintln!("[UPLOAD] PANIC: {:?}", panic_info);
-            if let Some(location) = panic_info.location() {
-                eprintln!(
-                    "[UPLOAD] Panic location: {}:{}",
-                    location.file(),
-                    location.line()
-                );
-            }
-        }));
-        eprintln!("[UPLOAD] Thread started");
-        eprintln!("[UPLOAD] Buffer address: {:?}", &*buffer as *const _);
-        let mut loop_count = 0;
         while running.load(std::sync::atomic::Ordering::Acquire) {
-            loop_count += 1;
-            if loop_count % 100 == 0 {
-                eprintln!("[UPLOAD] Loop iteration {}", loop_count);
-            }
             // Pop from buffer
             if let Some(frame) = buffer.pop_video() {
-                eprintln!("[UPLOAD] Pop succeeded");
-                eprintln!("[UPLOAD] Popped frame slot {}", frame.slot);
                 // Upload frame.data to GPU
                 let payload = frame.data;
-                eprintln!(
-                    "[UPLOAD] About to create staging buffer for slot {}",
-                    frame.slot
-                );
                 let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Frame Staging"),
                     contents: &payload,
@@ -789,7 +761,6 @@ impl App {
                     },
                 );
                 queue.submit(Some(encoder.finish()));
-                eprintln!("[UPLOAD] GPU upload submitted");
 
                 // Transition state to GPU_UPLOADED and push slot to upload-ready queue
                 if let Err(e) =
@@ -798,14 +769,9 @@ impl App {
                     eprintln!("[UPLOAD] Transition state failed: {}", e);
                     continue; // or break, but continue keeps the loop alive
                 }
-                eprintln!("[UPLOAD] Transition state succeeded");
                 while let Err(_) = video_gpu_upload_ready_prod.push(frame.slot) {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
-                eprintln!(
-                    "[UPLOAD] Pushed slot {} to video_gpu_upload_ready",
-                    frame.slot
-                );
 
                 // Optional throttling based on buffer fill level
                 let fill = buffer.fill_level_secs();
@@ -823,12 +789,6 @@ impl App {
     // Rendering
     // ------------------------------------------------------------------------
     fn render_frame(&mut self) {
-        static RENDER_COUNT: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        let count = RENDER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if count % 300 == 0 {
-            eprintln!("[RENDER] render_frame called (frame #{})", count);
-        }
         let surface = self.surface.as_ref().unwrap();
         let device = self.device.as_ref().unwrap();
         let queue = self.queue.as_ref().unwrap();
@@ -839,18 +799,13 @@ impl App {
         let video_gpu_upload_ready = self.video_gpu_upload_ready.as_ref().unwrap();
 
         let ready_count = video_gpu_upload_ready.len();
-        if ready_count > 0 {
-            eprintln!("[RENDER] video_gpu_upload_ready has {} frames", ready_count);
-        }
         if ready_count < 1 {
             self.window.as_ref().unwrap().request_redraw();
             return;
         }
 
-        eprintln!("[RENDER] About to get current texture");
         match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => {
-                eprintln!("[RENDER] Got surface texture, about to render pass");
                 let view = frame
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
@@ -891,10 +846,6 @@ impl App {
                 queue.present(frame);
 
                 if let Some(packed) = video_gpu_upload_ready.pop() {
-                    eprintln!(
-                        "[RENDER] Popped slot {} from video_gpu_upload_ready",
-                        packed
-                    );
                     pool.release_video(packed);
                 }
             }
