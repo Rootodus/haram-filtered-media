@@ -572,39 +572,52 @@ impl App {
         };
 
         let mut frame_count = 0;
+        let mut seeking = false; // local flag to prevent overlapping seeks
 
         while running.load(Ordering::Acquire) {
             // --- Check for seek commands ---
             if let Ok(cmd) = seek_rx.try_recv() {
-                // Increment generation
-                seek_gen.fetch_add(1, Ordering::Release);
+                if !seeking {
+                    seeking = true;
 
-                // Drain the ingest queue
-                while video_ingested_prod.pop().is_some() {}
+                    // Increment generation
+                    seek_gen.fetch_add(1, Ordering::Release);
 
-                // Flush the MediaBuffer (this increments its internal flush_gen)
-                buffer.flush();
+                    // Drain the ingest queue
+                    while video_ingested_prod.pop().is_some() {}
 
-                // Perform seek
-                let delta_ns = match cmd {
-                    SeekCommand::Forward(delta) => delta as i64,
-                    SeekCommand::Backward(delta) => -(delta as i64),
-                };
-                let current_pos = pipeline
-                    .query_position::<ClockTime>()
-                    .unwrap_or_else(|| ClockTime::from_seconds(0));
-                let current_ns = current_pos.nseconds() as i64;
-                let new_ns = (current_ns + delta_ns).max(0);
-                let new_pos = ClockTime::from_nseconds(new_ns as u64);
-                let seek_res = pipeline.seek_simple(SeekFlags::FLUSH, new_pos);
-                if seek_res.is_ok() {
-                    println!("[SEEK] Jumped to {} ns", new_ns);
+                    // Flush the MediaBuffer (this increments its internal flush_gen)
+                    buffer.flush();
+
+                    // Perform seek
+                    let delta_ns = match cmd {
+                        SeekCommand::Forward(delta) => delta as i64,
+                        SeekCommand::Backward(delta) => -(delta as i64),
+                    };
+                    let current_pos = pipeline
+                        .query_position::<ClockTime>()
+                        .unwrap_or_else(|| ClockTime::from_seconds(0));
+                    let current_ns = current_pos.nseconds() as i64;
+                    let new_ns = (current_ns + delta_ns).max(0);
+                    let new_pos = ClockTime::from_nseconds(new_ns as u64);
+                    let seek_res = pipeline.seek_simple(SeekFlags::FLUSH, new_pos);
+
+                    if seek_res.is_ok() {
+                        println!("[SEEK] Jumped to {} ns", new_ns);
+                    } else {
+                        eprintln!("[SEEK] Failed to seek");
+                        // Allow new seeks on failure
+                        seeking = false;
+                    }
+                    // If seek succeeded, we keep `seeking = true` until we pull the first frame.
                 } else {
-                    eprintln!("[SEEK] Failed to seek");
+                    eprintln!("[SEEK] Already seeking, ignoring command");
                 }
             }
 
-            // --- Pull sample ---
+            // --- Pull the next sample ---
+            // If we are currently seeking, we still pull samples to clear the sink.
+            // The first sample after seek will be from the new position.
             let sample = match sink.pull_sample() {
                 Ok(s) => s,
                 Err(e) => {
@@ -682,6 +695,13 @@ impl App {
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
+            }
+
+            // After processing the sample, check if we were seeking.
+            // If so, this is the first frame after seek – clear the flag.
+            if seeking {
+                // We successfully pulled a sample after the seek, so the seek is complete.
+                seeking = false;
             }
 
             frame_count += 1;
