@@ -572,24 +572,18 @@ impl App {
         };
 
         let mut frame_count = 0;
-        let mut seeking = false; // local flag to prevent overlapping seeks
+        let mut seeking = false;
 
         while running.load(Ordering::Acquire) {
             // --- Check for seek commands ---
             if let Ok(cmd) = seek_rx.try_recv() {
+                // Always increment generation and flush buffer
+                seek_gen.fetch_add(1, Ordering::Release);
+                buffer.flush();
+
+                // Perform the GStreamer seek only if not already seeking
                 if !seeking {
                     seeking = true;
-
-                    // Increment generation
-                    seek_gen.fetch_add(1, Ordering::Release);
-
-                    // Drain the ingest queue
-                    while video_ingested_prod.pop().is_some() {}
-
-                    // Flush the MediaBuffer (this increments its internal flush_gen)
-                    buffer.flush();
-
-                    // Perform seek
                     let delta_ns = match cmd {
                         SeekCommand::Forward(delta) => delta as i64,
                         SeekCommand::Backward(delta) => -(delta as i64),
@@ -606,18 +600,20 @@ impl App {
                         println!("[SEEK] Jumped to {} ns", new_ns);
                     } else {
                         eprintln!("[SEEK] Failed to seek");
-                        // Allow new seeks on failure
+                        // On failure, we can clear the seeking flag immediately
                         seeking = false;
                     }
-                    // If seek succeeded, we keep `seeking = true` until we pull the first frame.
+                    // If seek succeeded, we keep `seeking = true` until the first new frame is pulled.
                 } else {
-                    eprintln!("[SEEK] Already seeking, ignoring command");
+                    // We are already seeking; the generation was incremented and buffer flushed,
+                    // but the GStreamer seek will happen later.
+                    eprintln!(
+                        "[SEEK] Already seeking, skipping GStreamer seek but generation advanced"
+                    );
                 }
             }
 
             // --- Pull the next sample ---
-            // If we are currently seeking, we still pull samples to clear the sink.
-            // The first sample after seek will be from the new position.
             let sample = match sink.pull_sample() {
                 Ok(s) => s,
                 Err(e) => {
@@ -697,10 +693,8 @@ impl App {
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
 
-            // After processing the sample, check if we were seeking.
-            // If so, this is the first frame after seek – clear the flag.
+            // After pulling a sample, if we were seeking, clear the flag.
             if seeking {
-                // We successfully pulled a sample after the seek, so the seek is complete.
                 seeking = false;
             }
 
