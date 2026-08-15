@@ -1,4 +1,3 @@
-// examples/video_pipeline.rs
 use gst::glib::ControlFlow;
 use gstreamer as gst;
 use gstreamer::glib::object::Cast;
