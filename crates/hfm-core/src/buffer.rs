@@ -2,6 +2,7 @@
 
 use crossbeam::queue::ArrayQueue;
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Presentation timestamp in nanoseconds (monotonic).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -13,6 +14,7 @@ pub struct VideoFrame {
     pub pts: Pts,
     pub slot: usize,
     pub data: Vec<u8>,
+    pub seek_gen: u64,
 }
 
 /// A processed audio chunk (PCM, interleaved stereo f32).
@@ -40,6 +42,7 @@ pub struct MediaBuffer {
     video_frame_duration_secs: f32,
     audio_chunk_duration_secs: f32,
     capacity_secs: f32,
+    flush_gen: AtomicU64,
 }
 
 impl MediaBuffer {
@@ -62,10 +65,18 @@ impl MediaBuffer {
             video_frame_duration_secs: 1.0 / video_fps,
             audio_chunk_duration_secs,
             capacity_secs,
+            flush_gen: AtomicU64::new(0),
         }
     }
 
     pub fn push_video(&self, frame: VideoFrame) -> Result<(), VideoFrame> {
+        // Check buffer‑side generation
+        let current_flush_gen = self.flush_gen.load(Ordering::Acquire);
+        if frame.seek_gen != current_flush_gen {
+            // Frame is from an older generation – discard it
+            return Err(frame);
+        }
+
         let pts = frame.pts;
         // Monotonicity check unless seeking
         if !self.is_seeking() {
@@ -167,6 +178,7 @@ impl MediaBuffer {
         *self.video_last_pts.lock() = None;
         *self.audio_last_pts.lock() = None;
         *self.state.lock() = BufferState::Seeking;
+        self.flush_gen.fetch_add(1, Ordering::Release);
     }
 
     /// Marks the seek as completed. Transitions to `Empty` or `Active` based on queue content.
@@ -208,6 +220,7 @@ mod tests {
             pts: Pts(pts),
             slot: 0,
             data: vec![0u8; 4 * 960 * 540],
+            seek_gen: 0,
         }
     }
 

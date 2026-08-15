@@ -7,7 +7,7 @@ use hfm_core::memory::{
 };
 use hfm_core::ml::PeopleSegFilter;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use wgpu::util::DeviceExt;
 use wgpu::{
     BackendOptions, Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,
@@ -100,7 +100,7 @@ struct App {
     // New: media buffer
     buffer: Option<Arc<MediaBuffer>>,
     seek_sender: Option<Sender<SeekCommand>>,
-    seek_pending: Option<Arc<AtomicBool>>,
+    seek_gen: Option<Arc<AtomicU64>>,
 }
 
 impl App {
@@ -376,44 +376,43 @@ impl App {
         let (seek_tx, seek_rx) = crossbeam::channel::bounded(1);
         self.seek_sender = Some(seek_tx);
 
-        // --- Seek pending flag ---
-        let seek_pending = Arc::new(AtomicBool::new(false));
-        self.seek_pending = Some(seek_pending.clone());
+        let seek_gen = Arc::new(AtomicU64::new(0));
+        self.seek_gen = Some(seek_gen.clone());
 
         let running = Arc::new(AtomicBool::new(true));
 
-        // --- Ingest thread ---
+        // Ingest thread
         let pool_ingest = pool.clone();
         let video_ingested_prod = video_ingested.clone();
         let running_ingest = running.clone();
         let buffer_ingest = buffer.clone();
-        let seek_pending_ingest = seek_pending.clone();
+        let seek_gen_ingest = seek_gen.clone();
         let ingest_handle = std::thread::spawn(move || {
             Self::ingest_thread_loop(
                 pool_ingest,
                 video_ingested_prod,
                 buffer_ingest,
                 seek_rx,
-                seek_pending_ingest,
+                seek_gen_ingest,
                 running_ingest,
             );
         });
         self.ingest_handle = Some(ingest_handle);
 
-        // --- ML thread ---
+        // ML thread
         let pool_ml = pool.clone();
         let video_ingested_cons = video_ingested.clone();
         let buffer_ml = buffer.clone();
         let model_ml = model.clone();
         let running_ml = running.clone();
-        let seek_pending_ml = seek_pending.clone();
+        let seek_gen_ml = seek_gen.clone();
         let ml_handle = std::thread::spawn(move || {
             Self::ml_thread_loop(
                 pool_ml,
                 video_ingested_cons,
                 buffer_ml,
                 model_ml,
-                seek_pending_ml,
+                seek_gen_ml,
                 running_ml,
             );
         });
@@ -449,7 +448,7 @@ impl App {
         video_ingested_prod: Arc<ArrayQueue<PackedIndex>>,
         buffer: Arc<MediaBuffer>,
         seek_rx: crossbeam::channel::Receiver<SeekCommand>,
-        seek_pending: Arc<AtomicBool>,
+        seek_gen: Arc<AtomicU64>,
         running: Arc<AtomicBool>,
     ) {
         // Initialize GStreamer (once)
@@ -577,16 +576,16 @@ impl App {
         while running.load(Ordering::Acquire) {
             // --- Check for seek commands ---
             if let Ok(cmd) = seek_rx.try_recv() {
-                // Pause processing
-                seek_pending.store(true, Ordering::Release);
+                // Increment generation
+                seek_gen.fetch_add(1, Ordering::Release);
 
-                // Drain the ingest queue (discard pending frame indices)
+                // Drain the ingest queue
                 while video_ingested_prod.pop().is_some() {}
 
-                // Flush the MediaBuffer (discard processed frames)
+                // Flush the MediaBuffer (this increments its internal flush_gen)
                 buffer.flush();
 
-                // Perform the seek
+                // Perform seek
                 let delta_ns = match cmd {
                     SeekCommand::Forward(delta) => delta as i64,
                     SeekCommand::Backward(delta) => -(delta as i64),
@@ -598,26 +597,14 @@ impl App {
                 let new_ns = (current_ns + delta_ns).max(0);
                 let new_pos = ClockTime::from_nseconds(new_ns as u64);
                 let seek_res = pipeline.seek_simple(SeekFlags::FLUSH, new_pos);
-
                 if seek_res.is_ok() {
                     println!("[SEEK] Jumped to {} ns", new_ns);
                 } else {
                     eprintln!("[SEEK] Failed to seek");
                 }
-
-                // Resume processing
-                seek_pending.store(false, Ordering::Release);
             }
 
-            // --- If a seek is pending, skip pulling samples ---
-            if seek_pending.load(Ordering::Acquire) {
-                // We skip pulling to avoid getting stale frames.
-                // The ML thread is also paused.
-                std::thread::sleep(std::time::Duration::from_micros(100));
-                continue;
-            }
-
-            // --- Pull the next sample ---
+            // --- Pull sample ---
             let sample = match sink.pull_sample() {
                 Ok(s) => s,
                 Err(e) => {
@@ -680,6 +667,23 @@ impl App {
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
 
+            if let Some(packed) = pool.try_claim() {
+                pool.with_payload_mut(packed, |payload| {
+                    payload.copy_from_slice(&rgba);
+                });
+                pool.set_pts_ns(packed, pts_ns);
+
+                // Set the slot's seek_gen to the current generation
+                let current_gen = seek_gen.load(Ordering::Acquire);
+                pool.set_seek_gen(packed, current_gen);
+
+                while let Err(_) = video_ingested_prod.push(packed) {
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+            } else {
+                std::thread::sleep(std::time::Duration::from_micros(100));
+            }
+
             frame_count += 1;
             if frame_count % 10 == 0 {
                 println!("[INGEST] Decoded frame #{}", frame_count);
@@ -698,34 +702,52 @@ impl App {
         video_ingested_cons: Arc<ArrayQueue<PackedIndex>>,
         buffer: Arc<MediaBuffer>,
         model: Arc<PeopleSegFilter>,
-        seek_pending: Arc<AtomicBool>,
+        seek_gen: Arc<AtomicU64>,
         running: Arc<AtomicBool>,
     ) {
         while running.load(Ordering::Acquire) {
-            // If seek is pending, wait
-            if seek_pending.load(Ordering::Acquire) {
-                std::thread::sleep(std::time::Duration::from_micros(100));
-                continue;
-            }
-
             if let Some(packed) = video_ingested_cons.pop() {
-                // Process frame (no generation checks)
+                // Check generation before inference
+                let slot_gen = pool.get_seek_gen(packed);
+                let current_gen = seek_gen.load(Ordering::Acquire);
+                if slot_gen != current_gen {
+                    pool.discard_slot(packed);
+                    continue;
+                }
+
+                // Run inference
                 let _result = pool
                     .with_payload_mut(packed, |payload| model.filter_frame(payload, WIDTH, HEIGHT));
 
+                // Check generation after inference
+                let current_gen_after = seek_gen.load(Ordering::Acquire);
+                if slot_gen != current_gen_after {
+                    pool.discard_slot(packed);
+                    continue;
+                }
+
+                // Transition state
                 pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                     .expect("State transition failed");
 
                 let pts_ns = pool.get_pts_ns(packed);
                 let pts = Pts(pts_ns);
                 let data = pool.with_payload_mut(packed, |p| p.to_vec());
+
+                // Build VideoFrame with seek_gen
                 let frame = VideoFrame {
                     pts,
                     slot: packed,
                     data,
+                    seek_gen: slot_gen, // carry the generation with the frame
                 };
+
+                // Push to buffer – the buffer will reject it if a flush occurred
                 if let Err(_) = buffer.push_video(frame) {
-                    eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
+                    eprintln!(
+                        "[ML] Buffer rejected or full, dropping frame slot {}",
+                        packed
+                    );
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
@@ -1019,7 +1041,7 @@ impl Default for App {
             upload_handle: None,
             buffer: None,
             seek_sender: None,
-            seek_pending: None,
+            seek_gen: None,
         }
     }
 }
