@@ -161,21 +161,6 @@ impl<const SIZE: usize> SlotPool<SIZE> {
         debug_assert_ne!(slot.state, STATE_FREE);
         slot.pts_ns
     }
-
-    /// Discard a slot that was claimed but should be dropped (e.g., during seek).
-    /// Resets the slot to FREE with an incremented generation, pushing it back to the free list.
-    pub fn discard_slot(&self, packed: PackedIndex) {
-        let (idx, generation) = Self::unpack_index(packed);
-        let mut state = self.state.lock();
-        let slot = &mut state.slots[idx];
-        // Only discard if the generation matches (slot is still claimed by this packed index).
-        if slot.generation == generation {
-            slot.generation = slot.generation.wrapping_add(1);
-            slot.state = STATE_FREE;
-            state.free.push_back(idx);
-        }
-        // If generation doesn't match, it's already been released or reused, so ignore.
-    }
 }
 
 #[cfg(test)]

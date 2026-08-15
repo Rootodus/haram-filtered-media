@@ -1,6 +1,5 @@
 use crossbeam::queue::ArrayQueue;
 use crossbeam_channel::Sender;
-use gst::{ClockTime, SeekFlags};
 use hfm_core::buffer::{MediaBuffer, Pts, VideoFrame};
 use hfm_core::filter::VideoFilter;
 use hfm_core::memory::{
@@ -23,6 +22,7 @@ use winit::{
 
 // ---- GStreamer imports ----
 use gst::glib::ControlFlow;
+use gst::{ClockTime, SeekFlags};
 use gstreamer as gst;
 use gstreamer::glib::object::Cast;
 use gstreamer::prelude::GstBinExtManual;
@@ -99,7 +99,6 @@ struct App {
     // New: media buffer
     buffer: Option<Arc<MediaBuffer>>,
     seek_sender: Option<Sender<SeekCommand>>,
-    seeking_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl App {
@@ -375,10 +374,6 @@ impl App {
         let (seek_tx, seek_rx) = crossbeam::channel::bounded(1);
         self.seek_sender = Some(seek_tx);
 
-        // --- Create the shared seeking flag ---
-        let seeking_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        self.seeking_flag = Some(seeking_flag.clone());
-
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
         // --- Ingest thread ---
@@ -386,15 +381,12 @@ impl App {
         let video_ingested_prod = video_ingested.clone();
         let running_ingest = running.clone();
         let buffer_ingest = buffer.clone();
-        // Clone the flag for the ingest thread
-        let seeking_flag_ingest = Arc::clone(&seeking_flag);
         let ingest_handle = std::thread::spawn(move || {
             Self::ingest_thread_loop(
                 pool_ingest,
                 video_ingested_prod,
                 buffer_ingest,
                 seek_rx,
-                seeking_flag_ingest,
                 running_ingest,
             );
         });
@@ -406,15 +398,12 @@ impl App {
         let buffer_ml = buffer.clone();
         let model_ml = model.clone();
         let running_ml = running.clone();
-        // Clone the flag for the ML thread
-        let seeking_flag_ml = Arc::clone(&seeking_flag);
         let ml_handle = std::thread::spawn(move || {
             Self::ml_thread_loop(
                 pool_ml,
                 video_ingested_cons,
                 buffer_ml,
                 model_ml,
-                seeking_flag_ml,
                 running_ml,
             );
         });
@@ -450,7 +439,6 @@ impl App {
         video_ingested_prod: Arc<ArrayQueue<PackedIndex>>,
         buffer: Arc<MediaBuffer>,
         seek_rx: crossbeam::channel::Receiver<SeekCommand>,
-        seeking_flag: Arc<std::sync::atomic::AtomicBool>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
         // Initialize GStreamer (once)
@@ -459,26 +447,39 @@ impl App {
             return;
         }
 
-        // Build pipeline
-        let pipeline = gst::Pipeline::new();
+        // --- Build playbin pipeline ---
+        let playbin = match gst::ElementFactory::make("playbin").build() {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("[INGEST] Failed to create playbin: {}", e);
+                return;
+            }
+        };
+
+        // Set URI
         let video_path = format!("{}/assets/video.mp4", env!("CARGO_MANIFEST_DIR"));
-        let src = match gst::ElementFactory::make("filesrc")
-            .property("location", video_path)
-            .build()
-        {
-            Ok(e) => e,
+        let uri = match gst::glib::filename_to_uri(&video_path, None) {
+            Ok(u) => u,
             Err(e) => {
-                eprintln!("[INGEST] Failed to create filesrc: {}", e);
+                eprintln!("[INGEST] Failed to convert path to URI: {}", e);
                 return;
             }
         };
-        let decodebin = match gst::ElementFactory::make("decodebin").build() {
+        playbin.set_property("uri", &uri);
+
+        // --- Set audio sink to fakesink (ignore audio) ---
+        let audio_sink = match gst::ElementFactory::make("fakesink").build() {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("[INGEST] Failed to create decodebin: {}", e);
+                eprintln!("[INGEST] Failed to create fakesink for audio: {}", e);
                 return;
             }
         };
+        playbin.set_property("audio-sink", &audio_sink);
+
+        // --- Build video sink bin: videoconvert → videoscale → appsink ---
+        let video_sink = gst::Bin::new();
+
         let convert = match gst::ElementFactory::make("videoconvert").build() {
             Ok(e) => e,
             Err(e) => {
@@ -503,46 +504,52 @@ impl App {
             )
             .async_(true)
             .drop(true)
+            .max_buffers(1)
             .build();
         let sink_element = sink.upcast_ref::<gst::Element>().clone();
 
-        if let Err(e) = pipeline.add_many(&[&src, &decodebin, &convert, &scale, &sink_element]) {
-            eprintln!("[INGEST] Failed to add elements: {}", e);
+        // Add elements to the bin
+        if let Err(e) = video_sink.add_many(&[&convert, &scale, &sink_element]) {
+            eprintln!("[INGEST] Failed to add elements to video sink bin: {}", e);
             return;
         }
-        if let Err(e) = gst::Element::link_many(&[&src, &decodebin]) {
-            eprintln!("[INGEST] Failed to link src to decodebin: {}", e);
-            return;
-        }
+        // Link: convert → scale → sink
         if let Err(e) = gst::Element::link_many(&[&convert, &scale, &sink_element]) {
-            eprintln!("[INGEST] Failed to link convert -> scale -> sink: {}", e);
+            eprintln!("[INGEST] Failed to link video sink bin: {}", e);
             return;
         }
 
-        let convert_clone = convert.clone();
-        decodebin.connect_pad_added(move |_, src_pad| {
-            let caps = src_pad.current_caps().expect("Failed to get caps");
-            let structure = caps.structure(0).expect("No structure");
-            if structure.name().starts_with("video/") {
-                let sink_pad = convert_clone
-                    .static_pad("sink")
-                    .expect("convert has no sink pad");
-                if sink_pad.is_linked() {
-                    return;
-                }
-                let src_pad = src_pad.clone();
-                if let Err(e) = src_pad.link(&sink_pad) {
-                    eprintln!("[INGEST] Failed to link decodebin pad to convert: {}", e);
-                }
-            }
-        });
-
-        if let Err(e) = pipeline.set_state(gst::State::Playing) {
-            eprintln!("[INGEST] Failed to set pipeline to playing: {}", e);
+        // Add a ghost pad for the bin's sink pad
+        let sink_pad = convert.static_pad("sink").expect("convert has no sink pad");
+        let ghost_pad = gst::GhostPad::new(gst::PadDirection::Sink);
+        if let Err(e) = ghost_pad.set_target(Some(&sink_pad)) {
+            eprintln!("[INGEST] Failed to set ghost pad target: {}", e);
+            return;
+        }
+        if let Err(e) = video_sink.add_pad(&ghost_pad) {
+            eprintln!("[INGEST] Failed to add ghost pad: {}", e);
             return;
         }
 
-        let bus = match pipeline.bus() {
+        // Set the video-sink property of playbin
+        playbin.set_property("video-sink", &video_sink);
+
+        // --- Set pipeline to Playing ---
+        if let Err(e) = playbin.set_state(gst::State::Playing) {
+            eprintln!("[INGEST] Failed to set playbin to playing: {}", e);
+            return;
+        }
+
+        // --- Query and print pipeline state ---
+        let (state_res, current_state, pending_state) =
+            playbin.state(gst::ClockTime::from_seconds(5));
+        println!(
+            "[INGEST] playbin state: current={:?}, pending={:?}, result={:?}",
+            current_state, pending_state, state_res
+        );
+
+        // --- Bus watch for errors and EOS ---
+        let bus = match playbin.bus() {
             Some(b) => b,
             None => {
                 eprintln!("[INGEST] No bus");
@@ -585,48 +592,32 @@ impl App {
                         SeekCommand::Backward(delta) => -(delta as i64),
                     };
 
-                    // 1. Mark seeking in progress
-                    seeking_flag.store(true, std::sync::atomic::Ordering::Release);
-
-                    // 2. Drain the ingest queue to discard any pending frame indices
-                    while video_ingested_prod.pop().is_some() {}
-
-                    // 3. Flush the media buffer (clear processed frames)
                     buffer.flush();
 
-                    // 4. Perform the GStreamer seek
-                    let current_pos = pipeline
+                    let current_pos = playbin
                         .query_position::<ClockTime>()
                         .unwrap_or_else(|| ClockTime::from_seconds(0));
                     let current_ns = current_pos.nseconds() as i64;
                     let new_ns = (current_ns + delta_ns).max(0);
                     let new_pos = ClockTime::from_nseconds(new_ns as u64);
-                    let seek_res = pipeline.seek_simple(SeekFlags::FLUSH, new_pos);
+                    let seek_res = playbin.seek_simple(SeekFlags::FLUSH, new_pos);
 
                     if seek_res.is_ok() {
                         println!("[SEEK] Jumped to {} ns", new_ns);
-                        seeking = true; // local flag, will be cleared after first new frame
+                        seeking = true;
                     } else {
                         eprintln!("[SEEK] Failed to seek");
-                        // Revert state: clear seeking flag and mark seek as completed
-                        seeking_flag.store(false, std::sync::atomic::Ordering::Release);
-                        buffer.seek_completed();
-                        // `seeking` remains false
                     }
                 } else {
                     eprintln!("[SEEK] Already seeking, ignoring command");
                 }
             }
 
-            // --- Pull the next sample (may block) ---
+            // --- Pull the next sample ---
             let sample = match sink.pull_sample() {
                 Ok(s) => s,
                 Err(e) => {
-                    if e.message.contains("EOS") {
-                        println!("[INGEST] End of stream");
-                    } else {
-                        eprintln!("[INGEST] pull_sample error: {}", e.message);
-                    }
+                    eprintln!("[INGEST] pull_sample error: {}", e.message);
                     break;
                 }
             };
@@ -658,7 +649,6 @@ impl App {
             };
             let rgba = map.as_slice().to_vec();
 
-            // Extract PTS from GStreamer buffer
             let pts_ns = buffer_gst.pts().map(|pts| pts.nseconds()).unwrap_or(0);
 
             if frame_count == 0 {
@@ -675,26 +665,13 @@ impl App {
                 });
                 pool.set_pts_ns(packed, pts_ns);
 
-                // Push the packed index to the ingest queue
                 while let Err(_) = video_ingested_prod.push(packed) {
                     std::thread::sleep(std::time::Duration::from_micros(100));
-                }
-
-                // If we were seeking, this is the first frame after seek – but the ML thread will clear the flag
-                if seeking {
-                    // DO NOT clear the shared flag here – the ML thread will do it after processing the frame
-                    seeking = false; // only clear the local flag to allow new seek commands
-                }
-
-                frame_count += 1;
-                if frame_count % 10 == 0 {
-                    println!("[INGEST] Decoded frame #{}", frame_count);
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
 
-            // If we were seeking, this is the first frame after seek; mark seek as completed
             if seeking {
                 seeking = false;
             }
@@ -705,7 +682,7 @@ impl App {
             }
         }
 
-        pipeline.set_state(gst::State::Null).ok();
+        playbin.set_state(gst::State::Null).ok();
         println!(
             "[INGEST] Exiting ingest thread. Total frames decoded: {}",
             frame_count
@@ -717,28 +694,14 @@ impl App {
         video_ingested_cons: Arc<ArrayQueue<PackedIndex>>,
         buffer: Arc<MediaBuffer>,
         model: Arc<PeopleSegFilter>,
-        seeking_flag: Arc<std::sync::atomic::AtomicBool>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
         while running.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(packed) = video_ingested_cons.pop() {
-                // Check 1: before inference
-                if seeking_flag.load(std::sync::atomic::Ordering::Acquire) {
-                    pool.discard_slot(packed);
-                    continue;
-                }
-
                 // Run inference
                 let _result = pool
                     .with_payload_mut(packed, |payload| model.filter_frame(payload, WIDTH, HEIGHT));
 
-                // Check 2: after inference (in case a seek happened during inference)
-                if seeking_flag.load(std::sync::atomic::Ordering::Acquire) {
-                    pool.discard_slot(packed);
-                    continue;
-                }
-
-                // Transition state
                 pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                     .expect("State transition failed");
 
@@ -751,16 +714,9 @@ impl App {
                     data,
                 };
 
-                // Push to buffer
-                match buffer.push_video(frame) {
-                    Ok(()) => {
-                        // First new frame after seek – clear the flag
-                        seeking_flag.store(false, std::sync::atomic::Ordering::Release);
-                    }
-                    Err(_) => {
-                        eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
-                        // If buffer is full, we keep the flag true so future frames are discarded.
-                    }
+                // Push to buffer – no flag checks needed.
+                if let Err(_) = buffer.push_video(frame) {
+                    eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
@@ -1054,7 +1010,6 @@ impl Default for App {
             upload_handle: None,
             buffer: None, // added
             seek_sender: None,
-            seeking_flag: None,
         }
     }
 }
