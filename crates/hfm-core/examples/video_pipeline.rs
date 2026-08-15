@@ -680,12 +680,10 @@ impl App {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
 
-                // If we were seeking, this is the first frame after seek
+                // If we were seeking, this is the first frame after seek – but the ML thread will clear the flag
                 if seeking {
-                    // Clear the seeking flag – now new frames are valid
-                    seeking_flag.store(false, std::sync::atomic::Ordering::Release);
-                    seeking = false;
-                    // The buffer state will transition from Seeking to Active when the ML thread pushes the first frame.
+                    // DO NOT clear the shared flag here – the ML thread will do it after processing the frame
+                    seeking = false; // only clear the local flag to allow new seek commands
                 }
 
                 frame_count += 1;
@@ -744,8 +742,17 @@ impl App {
                     slot: packed,
                     data,
                 };
-                if let Err(_) = buffer.push_video(frame) {
-                    eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
+                match buffer.push_video(frame) {
+                    Ok(()) => {
+                        // The first new frame after a seek has been successfully pushed.
+                        // Now we can clear the seeking flag.
+                        seeking_flag.store(false, std::sync::atomic::Ordering::Release);
+                    }
+                    Err(_) => {
+                        eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
+                        // Do not clear the flag – the buffer is still not accepting frames,
+                        // so we are not yet ready to resume normal monotonic checks.
+                    }
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
