@@ -43,6 +43,7 @@ pub struct MediaBuffer {
     audio_chunk_duration_secs: f32,
     capacity_secs: f32,
     flush_gen: AtomicU64,
+    push_lock: Mutex<()>,
 }
 
 impl MediaBuffer {
@@ -66,11 +67,15 @@ impl MediaBuffer {
             audio_chunk_duration_secs,
             capacity_secs,
             flush_gen: AtomicU64::new(0),
+            push_lock: Mutex::new(()),
         }
     }
 
     pub fn push_video(&self, frame: VideoFrame) -> Result<(), VideoFrame> {
-        // Check buffer‑side generation
+        // Acquire the lock to prevent races with flush
+        let _lock = self.push_lock.lock();
+
+        // Check buffer-side generation
         let current_flush_gen = self.flush_gen.load(Ordering::Acquire);
         if frame.seek_gen != current_flush_gen {
             // Frame is from an older generation – discard it
@@ -173,12 +178,21 @@ impl MediaBuffer {
 
     /// Flushes both queues and transitions to `Seeking` state.
     pub fn flush(&self) {
+        let _lock = self.push_lock.lock();
+
+        // Increment generation
+        self.flush_gen.fetch_add(1, Ordering::Release);
+
+        // Clear queues
         while self.video_queue.pop().is_some() {}
         while self.audio_queue.pop().is_some() {}
+
+        // Reset PTS tracking
         *self.video_last_pts.lock() = None;
         *self.audio_last_pts.lock() = None;
+
+        // Transition state to Seeking
         *self.state.lock() = BufferState::Seeking;
-        self.flush_gen.fetch_add(1, Ordering::Release);
     }
 
     /// Marks the seek as completed. Transitions to `Empty` or `Active` based on queue content.
