@@ -713,20 +713,9 @@ impl App {
                     data,
                 };
                 eprintln!("[ML] Frame slot {} PTS: {} ns", packed, pts_ns);
-                match buffer.push_video(frame) {
-                    Ok(()) => {
-                        // Print the current buffer length to confirm it's increasing
-                        eprintln!(
-                            "[ML] Pushed frame slot {}, buffer len: {}",
-                            packed,
-                            buffer.video_len()
-                        );
-                    }
-                    Err(_) => {
-                        eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
-                    }
+                if let Err(_) = buffer.push_video(frame) {
+                    eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
                 }
-                // frame_counter is no longer needed – remove it
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
@@ -760,12 +749,7 @@ impl App {
             if loop_count % 100 == 0 {
                 eprintln!("[UPLOAD] Loop iteration {}", loop_count);
             }
-            let len_before_pop = buffer.video_len();
-            if len_before_pop > 0 {
-                eprintln!("[UPLOAD] Buffer has {} frames before pop", len_before_pop);
-            }
             // Pop from buffer
-            eprintln!("[UPLOAD] Before pop_video");
             if let Some(frame) = buffer.pop_video() {
                 eprintln!("[UPLOAD] Pop succeeded");
                 eprintln!("[UPLOAD] Popped frame slot {}", frame.slot);
@@ -830,15 +814,6 @@ impl App {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
             } else {
-                eprintln!("[UPLOAD] Pop returned None");
-                // Print buffer length every 10 seconds (approx)
-                static mut EMPTY_COUNT: usize = 0;
-                unsafe {
-                    EMPTY_COUNT += 1;
-                    if EMPTY_COUNT % 100 == 0 {
-                        eprintln!("[UPLOAD] Buffer empty, current len: {}", buffer.video_len());
-                    }
-                }
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
         }

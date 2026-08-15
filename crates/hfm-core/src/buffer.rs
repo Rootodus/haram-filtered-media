@@ -1,7 +1,7 @@
 //! Window buffer for processed video and audio frames with PTS tracking.
 
+use crossbeam::queue::ArrayQueue;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
 
 /// Presentation timestamp in nanoseconds (monotonic).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -30,13 +30,13 @@ enum BufferState {
 }
 
 pub struct MediaBuffer {
-    video_queue: Mutex<VecDeque<VideoFrame>>,
-    audio_queue: Mutex<VecDeque<AudioChunk>>,
+    video_queue: ArrayQueue<VideoFrame>,
+    audio_queue: ArrayQueue<AudioChunk>,
     state: Mutex<BufferState>,
     // Last PTS for monotonicity checks (per stream)
     video_last_pts: Mutex<Option<Pts>>,
     audio_last_pts: Mutex<Option<Pts>>,
-    // Known durations for fallback fill‑level (if PTS not available)
+    // Known durations for fill‑level estimation
     video_frame_duration_secs: f32,
     audio_chunk_duration_secs: f32,
     capacity_secs: f32,
@@ -49,15 +49,18 @@ impl MediaBuffer {
         audio_sample_rate: u32,
         audio_window_samples: usize,
     ) -> Self {
-        // We no longer need pre‑allocated capacity, but we can keep for reference.
+        let video_capacity = (capacity_secs * video_fps).ceil() as usize + 2;
+        let audio_chunk_duration_secs = audio_window_samples as f32 / audio_sample_rate as f32;
+        let audio_capacity = (capacity_secs / audio_chunk_duration_secs).ceil() as usize + 2;
+
         Self {
-            video_queue: Mutex::new(VecDeque::new()),
-            audio_queue: Mutex::new(VecDeque::new()),
+            video_queue: ArrayQueue::new(video_capacity),
+            audio_queue: ArrayQueue::new(audio_capacity),
             state: Mutex::new(BufferState::Empty),
             video_last_pts: Mutex::new(None),
             audio_last_pts: Mutex::new(None),
             video_frame_duration_secs: 1.0 / video_fps,
-            audio_chunk_duration_secs: audio_window_samples as f32 / audio_sample_rate as f32,
+            audio_chunk_duration_secs,
             capacity_secs,
         }
     }
@@ -76,13 +79,14 @@ impl MediaBuffer {
             }
         }
 
-        let mut queue = self.video_queue.lock();
-        // We don't have a fixed capacity, but we can optionally limit to prevent unbounded growth.
-        // For now, we'll allow any size, but we could enforce a max length based on capacity.
-        queue.push_back(frame);
-        *self.video_last_pts.lock() = Some(pts);
-        self.update_state_after_push();
-        Ok(())
+        match self.video_queue.push(frame) {
+            Ok(()) => {
+                *self.video_last_pts.lock() = Some(pts);
+                self.update_state_after_push();
+                Ok(())
+            }
+            Err(frame) => Err(frame),
+        }
     }
 
     pub fn push_audio(&self, chunk: AudioChunk) -> Result<(), AudioChunk> {
@@ -98,23 +102,24 @@ impl MediaBuffer {
             }
         }
 
-        let mut queue = self.audio_queue.lock();
-        queue.push_back(chunk);
-        *self.audio_last_pts.lock() = Some(pts);
-        self.update_state_after_push();
-        Ok(())
+        match self.audio_queue.push(chunk) {
+            Ok(()) => {
+                *self.audio_last_pts.lock() = Some(pts);
+                self.update_state_after_push();
+                Ok(())
+            }
+            Err(chunk) => Err(chunk),
+        }
     }
 
     pub fn pop_video(&self) -> Option<VideoFrame> {
-        let mut queue = self.video_queue.lock();
-        let frame = queue.pop_front()?;
+        let frame = self.video_queue.pop()?;
         self.update_state_after_pop();
         Some(frame)
     }
 
     pub fn pop_audio(&self) -> Option<AudioChunk> {
-        let mut queue = self.audio_queue.lock();
-        let chunk = queue.pop_front()?;
+        let chunk = self.audio_queue.pop()?;
         self.update_state_after_pop();
         Some(chunk)
     }
@@ -128,7 +133,7 @@ impl MediaBuffer {
 
     fn update_state_after_pop(&self) {
         let mut state = self.state.lock();
-        if self.video_queue.lock().is_empty() && self.audio_queue.lock().is_empty() {
+        if self.video_queue.is_empty() && self.audio_queue.is_empty() {
             if let BufferState::Seeking = *state {
                 // remain Seeking
             } else {
@@ -141,55 +146,24 @@ impl MediaBuffer {
         matches!(*self.state.lock(), BufferState::Seeking)
     }
 
-    /// Returns the current buffer fill level in seconds.
-    /// Uses PTS of the oldest and newest frames if available; otherwise falls back to count × duration.
-    /// Returns the *minimum* fill level across video and audio to ensure neither stream underruns.
+    /// Returns the current buffer fill level in seconds (estimated from queue length × duration).
     pub fn fill_level_secs(&self) -> f32 {
-        let video_queue = self.video_queue.lock();
-        let audio_queue = self.audio_queue.lock();
-
-        // Helper: compute duration for a queue
-        let queue_duration = |queue: &VecDeque<VideoFrame>, default_duration: f32| -> f32 {
-            if queue.len() < 2 {
-                queue.len() as f32 * default_duration
-            } else {
-                let oldest = queue.front().unwrap().pts;
-                let newest = queue.back().unwrap().pts;
-                (newest.0 - oldest.0) as f32 / 1_000_000_000.0
-            }
-        };
-
-        // Compute durations (using a closure that works for both queues)
-        let video_dur = if video_queue.is_empty() {
-            0.0
+        let video_dur = self.video_queue.len() as f32 * self.video_frame_duration_secs;
+        let audio_dur = self.audio_queue.len() as f32 * self.audio_chunk_duration_secs;
+        // Use the minimum to avoid underrun (if both streams are present)
+        // If audio is not used, its len is 0, so audio_dur = 0 → min becomes 0, which is wrong.
+        // So we only consider audio if it has data.
+        if self.audio_queue.is_empty() {
+            video_dur
         } else {
-            queue_duration(&video_queue, self.video_frame_duration_secs)
-        };
-
-        let audio_dur = if audio_queue.is_empty() {
-            // If audio is not used, we ignore it for throttling.
-            // Returning f32::MAX effectively makes video the only decider.
-            f32::MAX
-        } else {
-            // For audio, we need a separate helper. Since we don't have a generic type,
-            // we'll inline the logic.
-            if audio_queue.len() < 2 {
-                audio_queue.len() as f32 * self.audio_chunk_duration_secs
-            } else {
-                let oldest = audio_queue.front().unwrap().pts;
-                let newest = audio_queue.back().unwrap().pts;
-                (newest.0 - oldest.0) as f32 / 1_000_000_000.0
-            }
-        };
-
-        // Return the minimum – the bottleneck stream
-        video_dur.min(audio_dur)
+            video_dur.min(audio_dur)
+        }
     }
 
     /// Flushes both queues and transitions to `Seeking` state.
     pub fn flush(&self) {
-        self.video_queue.lock().clear();
-        self.audio_queue.lock().clear();
+        while self.video_queue.pop().is_some() {}
+        while self.audio_queue.pop().is_some() {}
         *self.video_last_pts.lock() = None;
         *self.audio_last_pts.lock() = None;
         *self.state.lock() = BufferState::Seeking;
@@ -199,7 +173,7 @@ impl MediaBuffer {
     pub fn seek_completed(&self) {
         let mut state = self.state.lock();
         if let BufferState::Seeking = *state {
-            if self.video_queue.lock().is_empty() && self.audio_queue.lock().is_empty() {
+            if self.video_queue.is_empty() && self.audio_queue.is_empty() {
                 *state = BufferState::Empty;
             } else {
                 *state = BufferState::Active;
@@ -212,11 +186,11 @@ impl MediaBuffer {
     }
 
     pub fn video_len(&self) -> usize {
-        self.video_queue.lock().len()
+        self.video_queue.len()
     }
 
     pub fn audio_len(&self) -> usize {
-        self.audio_queue.lock().len()
+        self.audio_queue.len()
     }
 }
 
@@ -264,16 +238,15 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_level_with_pts() {
+    fn test_fill_level() {
         let buf = MediaBuffer::new(5.0, 30.0, 44100, 2048);
-        let pts_start = 0;
         for i in 0..10 {
-            let pts = pts_start + i * 33_333_333;
+            let pts = i * 33_333_333;
             assert!(buf.push_video(dummy_video(pts)).is_ok());
         }
         let fill = buf.fill_level_secs();
-        // 10 frames at 30 fps = 0.333 sec (with PTS precision)
-        assert!(fill >= 0.29 && fill <= 0.35);
+        // 10 frames at 30 fps = 0.333 sec
+        assert!(fill >= 0.32 && fill <= 0.35);
     }
 
     #[test]
