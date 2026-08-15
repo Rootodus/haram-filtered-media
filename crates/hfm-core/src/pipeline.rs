@@ -8,7 +8,7 @@ use crate::ml::PeopleSegFilter;
 use crossbeam::queue::ArrayQueue;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Constants for the video resolution (must match the model's expected input size).
 pub const WIDTH: u32 = 960;
@@ -34,6 +34,7 @@ pub struct VideoPipeline {
     buffer: Arc<MediaBuffer>,
     ingest_queue: Arc<ArrayQueue<PackedIndex>>,
     seek_gen: Arc<AtomicU64>,
+    seek_pending: Arc<AtomicBool>,
     _ingest_handle: Option<std::thread::JoinHandle<()>>,
     _ml_handle: Option<std::thread::JoinHandle<()>>,
     running: Arc<std::sync::atomic::AtomicBool>,
@@ -47,6 +48,7 @@ impl VideoPipeline {
         let buffer = Arc::new(MediaBuffer::new(5.0, 30.0, 44100, 2048));
         let ingest_queue = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
         let seek_gen = Arc::new(AtomicU64::new(0));
+        let seek_pending = Arc::new(AtomicBool::new(false));
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
         VideoPipeline {
@@ -56,6 +58,7 @@ impl VideoPipeline {
             buffer,
             ingest_queue,
             seek_gen,
+            seek_pending,
             _ingest_handle: None,
             _ml_handle: None,
             running,
@@ -70,6 +73,7 @@ impl VideoPipeline {
         let buffer = self.buffer.clone();
         let model = self.model.clone();
         let seek_gen = self.seek_gen.clone();
+        let seek_pending = self.seek_pending.clone();
         let running = self.running.clone();
 
         // Ingest thread
@@ -86,6 +90,7 @@ impl VideoPipeline {
                 ingest_queue_clone,
                 ingest_buffer,
                 ingest_seek_gen,
+                seek_pending,
                 ingest_running,
             );
         });
@@ -120,9 +125,16 @@ impl VideoPipeline {
     /// Seeks by a delta (positive forward, negative backward) in nanoseconds.
     /// This flushes the buffer, increments the generation, and forwards the seek to the source.
     pub fn seek(&self, delta_ns: i64) -> Result<(), String> {
+        // Set the pending flag
+        self.seek_pending.store(true, Ordering::Release);
+        // Increment generation and flush buffer
         self.seek_gen.fetch_add(1, Ordering::Release);
         self.buffer.flush();
-        self.source_mutex.lock().seek(delta_ns)
+        // Forward seek to source
+        let result = self.source_mutex.lock().seek(delta_ns);
+        // Clear the pending flag
+        self.seek_pending.store(false, Ordering::Release);
+        result
     }
 
     // Private ingest loop
@@ -132,16 +144,19 @@ impl VideoPipeline {
         ingest_queue: Arc<ArrayQueue<PackedIndex>>,
         _buffer: Arc<MediaBuffer>,
         seek_gen: Arc<AtomicU64>,
+        seek_pending: Arc<AtomicBool>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
         while running.load(Ordering::Acquire) {
+            // If a seek is pending, skip pulling and sleep
+            if seek_pending.load(Ordering::Acquire) {
+                std::thread::sleep(std::time::Duration::from_micros(100));
+                continue;
+            }
             // Pull a frame from the source
             let (rgba, pts_ns) = match source_mutex.lock().pull_frame() {
                 Some(data) => data,
-                None => {
-                    // End of stream or error – break the loop
-                    break;
-                }
+                None => break,
             };
 
             // Claim a slot
