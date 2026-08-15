@@ -99,6 +99,7 @@ struct App {
     // New: media buffer
     buffer: Option<Arc<MediaBuffer>>,
     seek_sender: Option<Sender<SeekCommand>>,
+    seeking_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl App {
@@ -374,42 +375,52 @@ impl App {
         let (seek_tx, seek_rx) = crossbeam::channel::bounded(1);
         self.seek_sender = Some(seek_tx);
 
+        // --- Create the shared seeking flag ---
+        let seeking_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.seeking_flag = Some(seeking_flag.clone());
+
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        // --- Ingest thread (receives seek commands) ---
+        // --- Ingest thread ---
         let pool_ingest = pool.clone();
         let video_ingested_prod = video_ingested.clone();
         let running_ingest = running.clone();
         let buffer_ingest = buffer.clone();
+        // Clone the flag for the ingest thread
+        let seeking_flag_ingest = Arc::clone(&seeking_flag);
         let ingest_handle = std::thread::spawn(move || {
             Self::ingest_thread_loop(
                 pool_ingest,
                 video_ingested_prod,
                 buffer_ingest,
-                seek_rx, // <-- receiver passed here
+                seek_rx,
+                seeking_flag_ingest,
                 running_ingest,
             );
         });
         self.ingest_handle = Some(ingest_handle);
 
-        // --- ML thread (unchanged) ---
+        // --- ML thread ---
         let pool_ml = pool.clone();
         let video_ingested_cons = video_ingested.clone();
         let buffer_ml = buffer.clone();
         let model_ml = model.clone();
         let running_ml = running.clone();
+        // Clone the flag for the ML thread
+        let seeking_flag_ml = Arc::clone(&seeking_flag);
         let ml_handle = std::thread::spawn(move || {
             Self::ml_thread_loop(
                 pool_ml,
                 video_ingested_cons,
                 buffer_ml,
                 model_ml,
+                seeking_flag_ml,
                 running_ml,
             );
         });
         self.ml_handle = Some(ml_handle);
 
-        // --- Upload thread (unchanged) ---
+        // --- Upload thread ---
         let pool_upload = pool.clone();
         let buffer_upload = buffer.clone();
         let video_gpu_upload_ready_prod = video_gpu_upload_ready.clone();
@@ -439,6 +450,7 @@ impl App {
         video_ingested_prod: Arc<ArrayQueue<PackedIndex>>,
         buffer: Arc<MediaBuffer>,
         seek_rx: crossbeam::channel::Receiver<SeekCommand>,
+        seeking_flag: Arc<std::sync::atomic::AtomicBool>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
         // Initialize GStreamer (once)
@@ -572,28 +584,34 @@ impl App {
                         SeekCommand::Forward(delta) => delta as i64,
                         SeekCommand::Backward(delta) => -(delta as i64),
                     };
-                    // Flush the buffer first
+
+                    // 1. Mark seeking in progress
+                    seeking_flag.store(true, std::sync::atomic::Ordering::Release);
+
+                    // 2. Drain the ingest queue to discard any pending frame indices
+                    while video_ingested_prod.pop().is_some() {}
+
+                    // 3. Flush the media buffer (clear processed frames)
                     buffer.flush();
 
-                    // Get current position
+                    // 4. Perform the GStreamer seek
                     let current_pos = pipeline
                         .query_position::<ClockTime>()
                         .unwrap_or_else(|| ClockTime::from_seconds(0));
-
                     let current_ns = current_pos.nseconds() as i64;
                     let new_ns = (current_ns + delta_ns).max(0);
                     let new_pos = ClockTime::from_nseconds(new_ns as u64);
-
-                    // Perform absolute seek
                     let seek_res = pipeline.seek_simple(SeekFlags::FLUSH, new_pos);
 
                     if seek_res.is_ok() {
                         println!("[SEEK] Jumped to {} ns", new_ns);
-                        seeking = true;
+                        seeking = true; // local flag, will be cleared after first new frame
                     } else {
                         eprintln!("[SEEK] Failed to seek");
-                        // Revert buffer state (seek_completed will put it back to Empty/Active)
+                        // Revert state: clear seeking flag and mark seek as completed
+                        seeking_flag.store(false, std::sync::atomic::Ordering::Release);
                         buffer.seek_completed();
+                        // `seeking` remains false
                     }
                 } else {
                     eprintln!("[SEEK] Already seeking, ignoring command");
@@ -657,8 +675,22 @@ impl App {
                 });
                 pool.set_pts_ns(packed, pts_ns);
 
+                // Push the packed index to the ingest queue
                 while let Err(_) = video_ingested_prod.push(packed) {
                     std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+
+                // If we were seeking, this is the first frame after seek
+                if seeking {
+                    // Clear the seeking flag – now new frames are valid
+                    seeking_flag.store(false, std::sync::atomic::Ordering::Release);
+                    seeking = false;
+                    // The buffer state will transition from Seeking to Active when the ML thread pushes the first frame.
+                }
+
+                frame_count += 1;
+                if frame_count % 10 == 0 {
+                    println!("[INGEST] Decoded frame #{}", frame_count);
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
@@ -666,7 +698,6 @@ impl App {
 
             // If we were seeking, this is the first frame after seek; mark seek as completed
             if seeking {
-                buffer.seek_completed();
                 seeking = false;
             }
 
@@ -688,20 +719,25 @@ impl App {
         video_ingested_cons: Arc<ArrayQueue<PackedIndex>>,
         buffer: Arc<MediaBuffer>,
         model: Arc<PeopleSegFilter>,
+        seeking_flag: Arc<std::sync::atomic::AtomicBool>,
         running: Arc<std::sync::atomic::AtomicBool>,
     ) {
         while running.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(packed) = video_ingested_cons.pop() {
+                // Check if a seek is in progress – if so, discard this slot and skip processing
+                if seeking_flag.load(std::sync::atomic::Ordering::Acquire) {
+                    pool.discard_slot(packed);
+                    continue;
+                }
+
+                // Process the frame (inference)
                 let _result = pool
                     .with_payload_mut(packed, |payload| model.filter_frame(payload, WIDTH, HEIGHT));
                 pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                     .expect("State transition failed");
 
-                // --- Read the real PTS from the slot ---
                 let pts_ns = pool.get_pts_ns(packed);
                 let pts = Pts(pts_ns);
-
-                // Build a VideoFrame and push to buffer
                 let data = pool.with_payload_mut(packed, |p| p.to_vec());
                 let frame = VideoFrame {
                     pts,
@@ -1003,6 +1039,7 @@ impl Default for App {
             upload_handle: None,
             buffer: None, // added
             seek_sender: None,
+            seeking_flag: None,
         }
     }
 }
