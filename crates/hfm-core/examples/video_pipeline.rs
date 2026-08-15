@@ -722,15 +722,23 @@ impl App {
     ) {
         while running.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(packed) = video_ingested_cons.pop() {
-                // Check if a seek is in progress – if so, discard this slot and skip processing
+                // Check 1: before inference
                 if seeking_flag.load(std::sync::atomic::Ordering::Acquire) {
                     pool.discard_slot(packed);
                     continue;
                 }
 
-                // Process the frame (inference)
+                // Run inference
                 let _result = pool
                     .with_payload_mut(packed, |payload| model.filter_frame(payload, WIDTH, HEIGHT));
+
+                // Check 2: after inference (in case a seek happened during inference)
+                if seeking_flag.load(std::sync::atomic::Ordering::Acquire) {
+                    pool.discard_slot(packed);
+                    continue;
+                }
+
+                // Transition state
                 pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                     .expect("State transition failed");
 
@@ -742,16 +750,16 @@ impl App {
                     slot: packed,
                     data,
                 };
+
+                // Push to buffer
                 match buffer.push_video(frame) {
                     Ok(()) => {
-                        // The first new frame after a seek has been successfully pushed.
-                        // Now we can clear the seeking flag.
+                        // First new frame after seek – clear the flag
                         seeking_flag.store(false, std::sync::atomic::Ordering::Release);
                     }
                     Err(_) => {
                         eprintln!("[ML] Buffer full, dropping frame slot {}", packed);
-                        // Do not clear the flag – the buffer is still not accepting frames,
-                        // so we are not yet ready to resume normal monotonic checks.
+                        // If buffer is full, we keep the flag true so future frames are discarded.
                     }
                 }
             } else {
