@@ -16,6 +16,7 @@ pub struct Slot<const SIZE: usize> {
     pub generation: u32,
     pub state: u8,
     pub pts_ns: u64,
+    pub seek_gen: u64,
 }
 
 impl<const SIZE: usize> Slot<SIZE> {
@@ -25,6 +26,7 @@ impl<const SIZE: usize> Slot<SIZE> {
             generation: 0,
             state: STATE_FREE,
             pts_ns: 0,
+            seek_gen: 0,
         }
     }
 }
@@ -160,6 +162,35 @@ impl<const SIZE: usize> SlotPool<SIZE> {
         debug_assert_eq!(slot.generation, generation);
         debug_assert_ne!(slot.state, STATE_FREE);
         slot.pts_ns
+    }
+
+    pub fn set_seek_gen(&self, packed: PackedIndex, seek_gen: u64) {
+        let (idx, generation) = Self::unpack_index(packed);
+        let mut state = self.state.lock();
+        let slot = &mut state.slots[idx];
+        debug_assert_eq!(slot.generation, generation);
+        debug_assert_ne!(slot.state, STATE_FREE);
+        slot.seek_gen = seek_gen;
+    }
+
+    pub fn get_seek_gen(&self, packed: PackedIndex) -> u64 {
+        let (idx, generation) = Self::unpack_index(packed);
+        let state = self.state.lock();
+        let slot = &state.slots[idx];
+        debug_assert_eq!(slot.generation, generation);
+        debug_assert_ne!(slot.state, STATE_FREE);
+        slot.seek_gen
+    }
+
+    pub fn discard_slot(&self, packed: PackedIndex) {
+        let (idx, generation) = Self::unpack_index(packed);
+        let mut state = self.state.lock();
+        let slot = &mut state.slots[idx];
+        if slot.generation == generation {
+            slot.generation = slot.generation.wrapping_add(1);
+            slot.state = STATE_FREE;
+            state.free.push_back(idx);
+        }
     }
 }
 
