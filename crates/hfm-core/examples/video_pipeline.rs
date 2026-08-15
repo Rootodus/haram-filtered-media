@@ -686,18 +686,27 @@ impl App {
     ) {
         while running.load(Ordering::Acquire) {
             if let Some(packed) = video_ingested_cons.pop() {
-                // Check generation
+                // --- Check 1: Before inference ---
                 let current_gen = seek_gen.load(Ordering::Acquire);
                 let slot_gen = pool.get_seek_gen(packed);
                 if slot_gen != current_gen {
-                    // Frame is from a previous seek – discard
                     pool.discard_slot(packed);
                     continue;
                 }
 
-                // Process frame
+                // --- Run inference ---
                 let _result = pool
                     .with_payload_mut(packed, |payload| model.filter_frame(payload, WIDTH, HEIGHT));
+
+                // --- Check 2: After inference (in case a seek happened during inference) ---
+                let current_gen_after = seek_gen.load(Ordering::Acquire);
+                if slot_gen != current_gen_after {
+                    // The generation changed during inference – discard this frame
+                    pool.discard_slot(packed);
+                    continue;
+                }
+
+                // --- Transition state and push to buffer ---
                 pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
                     .expect("State transition failed");
 
