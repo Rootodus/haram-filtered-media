@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use gst::glib::ControlFlow;
 use gstreamer as gst;
 use gstreamer::glib::object::Cast;
@@ -7,7 +9,10 @@ use gstreamer_app as gst_app;
 
 use gst::{ClockTime, SeekFlags};
 use hfm_core::ml::PeopleSegFilter;
-use hfm_core::pipeline::{FrameSource, HEIGHT, VideoPipeline, WIDTH};
+use hfm_core::pipeline::{
+    FrameSource, HEIGHT, N_V, PipelineCommand, PipelineController, SeekDelta, VIDEO_SLOT_SIZE,
+    WIDTH,
+};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use wgpu::{
@@ -179,7 +184,7 @@ struct App {
     texture: Option<wgpu::Texture>,
     sampler: Option<wgpu::Sampler>,
     bind_group: Option<wgpu::BindGroup>,
-    pipeline: Option<VideoPipeline>,
+    pipeline: Option<PipelineController>,
 }
 
 impl Default for App {
@@ -444,7 +449,7 @@ impl App {
     fn init_pipeline(&mut self) {
         let source = GstSource::new().expect("Failed to create GStreamer source");
         let model = PeopleSegFilter::new("models/pphumanseg.onnx").expect("Failed to load model");
-        let mut pipeline = VideoPipeline::new(Box::new(source), model);
+        let mut pipeline = PipelineController::new(Box::new(source), model);
         pipeline.start();
         self.pipeline = Some(pipeline);
     }
@@ -589,10 +594,14 @@ impl ApplicationHandler for App {
                 if let Some(pipeline) = self.pipeline.as_ref() {
                     match named_key {
                         winit::keyboard::NamedKey::ArrowLeft => {
-                            let _ = pipeline.seek(-SEEK_DELTA_NS);
+                            let _ = pipeline.send_command(PipelineCommand::Seek(
+                                SeekDelta::Backward(SEEK_DELTA_NS as u64),
+                            ));
                         }
                         winit::keyboard::NamedKey::ArrowRight => {
-                            let _ = pipeline.seek(SEEK_DELTA_NS);
+                            let _ = pipeline.send_command(PipelineCommand::Seek(
+                                SeekDelta::Forward(SEEK_DELTA_NS as u64),
+                            ));
                         }
                         _ => {}
                     }

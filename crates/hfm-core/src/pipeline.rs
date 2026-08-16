@@ -3,12 +3,12 @@
 
 use crate::buffer::{MediaBuffer, Pts, VideoFrame};
 use crate::filter::VideoFilter;
-use crate::memory::{PackedIndex, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool};
+use crate::memory::{PackedIndex, SlotPool};
 use crate::ml::PeopleSegFilter;
 use crossbeam::queue::ArrayQueue;
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Constants for the video resolution (must match the model's expected input size).
 pub const WIDTH: u32 = 960;
@@ -22,231 +22,300 @@ pub trait FrameSource: Send + Sync {
     fn seek(&mut self, delta_ns: i64) -> Result<(), String>;
 }
 
-/// The video pipeline. Owns the ML model, the memory pool, the buffer, and the ingest thread.
-pub struct VideoPipeline {
-    source: Option<Box<dyn FrameSource>>, // moved into ingest thread on start
-    model: Arc<PeopleSegFilter>,
-    pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
+/// Direction and amount for a seek.
+#[derive(Debug, Clone, Copy)]
+pub enum SeekDelta {
+    Forward(u64),
+    Backward(u64),
+}
+
+impl SeekDelta {
+    pub fn to_i64(&self) -> i64 {
+        match self {
+            SeekDelta::Forward(delta) => *delta as i64,
+            SeekDelta::Backward(delta) => -(*delta as i64),
+        }
+    }
+}
+
+/// Possible states of the pipeline.
+#[derive(Debug)]
+pub enum PipelineState {
+    Idle,
+    Playing {
+        generation: u64,
+    },
+    Seeking {
+        generation: u64,
+        pending_delta: i64,
+        initiated: bool,
+    },
+    Stopped,
+}
+
+/// Commands sent to the pipeline controller.
+#[derive(Debug)]
+pub enum PipelineCommand {
+    Seek(SeekDelta),
+    Stop,
+}
+
+/// The pipeline controller. Owns the state, source, buffer, and ML queue.
+pub struct PipelineController {
+    state: PipelineState,
+    source: Option<Box<dyn FrameSource>>,
+    model: Option<Arc<PeopleSegFilter>>,
     buffer: Arc<MediaBuffer>,
-    ingest_queue: Arc<ArrayQueue<PackedIndex>>,
-    seek_gen: Arc<AtomicU64>,
-    seek_cmd_tx: Sender<i64>,
-    _seek_cmd_rx: Receiver<i64>,
-    _ingest_handle: Option<std::thread::JoinHandle<()>>,
+    slot_pool: Option<Arc<SlotPool<VIDEO_SLOT_SIZE>>>,
+    ml_queue: Option<Arc<ArrayQueue<PackedIndex>>>,
+    cmd_rx: Receiver<PipelineCommand>,
+    cmd_tx: Sender<PipelineCommand>,
     _ml_handle: Option<std::thread::JoinHandle<()>>,
+    _controller_handle: Option<std::thread::JoinHandle<()>>,
     running: Arc<AtomicBool>,
 }
 
-impl VideoPipeline {
+impl PipelineController {
     pub fn new(source: Box<dyn FrameSource>, model: PeopleSegFilter) -> Self {
         let pool = Arc::new(SlotPool::<VIDEO_SLOT_SIZE>::new(N_V));
         let buffer = Arc::new(MediaBuffer::new(5.0, 30.0, 44100, 2048));
-        let ingest_queue = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
-        let seek_gen = Arc::new(AtomicU64::new(0));
+        let ml_queue = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
         let running = Arc::new(AtomicBool::new(true));
-        let (tx, rx) = bounded(1);
+        let (tx, rx) = bounded(32);
 
-        VideoPipeline {
+        PipelineController {
+            state: PipelineState::Idle,
             source: Some(source),
-            model: Arc::new(model),
-            pool,
-            buffer,
-            ingest_queue,
-            seek_gen,
-            seek_cmd_tx: tx,
-            _seek_cmd_rx: rx,
-            _ingest_handle: None,
+            model: Some(Arc::new(model)),
+            buffer: buffer.clone(),
+            slot_pool: Some(pool),
+            ml_queue: Some(ml_queue),
+            cmd_rx: rx,
+            cmd_tx: tx,
             _ml_handle: None,
+            _controller_handle: None,
             running,
         }
     }
 
-    pub fn start(&mut self) {
-        let source = self.source.take().expect("Pipeline already started");
-        let pool = self.pool.clone();
-        let ingest_queue = self.ingest_queue.clone();
-        let buffer = self.buffer.clone();
-        let model = self.model.clone();
-        let seek_gen = self.seek_gen.clone();
-        let running = self.running.clone();
-        let seek_cmd_rx = self._seek_cmd_rx.clone();
-
-        // Ingest thread – now owns the source directly
-        let ingest_pool = pool.clone();
-        let ingest_queue_clone = ingest_queue.clone();
-        let ingest_buffer = buffer.clone();
-        let ingest_seek_gen = seek_gen.clone();
-        let ingest_running = running.clone();
-        let ingest_handle = std::thread::spawn(move || {
-            Self::ingest_loop(
-                source,
-                ingest_pool,
-                ingest_queue_clone,
-                ingest_buffer,
-                ingest_seek_gen,
-                seek_cmd_rx,
-                ingest_running,
-            );
-        });
-
-        // ML thread
-        let ml_pool = pool.clone();
-        let ml_ingest_queue = ingest_queue.clone();
-        let ml_buffer = buffer.clone();
-        let ml_model = model.clone();
-        let ml_seek_gen = seek_gen.clone();
-        let ml_running = running.clone();
-        let ml_handle = std::thread::spawn(move || {
-            Self::ml_loop(
-                ml_pool,
-                ml_ingest_queue,
-                ml_buffer,
-                ml_model,
-                ml_seek_gen,
-                ml_running,
-            );
-        });
-
-        self._ingest_handle = Some(ingest_handle);
-        self._ml_handle = Some(ml_handle);
+    pub fn send_command(
+        &self,
+        cmd: PipelineCommand,
+    ) -> Result<(), crossbeam_channel::SendError<PipelineCommand>> {
+        self.cmd_tx.send(cmd)
     }
 
     pub fn pop_processed_frame(&self) -> Option<VideoFrame> {
         self.buffer.pop_video()
     }
 
-    /// Send a seek command (delta in nanoseconds) to the ingest thread.
-    pub fn seek(&self, delta_ns: i64) -> Result<(), String> {
-        // We ignore the result; if the channel is full, the seek is already pending.
-        let _ = self.seek_cmd_tx.try_send(delta_ns);
-        Ok(())
+    pub fn start(&mut self) {
+        let source = self.source.take().expect("Controller already started");
+        let model = self.model.take().expect("Controller already started");
+        let buffer = self.buffer.clone();
+        let slot_pool = self.slot_pool.take().expect("Controller already started");
+        let ml_queue = self.ml_queue.take().expect("Controller already started");
+        let cmd_rx = self.cmd_rx.clone();
+        let running = self.running.clone();
+
+        let state = std::mem::replace(&mut self.state, PipelineState::Stopped);
+
+        // Spawn ML thread
+        let ml_slot_pool = slot_pool.clone();
+        let ml_model = model;
+        let ml_queue_clone = ml_queue.clone();
+        let ml_buffer = buffer.clone();
+        let ml_running = running.clone();
+        let ml_handle = std::thread::spawn(move || {
+            Self::ml_thread(
+                ml_queue_clone,
+                ml_slot_pool,
+                ml_model,
+                ml_buffer,
+                ml_running,
+            );
+        });
+
+        // Spawn controller loop – owns source
+        let controller_handle = std::thread::spawn(move || {
+            Self::run_loop(state, source, buffer, slot_pool, ml_queue, cmd_rx, running);
+        });
+
+        self._ml_handle = Some(ml_handle);
+        self._controller_handle = Some(controller_handle);
     }
 
-    // Private ingest loop – now receives the source as a mutable parameter
-    fn ingest_loop(
-        mut source: Box<dyn FrameSource>,
-        pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
-        ingest_queue: Arc<ArrayQueue<PackedIndex>>,
-        buffer: Arc<MediaBuffer>,
-        seek_gen: Arc<AtomicU64>,
-        seek_cmd_rx: Receiver<i64>,
-        running: Arc<AtomicBool>,
-    ) {
-        let mut seeking = false;
-
-        while running.load(Ordering::Acquire) {
-            // Check for seek commands – process only the most recent
-            let mut last_delta = None;
-            while let Ok(delta) = seek_cmd_rx.try_recv() {
-                last_delta = Some(delta);
-                // Continue draining to get the latest command
-            }
-
-            if let Some(delta_ns) = last_delta {
-                if !seeking {
-                    seeking = true;
-                    seek_gen.fetch_add(1, Ordering::Release);
-                    buffer.flush();
-                    while ingest_queue.pop().is_some() {}
-                    match source.seek(delta_ns) {
-                        Ok(()) => {
-                            // Keep seeking true; will be cleared after first frame
-                        }
-                        Err(e) => {
-                            eprintln!("[INGEST] Seek failed: {}", e);
-                            seeking = false;
-                        }
-                    }
-                } else {
-                    eprintln!("[INGEST] Seek already in progress, ignoring command");
-                }
-            }
-
-            // Pull a frame
-            match source.pull_frame() {
-                Some((rgba, pts_ns)) => {
-                    if let Some(packed) = pool.try_claim() {
-                        pool.with_payload_mut(packed, |payload| {
-                            payload.copy_from_slice(&rgba);
-                        });
-                        pool.set_pts_ns(packed, pts_ns);
-                        let current_gen = seek_gen.load(Ordering::Acquire);
-                        pool.set_seek_gen(packed, current_gen);
-
-                        while let Err(_) = ingest_queue.push(packed) {
-                            std::thread::sleep(std::time::Duration::from_micros(100));
-                        }
-                    } else {
-                        std::thread::sleep(std::time::Duration::from_micros(100));
-                    }
-
-                    if seeking {
-                        seeking = false;
-                    }
-                }
-                None => {
-                    if seeking {
-                        eprintln!("[INGEST] No frame after seek, clearing seeking flag");
-                        seeking = false;
-                    } else {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_micros(100));
-                }
-            }
-        }
-    }
-
-    // Private ML loop (unchanged)
-    fn ml_loop(
-        pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
-        ingest_queue: Arc<ArrayQueue<PackedIndex>>,
-        buffer: Arc<MediaBuffer>,
+    // ML thread: consumes from queue, runs inference, pushes to buffer.
+    fn ml_thread(
+        ml_queue: Arc<ArrayQueue<PackedIndex>>,
+        slot_pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         model: Arc<PeopleSegFilter>,
-        seek_gen: Arc<AtomicU64>,
+        buffer: Arc<MediaBuffer>,
         running: Arc<AtomicBool>,
     ) {
         while running.load(Ordering::Acquire) {
-            if let Some(packed) = ingest_queue.pop() {
-                // Check generation before inference
-                let slot_gen = pool.get_seek_gen(packed);
-                let current_gen = seek_gen.load(Ordering::Acquire);
-                if slot_gen != current_gen {
-                    pool.discard_slot(packed);
-                    continue;
-                }
-
-                // Run inference
-                let _result = pool
+            if let Some(packed) = ml_queue.pop() {
+                let _ = slot_pool
                     .with_payload_mut(packed, |payload| model.filter_frame(payload, WIDTH, HEIGHT));
-
-                // Check generation after inference
-                let current_gen_after = seek_gen.load(Ordering::Acquire);
-                if slot_gen != current_gen_after {
-                    pool.discard_slot(packed);
-                    continue;
-                }
-
-                // Transition state and push to buffer
-                pool.transition_state(packed, STATE_INGESTED, STATE_ML_COMMITTED)
-                    .expect("State transition failed");
-
-                let pts_ns = pool.get_pts_ns(packed);
+                let pts_ns = slot_pool.get_pts_ns(packed);
                 let pts = Pts(pts_ns);
-                let data = pool.with_payload_mut(packed, |p| p.to_vec());
+                let data = slot_pool.with_payload_mut(packed, |p| p.to_vec());
                 let frame = VideoFrame {
                     pts,
                     slot: packed,
                     data,
-                    seek_gen: slot_gen,
+                    seek_gen: 0, // buffer uses its own generation check
                 };
-
                 if let Err(_) = buffer.push_video(frame) {
-                    pool.discard_slot(packed);
+                    slot_pool.discard_slot(packed);
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
         }
+    }
+
+    // Helper: enqueue a frame (write to slot, set generation, push to ML queue)
+    fn enqueue_frame(
+        rgba: Vec<u8>,
+        pts_ns: u64,
+        generation: u64,
+        slot_pool: &Arc<SlotPool<VIDEO_SLOT_SIZE>>,
+        ml_queue: &Arc<ArrayQueue<PackedIndex>>,
+    ) {
+        if let Some(packed) = slot_pool.try_claim() {
+            slot_pool.with_payload_mut(packed, |payload| {
+                payload.copy_from_slice(&rgba);
+            });
+            slot_pool.set_pts_ns(packed, pts_ns);
+            slot_pool.set_seek_gen(packed, generation);
+            if let Err(_) = ml_queue.push(packed) {
+                eprintln!("[CONTROLLER] ML queue full, dropping frame");
+            }
+        } else {
+            eprintln!("[CONTROLLER] No free slot available");
+        }
+    }
+
+    // Controller loop – owns source, state, and pulls frames.
+    fn run_loop(
+        mut state: PipelineState,
+        mut source: Box<dyn FrameSource>,
+        buffer: Arc<MediaBuffer>,
+        slot_pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
+        ml_queue: Arc<ArrayQueue<PackedIndex>>,
+        cmd_rx: Receiver<PipelineCommand>,
+        running: Arc<AtomicBool>,
+    ) {
+        println!("[CONTROLLER] Run loop started");
+
+        while running.load(Ordering::Acquire) {
+            // Check for commands without blocking
+            match cmd_rx.try_recv() {
+                Ok(cmd) => match cmd {
+                    PipelineCommand::Seek(delta) => match &mut state {
+                        PipelineState::Idle => {
+                            let delta_i64 = delta.to_i64();
+                            if let Err(e) = source.seek(delta_i64) {
+                                eprintln!("[CONTROLLER] Seek from idle failed: {}", e);
+                            } else {
+                                state = PipelineState::Seeking {
+                                    generation: 1,
+                                    pending_delta: delta_i64,
+                                    initiated: true,
+                                };
+                            }
+                        }
+                        PipelineState::Playing { generation } => {
+                            let new_generation = *generation + 1;
+                            buffer.flush();
+                            let delta_i64 = delta.to_i64();
+                            if let Err(e) = source.seek(delta_i64) {
+                                eprintln!("[CONTROLLER] Seek failed: {}", e);
+                            } else {
+                                state = PipelineState::Seeking {
+                                    generation: new_generation,
+                                    pending_delta: delta_i64,
+                                    initiated: true,
+                                };
+                            }
+                        }
+                        PipelineState::Seeking { .. } => {
+                            eprintln!("[CONTROLLER] Overlapping seek ignored");
+                        }
+                        PipelineState::Stopped => {
+                            eprintln!("[CONTROLLER] Seek ignored (stopped)");
+                        }
+                    },
+                    PipelineCommand::Stop => {
+                        state = PipelineState::Stopped;
+                        break;
+                    }
+                },
+                Err(TryRecvError::Empty) => {
+                    // No command; pull a frame if state allows
+                    match &mut state {
+                        PipelineState::Idle => {
+                            if let Some((rgba, pts_ns)) = source.pull_frame() {
+                                Self::enqueue_frame(rgba, pts_ns, 1, &slot_pool, &ml_queue);
+                                state = PipelineState::Playing { generation: 1 };
+                            } else {
+                                // End of stream
+                                state = PipelineState::Stopped;
+                                break;
+                            }
+                        }
+                        PipelineState::Playing { generation } => {
+                            if let Some((rgba, pts_ns)) = source.pull_frame() {
+                                Self::enqueue_frame(
+                                    rgba,
+                                    pts_ns,
+                                    *generation,
+                                    &slot_pool,
+                                    &ml_queue,
+                                );
+                            } else {
+                                state = PipelineState::Stopped;
+                                break;
+                            }
+                        }
+                        PipelineState::Seeking {
+                            generation,
+                            initiated,
+                            ..
+                        } => {
+                            if *initiated {
+                                // Accept first frame after seek
+                                if let Some((rgba, pts_ns)) = source.pull_frame() {
+                                    Self::enqueue_frame(
+                                        rgba,
+                                        pts_ns,
+                                        *generation,
+                                        &slot_pool,
+                                        &ml_queue,
+                                    );
+                                    state = PipelineState::Playing {
+                                        generation: *generation,
+                                    };
+                                } else {
+                                    // No frame after seek (maybe end of stream)
+                                    state = PipelineState::Stopped;
+                                    break;
+                                }
+                            } else {
+                                // Seek not yet initiated; should not happen as we set initiated in seek command.
+                                // Just sleep to avoid busy loop.
+                                std::thread::sleep(std::time::Duration::from_micros(100));
+                            }
+                        }
+                        PipelineState::Stopped => {
+                            break;
+                        }
+                    }
+                }
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        println!("[CONTROLLER] Run loop exiting");
     }
 }
