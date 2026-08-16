@@ -142,14 +142,13 @@ impl VideoPipeline {
                     seek_gen.fetch_add(1, Ordering::Release);
                     buffer.flush();
                     while ingest_queue.pop().is_some() {}
-                    // Perform seek and handle the result
                     match source.seek(delta_ns) {
                         Ok(()) => {
                             // Keep seeking true; will be cleared after first frame
                         }
                         Err(e) => {
                             eprintln!("[INGEST] Seek failed: {}", e);
-                            seeking = false; // clear flag on failure
+                            seeking = false; // clear on failure
                         }
                     }
                 } else {
@@ -181,8 +180,17 @@ impl VideoPipeline {
                     }
                 }
                 None => {
-                    // End of stream or error – break
-                    break;
+                    // If we are seeking, do not break; clear the flag and continue.
+                    if seeking {
+                        eprintln!("[INGEST] No frame after seek, clearing seeking flag");
+                        seeking = false;
+                        // Continue the loop to allow new seek commands
+                    } else {
+                        // End of stream – break
+                        break;
+                    }
+                    // Avoid busy loop when no frame is available
+                    std::thread::sleep(std::time::Duration::from_micros(100));
                 }
             }
         }
