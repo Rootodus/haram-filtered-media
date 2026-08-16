@@ -7,7 +7,6 @@ use crate::memory::{PackedIndex, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool};
 use crate::ml::PeopleSegFilter;
 use crossbeam::queue::ArrayQueue;
 use crossbeam_channel::{Receiver, Sender, bounded};
-use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -23,9 +22,9 @@ pub trait FrameSource: Send + Sync {
     fn seek(&mut self, delta_ns: i64) -> Result<(), String>;
 }
 
-/// The video pipeline. Owns the source, the ML model, the memory pool, and the buffer.
+/// The video pipeline. Owns the ML model, the memory pool, the buffer, and the ingest thread.
 pub struct VideoPipeline {
-    source_mutex: Arc<Mutex<Box<dyn FrameSource>>>,
+    source: Option<Box<dyn FrameSource>>, // moved into ingest thread on start
     model: Arc<PeopleSegFilter>,
     pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
     buffer: Arc<MediaBuffer>,
@@ -48,7 +47,7 @@ impl VideoPipeline {
         let (tx, rx) = bounded(1);
 
         VideoPipeline {
-            source_mutex: Arc::new(Mutex::new(source)),
+            source: Some(source),
             model: Arc::new(model),
             pool,
             buffer,
@@ -63,7 +62,7 @@ impl VideoPipeline {
     }
 
     pub fn start(&mut self) {
-        let source_mutex = self.source_mutex.clone();
+        let source = self.source.take().expect("Pipeline already started");
         let pool = self.pool.clone();
         let ingest_queue = self.ingest_queue.clone();
         let buffer = self.buffer.clone();
@@ -72,8 +71,7 @@ impl VideoPipeline {
         let running = self.running.clone();
         let seek_cmd_rx = self._seek_cmd_rx.clone();
 
-        // Ingest thread
-        let ingest_source = source_mutex.clone();
+        // Ingest thread – now owns the source directly
         let ingest_pool = pool.clone();
         let ingest_queue_clone = ingest_queue.clone();
         let ingest_buffer = buffer.clone();
@@ -81,7 +79,7 @@ impl VideoPipeline {
         let ingest_running = running.clone();
         let ingest_handle = std::thread::spawn(move || {
             Self::ingest_loop(
-                ingest_source,
+                source,
                 ingest_pool,
                 ingest_queue_clone,
                 ingest_buffer,
@@ -119,14 +117,14 @@ impl VideoPipeline {
 
     /// Send a seek command (delta in nanoseconds) to the ingest thread.
     pub fn seek(&self, delta_ns: i64) -> Result<(), String> {
-        // Try sending; if the channel is full, we ignore the command (or could block).
+        // We ignore the result; if the channel is full, the seek is already pending.
         let _ = self.seek_cmd_tx.try_send(delta_ns);
         Ok(())
     }
 
-    // Private ingest loop
+    // Private ingest loop – now receives the source as a mutable parameter
     fn ingest_loop(
-        source_mutex: Arc<Mutex<Box<dyn FrameSource>>>,
+        mut source: Box<dyn FrameSource>,
         pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         ingest_queue: Arc<ArrayQueue<PackedIndex>>,
         buffer: Arc<MediaBuffer>,
@@ -145,14 +143,15 @@ impl VideoPipeline {
                     buffer.flush();
                     // Drain the ingest queue to discard old indices
                     while ingest_queue.pop().is_some() {}
-                    let _ = source_mutex.lock().seek(delta_ns);
+                    let _ = source.seek(delta_ns);
+                    // Keep seeking true until we enqueue the first frame after seek
                 } else {
                     eprintln!("[INGEST] Seek already in progress, ignoring command");
                 }
             }
 
             // Pull a frame
-            match source_mutex.lock().pull_frame() {
+            match source.pull_frame() {
                 Some((rgba, pts_ns)) => {
                     if let Some(packed) = pool.try_claim() {
                         pool.with_payload_mut(packed, |payload| {
