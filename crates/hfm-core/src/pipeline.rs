@@ -135,54 +135,49 @@ impl VideoPipeline {
         running: Arc<AtomicBool>,
     ) {
         let mut seeking = false;
-        let mut seek_in_progress = false; // new
 
         while running.load(Ordering::Acquire) {
             // Check for seek commands
             if let Ok(delta_ns) = seek_cmd_rx.try_recv() {
-                if !seek_in_progress {
-                    seek_in_progress = true;
+                if !seeking {
                     seeking = true;
                     seek_gen.fetch_add(1, Ordering::Release);
                     buffer.flush();
+                    // Drain the ingest queue to discard old indices
+                    while ingest_queue.pop().is_some() {}
                     let _ = source_mutex.lock().seek(delta_ns);
-                    // We keep seeking true, and seek_in_progress true until we keep a frame.
                 } else {
-                    // Ignore overlapping seek
                     eprintln!("[INGEST] Seek already in progress, ignoring command");
                 }
             }
 
             // Pull a frame
-            if let Some((rgba, pts_ns)) = source_mutex.lock().pull_frame() {
-                if seeking {
-                    // Discard frame (do not claim slot)
-                    continue;
-                }
+            match source_mutex.lock().pull_frame() {
+                Some((rgba, pts_ns)) => {
+                    if let Some(packed) = pool.try_claim() {
+                        pool.with_payload_mut(packed, |payload| {
+                            payload.copy_from_slice(&rgba);
+                        });
+                        pool.set_pts_ns(packed, pts_ns);
+                        let current_gen = seek_gen.load(Ordering::Acquire);
+                        pool.set_seek_gen(packed, current_gen);
 
-                // Claim a slot
-                if let Some(packed) = pool.try_claim() {
-                    pool.with_payload_mut(packed, |payload| {
-                        payload.copy_from_slice(&rgba);
-                    });
-                    pool.set_pts_ns(packed, pts_ns);
-                    let current_gen = seek_gen.load(Ordering::Acquire);
-                    pool.set_seek_gen(packed, current_gen);
-
-                    while let Err(_) = ingest_queue.push(packed) {
+                        while let Err(_) = ingest_queue.push(packed) {
+                            std::thread::sleep(std::time::Duration::from_micros(100));
+                        }
+                    } else {
                         std::thread::sleep(std::time::Duration::from_micros(100));
                     }
-                } else {
-                    std::thread::sleep(std::time::Duration::from_micros(100));
-                }
 
-                // If we were seeking, after the first kept frame, we can clear the flag
-                if seeking {
-                    seeking = false;
-                    seek_in_progress = false;
+                    // If we were seeking, the first frame after seek is now enqueued
+                    if seeking {
+                        seeking = false;
+                    }
                 }
-            } else {
-                break;
+                None => {
+                    // End of stream or error – break
+                    break;
+                }
             }
         }
     }
