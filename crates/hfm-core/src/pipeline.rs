@@ -6,6 +6,7 @@ use crate::filter::VideoFilter;
 use crate::memory::{PackedIndex, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool};
 use crate::ml::PeopleSegFilter;
 use crossbeam::queue::ArrayQueue;
+use crossbeam_channel::{Receiver, Sender, bounded};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -18,11 +19,7 @@ pub const N_V: usize = 128;
 
 /// A source of video frames.
 pub trait FrameSource: Send + Sync {
-    /// Pull the next frame, returning RGBA data and its PTS in nanoseconds.
     fn pull_frame(&mut self) -> Option<(Vec<u8>, u64)>;
-
-    /// Seek by a delta (positive = forward, negative = backward) in nanoseconds.
-    /// Returns `Ok(())` on success, or an error string if seeking is not supported or fails.
     fn seek(&mut self, delta_ns: i64) -> Result<(), String>;
 }
 
@@ -34,22 +31,21 @@ pub struct VideoPipeline {
     buffer: Arc<MediaBuffer>,
     ingest_queue: Arc<ArrayQueue<PackedIndex>>,
     seek_gen: Arc<AtomicU64>,
-    seek_pending: Arc<AtomicBool>,
+    seek_cmd_tx: Sender<i64>,
+    _seek_cmd_rx: Receiver<i64>,
     _ingest_handle: Option<std::thread::JoinHandle<()>>,
     _ml_handle: Option<std::thread::JoinHandle<()>>,
-    running: Arc<std::sync::atomic::AtomicBool>,
+    running: Arc<AtomicBool>,
 }
 
 impl VideoPipeline {
-    /// Creates a new pipeline with the given source and model.
-    /// The pipeline is not started until `start()` is called.
     pub fn new(source: Box<dyn FrameSource>, model: PeopleSegFilter) -> Self {
         let pool = Arc::new(SlotPool::<VIDEO_SLOT_SIZE>::new(N_V));
         let buffer = Arc::new(MediaBuffer::new(5.0, 30.0, 44100, 2048));
         let ingest_queue = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
         let seek_gen = Arc::new(AtomicU64::new(0));
-        let seek_pending = Arc::new(AtomicBool::new(false));
-        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let running = Arc::new(AtomicBool::new(true));
+        let (tx, rx) = bounded(1);
 
         VideoPipeline {
             source_mutex: Arc::new(Mutex::new(source)),
@@ -58,14 +54,14 @@ impl VideoPipeline {
             buffer,
             ingest_queue,
             seek_gen,
-            seek_pending,
+            seek_cmd_tx: tx,
+            _seek_cmd_rx: rx,
             _ingest_handle: None,
             _ml_handle: None,
             running,
         }
     }
 
-    /// Starts the ingest and ML threads.
     pub fn start(&mut self) {
         let source_mutex = self.source_mutex.clone();
         let pool = self.pool.clone();
@@ -73,8 +69,8 @@ impl VideoPipeline {
         let buffer = self.buffer.clone();
         let model = self.model.clone();
         let seek_gen = self.seek_gen.clone();
-        let seek_pending = self.seek_pending.clone();
         let running = self.running.clone();
+        let seek_cmd_rx = self._seek_cmd_rx.clone();
 
         // Ingest thread
         let ingest_source = source_mutex.clone();
@@ -90,7 +86,7 @@ impl VideoPipeline {
                 ingest_queue_clone,
                 ingest_buffer,
                 ingest_seek_gen,
-                seek_pending,
+                seek_cmd_rx,
                 ingest_running,
             );
         });
@@ -117,24 +113,15 @@ impl VideoPipeline {
         self._ml_handle = Some(ml_handle);
     }
 
-    /// Pops a processed video frame from the buffer, if available.
     pub fn pop_processed_frame(&self) -> Option<VideoFrame> {
         self.buffer.pop_video()
     }
 
-    /// Seeks by a delta (positive forward, negative backward) in nanoseconds.
-    /// This flushes the buffer, increments the generation, and forwards the seek to the source.
+    /// Send a seek command (delta in nanoseconds) to the ingest thread.
     pub fn seek(&self, delta_ns: i64) -> Result<(), String> {
-        // Set the pending flag
-        self.seek_pending.store(true, Ordering::Release);
-        // Increment generation and flush buffer
-        self.seek_gen.fetch_add(1, Ordering::Release);
-        self.buffer.flush();
-        // Forward seek to source
-        let result = self.source_mutex.lock().seek(delta_ns);
-        // Clear the pending flag
-        self.seek_pending.store(false, Ordering::Release);
-        result
+        // Try sending; if the channel is full, we ignore the command (or could block).
+        let _ = self.seek_cmd_tx.try_send(delta_ns);
+        Ok(())
     }
 
     // Private ingest loop
@@ -142,53 +129,72 @@ impl VideoPipeline {
         source_mutex: Arc<Mutex<Box<dyn FrameSource>>>,
         pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         ingest_queue: Arc<ArrayQueue<PackedIndex>>,
-        _buffer: Arc<MediaBuffer>,
+        buffer: Arc<MediaBuffer>,
         seek_gen: Arc<AtomicU64>,
-        seek_pending: Arc<AtomicBool>,
-        running: Arc<std::sync::atomic::AtomicBool>,
+        seek_cmd_rx: Receiver<i64>,
+        running: Arc<AtomicBool>,
     ) {
+        let mut seeking = false;
+        let mut seek_in_progress = false; // new
+
         while running.load(Ordering::Acquire) {
-            // If a seek is pending, skip pulling and sleep
-            if seek_pending.load(Ordering::Acquire) {
-                std::thread::sleep(std::time::Duration::from_micros(100));
-                continue;
+            // Check for seek commands
+            if let Ok(delta_ns) = seek_cmd_rx.try_recv() {
+                if !seek_in_progress {
+                    seek_in_progress = true;
+                    seeking = true;
+                    seek_gen.fetch_add(1, Ordering::Release);
+                    buffer.flush();
+                    let _ = source_mutex.lock().seek(delta_ns);
+                    // We keep seeking true, and seek_in_progress true until we keep a frame.
+                } else {
+                    // Ignore overlapping seek
+                    eprintln!("[INGEST] Seek already in progress, ignoring command");
+                }
             }
-            // Pull a frame from the source
-            let (rgba, pts_ns) = match source_mutex.lock().pull_frame() {
-                Some(data) => data,
-                None => break,
-            };
 
-            // Claim a slot
-            if let Some(packed) = pool.try_claim() {
-                // Write data
-                pool.with_payload_mut(packed, |payload| {
-                    payload.copy_from_slice(&rgba);
-                });
-                // Store PTS and current generation
-                pool.set_pts_ns(packed, pts_ns);
-                let current_gen = seek_gen.load(Ordering::Acquire);
-                pool.set_seek_gen(packed, current_gen);
+            // Pull a frame
+            if let Some((rgba, pts_ns)) = source_mutex.lock().pull_frame() {
+                if seeking {
+                    // Discard frame (do not claim slot)
+                    continue;
+                }
 
-                // Push to ingest queue
-                while let Err(_) = ingest_queue.push(packed) {
+                // Claim a slot
+                if let Some(packed) = pool.try_claim() {
+                    pool.with_payload_mut(packed, |payload| {
+                        payload.copy_from_slice(&rgba);
+                    });
+                    pool.set_pts_ns(packed, pts_ns);
+                    let current_gen = seek_gen.load(Ordering::Acquire);
+                    pool.set_seek_gen(packed, current_gen);
+
+                    while let Err(_) = ingest_queue.push(packed) {
+                        std::thread::sleep(std::time::Duration::from_micros(100));
+                    }
+                } else {
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
+
+                // If we were seeking, after the first kept frame, we can clear the flag
+                if seeking {
+                    seeking = false;
+                    seek_in_progress = false;
+                }
             } else {
-                // No slot available – wait
-                std::thread::sleep(std::time::Duration::from_micros(100));
+                break;
             }
         }
     }
 
-    // Private ML loop
+    // Private ML loop (unchanged)
     fn ml_loop(
         pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         ingest_queue: Arc<ArrayQueue<PackedIndex>>,
         buffer: Arc<MediaBuffer>,
         model: Arc<PeopleSegFilter>,
         seek_gen: Arc<AtomicU64>,
-        running: Arc<std::sync::atomic::AtomicBool>,
+        running: Arc<AtomicBool>,
     ) {
         while running.load(Ordering::Acquire) {
             if let Some(packed) = ingest_queue.pop() {
@@ -226,7 +232,6 @@ impl VideoPipeline {
                 };
 
                 if let Err(_) = buffer.push_video(frame) {
-                    // Buffer rejected (flush happened) – discard the slot
                     pool.discard_slot(packed);
                 }
             } else {
