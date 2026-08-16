@@ -141,10 +141,17 @@ impl VideoPipeline {
                     seeking = true;
                     seek_gen.fetch_add(1, Ordering::Release);
                     buffer.flush();
-                    // Drain the ingest queue to discard old indices
                     while ingest_queue.pop().is_some() {}
-                    let _ = source.seek(delta_ns);
-                    // Keep seeking true until we enqueue the first frame after seek
+                    // Perform seek and handle the result
+                    match source.seek(delta_ns) {
+                        Ok(()) => {
+                            // Keep seeking true; will be cleared after first frame
+                        }
+                        Err(e) => {
+                            eprintln!("[INGEST] Seek failed: {}", e);
+                            seeking = false; // clear flag on failure
+                        }
+                    }
                 } else {
                     eprintln!("[INGEST] Seek already in progress, ignoring command");
                 }
