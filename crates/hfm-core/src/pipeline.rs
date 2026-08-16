@@ -135,8 +135,14 @@ impl VideoPipeline {
         let mut seeking = false;
 
         while running.load(Ordering::Acquire) {
-            // Check for seek commands
-            if let Ok(delta_ns) = seek_cmd_rx.try_recv() {
+            // Check for seek commands – process only the most recent
+            let mut last_delta = None;
+            while let Ok(delta) = seek_cmd_rx.try_recv() {
+                last_delta = Some(delta);
+                // Continue draining to get the latest command
+            }
+
+            if let Some(delta_ns) = last_delta {
                 if !seeking {
                     seeking = true;
                     seek_gen.fetch_add(1, Ordering::Release);
@@ -148,7 +154,7 @@ impl VideoPipeline {
                         }
                         Err(e) => {
                             eprintln!("[INGEST] Seek failed: {}", e);
-                            seeking = false; // clear on failure
+                            seeking = false;
                         }
                     }
                 } else {
@@ -174,22 +180,17 @@ impl VideoPipeline {
                         std::thread::sleep(std::time::Duration::from_micros(100));
                     }
 
-                    // If we were seeking, the first frame after seek is now enqueued
                     if seeking {
                         seeking = false;
                     }
                 }
                 None => {
-                    // If we are seeking, do not break; clear the flag and continue.
                     if seeking {
                         eprintln!("[INGEST] No frame after seek, clearing seeking flag");
                         seeking = false;
-                        // Continue the loop to allow new seek commands
                     } else {
-                        // End of stream – break
                         break;
                     }
-                    // Avoid busy loop when no frame is available
                     std::thread::sleep(std::time::Duration::from_micros(100));
                 }
             }
