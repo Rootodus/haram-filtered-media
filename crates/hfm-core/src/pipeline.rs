@@ -100,15 +100,21 @@ impl PipelineController {
     }
 
     pub fn pop_processed_frame(&self) -> Option<VideoFrame> {
-        self.buffer.pop_video()
+        let frame = self.buffer.pop_video()?;
+
+        if let Some(pool) = self.slot_pool.as_ref() {
+            pool.discard_slot(frame.slot);
+        }
+
+        Some(frame)
     }
 
     pub fn start(&mut self) {
         let source = self.source.take().expect("Controller already started");
         let model = self.model.take().expect("Controller already started");
         let buffer = self.buffer.clone();
-        let slot_pool = self.slot_pool.take().expect("Controller already started");
-        let ml_queue = self.ml_queue.take().expect("Controller already started");
+        let slot_pool = self.slot_pool.clone().expect("Controller already started");
+        let ml_queue = self.ml_queue.clone().expect("Controller already started");
         let cmd_rx = self.cmd_rx.clone();
         let running = self.running.clone();
 
@@ -130,9 +136,19 @@ impl PipelineController {
             );
         });
 
-        // Spawn controller loop – owns source
+        let controller_slot_pool = slot_pool.clone();
+        let controller_ml_queue = ml_queue.clone();
+
         let controller_handle = std::thread::spawn(move || {
-            Self::run_loop(state, source, buffer, slot_pool, ml_queue, cmd_rx, running);
+            Self::run_loop(
+                state,
+                source,
+                buffer,
+                controller_slot_pool,
+                controller_ml_queue,
+                cmd_rx,
+                running,
+            );
         });
 
         self._ml_handle = Some(ml_handle);
@@ -186,6 +202,7 @@ impl PipelineController {
             slot_pool.set_seek_gen(packed, seek_gen);
             if let Err(_) = ml_queue.push(packed) {
                 eprintln!("[CONTROLLER] ML queue full, dropping frame");
+                slot_pool.discard_slot(packed);
             }
         } else {
             eprintln!("[CONTROLLER] No free slot available");
