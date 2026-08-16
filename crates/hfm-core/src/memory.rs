@@ -205,7 +205,10 @@ mod tests {
     #[test]
     fn test_claim_release_single() {
         const SIZE: usize = 128;
-        let pool = SlotPool::<SIZE>::new(4);
+        const NUM_SLOTS: usize = 4;
+        let pool = SlotPool::<SIZE>::new(NUM_SLOTS);
+
+        // First claim gets slot 0, generation 0.
         let packed = pool.try_claim().unwrap();
         let (idx, generation) = SlotPool::<SIZE>::unpack_index(packed);
         assert_eq!(idx, 0);
@@ -217,7 +220,7 @@ mod tests {
             assert_eq!(payload[0], 42);
         });
 
-        // Simulate consumption: set state to CONSUMED.
+        // Simulate consumption and release.
         {
             let mut state = pool.state.lock();
             let slot = &mut state.slots[idx];
@@ -225,11 +228,37 @@ mod tests {
         }
         pool.release_audio(packed);
 
-        // Claim again – should get different generation.
+        // Because the free list is FIFO, the next claim gets slot 1 (not slot 0).
         let packed2 = pool.try_claim().unwrap();
         let (idx2, gen2) = SlotPool::<SIZE>::unpack_index(packed2);
-        assert_eq!(idx2, 0);
-        assert_eq!(gen2, 1); // generation should have incremented
+        assert_eq!(idx2, 1);
+        assert_eq!(gen2, 0); // first use of slot 1
+
+        // Release that slot too.
+        {
+            let mut state = pool.state.lock();
+            let slot = &mut state.slots[idx2];
+            slot.state = STATE_CONSUMED;
+        }
+        pool.release_audio(packed2);
+
+        // Continue releasing slots 2 and 3 so that slot 0 becomes free again.
+        for _ in 0..2 {
+            let p = pool.try_claim().unwrap();
+            let (i, _) = SlotPool::<SIZE>::unpack_index(p);
+            let mut state = pool.state.lock();
+            let slot = &mut state.slots[i];
+            slot.state = STATE_CONSUMED;
+            drop(state); // release lock before calling release
+            pool.release_audio(p);
+        }
+
+        // Now claim again. The free list has cycled back to slot 0,
+        // and its generation must have been incremented.
+        let packed3 = pool.try_claim().unwrap();
+        let (idx3, gen3) = SlotPool::<SIZE>::unpack_index(packed3);
+        assert_eq!(idx3, 0);
+        assert_eq!(gen3, 1); // generation incremented after first release
     }
 
     #[test]
