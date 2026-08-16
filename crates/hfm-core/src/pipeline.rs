@@ -42,14 +42,8 @@ impl SeekDelta {
 #[derive(Debug)]
 pub enum PipelineState {
     Idle,
-    Playing {
-        generation: u64,
-    },
-    Seeking {
-        generation: u64,
-        pending_delta: i64,
-        initiated: bool,
-    },
+    Playing,
+    Seeking { epoch: u64 },
     Stopped,
 }
 
@@ -160,11 +154,12 @@ impl PipelineController {
                 let pts_ns = slot_pool.get_pts_ns(packed);
                 let pts = Pts(pts_ns);
                 let data = slot_pool.with_payload_mut(packed, |p| p.to_vec());
+                let seek_gen = slot_pool.get_seek_gen(packed);
                 let frame = VideoFrame {
                     pts,
                     slot: packed,
                     data,
-                    seek_gen: 0, // buffer uses its own generation check
+                    seek_gen,
                 };
                 if let Err(_) = buffer.push_video(frame) {
                     slot_pool.discard_slot(packed);
@@ -179,7 +174,7 @@ impl PipelineController {
     fn enqueue_frame(
         rgba: Vec<u8>,
         pts_ns: u64,
-        generation: u64,
+        seek_gen: u64,
         slot_pool: &Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         ml_queue: &Arc<ArrayQueue<PackedIndex>>,
     ) {
@@ -188,7 +183,7 @@ impl PipelineController {
                 payload.copy_from_slice(&rgba);
             });
             slot_pool.set_pts_ns(packed, pts_ns);
-            slot_pool.set_seek_gen(packed, generation);
+            slot_pool.set_seek_gen(packed, seek_gen);
             if let Err(_) = ml_queue.push(packed) {
                 eprintln!("[CONTROLLER] ML queue full, dropping frame");
             }
@@ -214,31 +209,20 @@ impl PipelineController {
             match cmd_rx.try_recv() {
                 Ok(cmd) => match cmd {
                     PipelineCommand::Seek(delta) => match &mut state {
-                        PipelineState::Idle => {
+                        PipelineState::Idle | PipelineState::Playing => {
+                            // Flush the buffer first and get the new epoch.
+                            let new_epoch = buffer.flush();
                             let delta_i64 = delta.to_i64();
-                            if let Err(e) = source.seek(delta_i64) {
-                                eprintln!("[CONTROLLER] Seek from idle failed: {}", e);
-                            } else {
-                                state = PipelineState::Seeking {
-                                    generation: 1,
-                                    pending_delta: delta_i64,
-                                    initiated: true,
-                                };
-                            }
-                        }
-                        PipelineState::Playing { generation } => {
-                            let new_generation = *generation + 1;
-                            buffer.flush();
-                            let delta_i64 = delta.to_i64();
+
                             if let Err(e) = source.seek(delta_i64) {
                                 eprintln!("[CONTROLLER] Seek failed: {}", e);
-                            } else {
-                                state = PipelineState::Seeking {
-                                    generation: new_generation,
-                                    pending_delta: delta_i64,
-                                    initiated: true,
-                                };
+                                // Even if the source seek fails, the buffer has already
+                                // been flushed. We move to Seeking with the new epoch so
+                                // that if the source continues producing frames they
+                                // will be accepted and playback can resume.
                             }
+
+                            state = PipelineState::Seeking { epoch: new_epoch };
                         }
                         PipelineState::Seeking { .. } => {
                             eprintln!("[CONTROLLER] Overlapping seek ignored");
@@ -253,59 +237,37 @@ impl PipelineController {
                     }
                 },
                 Err(TryRecvError::Empty) => {
-                    // No command; pull a frame if state allows
+                    // No command; pull a frame if state allows.
                     match &mut state {
                         PipelineState::Idle => {
                             if let Some((rgba, pts_ns)) = source.pull_frame() {
-                                Self::enqueue_frame(rgba, pts_ns, 1, &slot_pool, &ml_queue);
-                                state = PipelineState::Playing { generation: 1 };
+                                let epoch = buffer.current_seek_epoch();
+                                Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_queue);
+                                state = PipelineState::Playing;
                             } else {
-                                // End of stream
+                                // End of stream.
                                 state = PipelineState::Stopped;
                                 break;
                             }
                         }
-                        PipelineState::Playing { generation } => {
+                        PipelineState::Playing => {
                             if let Some((rgba, pts_ns)) = source.pull_frame() {
-                                Self::enqueue_frame(
-                                    rgba,
-                                    pts_ns,
-                                    *generation,
-                                    &slot_pool,
-                                    &ml_queue,
-                                );
+                                let epoch = buffer.current_seek_epoch();
+                                Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_queue);
                             } else {
                                 state = PipelineState::Stopped;
                                 break;
                             }
                         }
-                        PipelineState::Seeking {
-                            generation,
-                            initiated,
-                            ..
-                        } => {
-                            if *initiated {
-                                // Accept first frame after seek
-                                if let Some((rgba, pts_ns)) = source.pull_frame() {
-                                    Self::enqueue_frame(
-                                        rgba,
-                                        pts_ns,
-                                        *generation,
-                                        &slot_pool,
-                                        &ml_queue,
-                                    );
-                                    state = PipelineState::Playing {
-                                        generation: *generation,
-                                    };
-                                } else {
-                                    // No frame after seek (maybe end of stream)
-                                    state = PipelineState::Stopped;
-                                    break;
-                                }
+                        PipelineState::Seeking { epoch } => {
+                            // Pull the first frame after seek.
+                            if let Some((rgba, pts_ns)) = source.pull_frame() {
+                                Self::enqueue_frame(rgba, pts_ns, *epoch, &slot_pool, &ml_queue);
+                                state = PipelineState::Playing;
                             } else {
-                                // Seek not yet initiated; should not happen as we set initiated in seek command.
-                                // Just sleep to avoid busy loop.
-                                std::thread::sleep(std::time::Duration::from_micros(100));
+                                // No frame after seek. Treat as end-of-stream for now.
+                                state = PipelineState::Stopped;
+                                break;
                             }
                         }
                         PipelineState::Stopped => {
@@ -316,6 +278,7 @@ impl PipelineController {
                 Err(TryRecvError::Disconnected) => break,
             }
         }
+
         println!("[CONTROLLER] Run loop exiting");
     }
 }

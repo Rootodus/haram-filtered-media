@@ -1,19 +1,17 @@
-#![allow(warnings)]
-
 use gst::glib::ControlFlow;
+use gst::{ClockTime, SeekFlags};
 use gstreamer as gst;
 use gstreamer::glib::object::Cast;
 use gstreamer::prelude::GstBinExtManual;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
-
-use gst::{ClockTime, SeekFlags};
 use hfm_core::ml::PeopleSegFilter;
 use hfm_core::pipeline::{
     FrameSource, HEIGHT, N_V, PipelineCommand, PipelineController, SeekDelta, VIDEO_SLOT_SIZE,
     WIDTH,
 };
 use std::sync::Arc;
+use std::time::Duration;
 use wgpu::util::DeviceExt;
 use wgpu::{
     BackendOptions, Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,
@@ -113,15 +111,25 @@ impl GstSource {
 
 impl FrameSource for GstSource {
     fn pull_frame(&mut self) -> Option<(Vec<u8>, u64)> {
-        let sample = match self.sink.pull_sample() {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
-        let buffer = sample.buffer()?;
-        let map = buffer.map_readable().ok()?;
-        let data = map.as_slice().to_vec();
-        let pts_ns = buffer.pts().map(|c| c.nseconds()).unwrap_or(0);
-        Some((data, pts_ns))
+        loop {
+            match self.sink.pull_sample() {
+                Ok(sample) => {
+                    let buffer = sample.buffer()?;
+                    let map = buffer.map_readable().ok()?;
+                    let data = map.as_slice().to_vec();
+                    let pts_ns = buffer.pts().map(|c| c.nseconds()).unwrap_or(0);
+                    return Some((data, pts_ns));
+                }
+                Err(_) => {
+                    if self.sink.is_eos() {
+                        return None;
+                    }
+                    // Not EOS – likely flushing after seek or transient error.
+                    // Wait a bit and retry.
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        }
     }
 
     fn seek(&mut self, delta_ns: i64) -> Result<(), String> {

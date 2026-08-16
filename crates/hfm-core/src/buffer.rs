@@ -176,12 +176,22 @@ impl MediaBuffer {
         }
     }
 
-    /// Flushes both queues and transitions to `Seeking` state.
-    pub fn flush(&self) {
+    /// Returns the current seek epoch.
+    ///
+    /// Frames must carry this value in `VideoFrame.seek_gen` to be accepted.
+    pub fn current_seek_epoch(&self) -> u64 {
+        self.flush_gen.load(Ordering::Acquire)
+    }
+
+    /// Flushes both queues, increments the seek epoch, and returns the new epoch.
+    ///
+    /// After this call, only frames with `seek_gen == returned_epoch` will be accepted.
+    pub fn flush(&self) -> u64 {
         let _lock = self.push_lock.lock();
 
-        // Increment generation
-        self.flush_gen.fetch_add(1, Ordering::Release);
+        // Increment epoch. `fetch_add` returns the previous value, so `+ 1`
+        // gives the new epoch.
+        let new_epoch = self.flush_gen.fetch_add(1, Ordering::Release) + 1;
 
         // Clear queues
         while self.video_queue.pop().is_some() {}
@@ -193,6 +203,8 @@ impl MediaBuffer {
 
         // Transition state to Seeking
         *self.state.lock() = BufferState::Seeking;
+
+        new_epoch
     }
 
     /// Marks the seek as completed. Transitions to `Empty` or `Active` based on queue content.
@@ -289,21 +301,53 @@ mod tests {
     fn test_seek() {
         let buf = MediaBuffer::new(1.0, 30.0, 44100, 2048);
         buf.push_video(dummy_video(1000)).unwrap();
-        buf.flush();
+
+        let epoch = buf.flush();
+        assert_eq!(epoch, 1);
+        assert_eq!(buf.current_seek_epoch(), 1);
         assert_eq!(buf.video_len(), 0);
         assert!(matches!(*buf.state.lock(), BufferState::Seeking));
 
-        // Frame after flush must have the new generation (1)
+        // Frame after flush must have the new generation.
         let mut frame = dummy_video(500);
-        frame.seek_gen = 1;
+        frame.seek_gen = epoch;
         buf.push_video(frame).unwrap();
         assert_eq!(buf.video_len(), 1);
         buf.seek_completed();
         assert!(matches!(*buf.state.lock(), BufferState::Active));
 
-        // Push another frame with seek_gen 1 (same generation) – ok
+        // Push another frame with the same epoch.
         let mut frame2 = dummy_video(600);
-        frame2.seek_gen = 1;
+        frame2.seek_gen = epoch;
         assert!(buf.push_video(frame2).is_ok());
+    }
+
+    #[test]
+    fn test_initial_seek_epoch_is_zero() {
+        let buf = MediaBuffer::new(1.0, 30.0, 44100, 2048);
+        assert_eq!(buf.current_seek_epoch(), 0);
+    }
+
+    #[test]
+    fn test_flush_returns_new_epoch_and_rejects_stale_frames() {
+        let buf = MediaBuffer::new(1.0, 30.0, 44100, 2048);
+
+        let mut first = dummy_video(1000);
+        first.seek_gen = 0;
+        assert!(buf.push_video(first).is_ok());
+
+        let epoch = buf.flush();
+        assert_eq!(epoch, 1);
+        assert_eq!(buf.current_seek_epoch(), 1);
+
+        // A frame from the old epoch must be rejected.
+        let mut stale = dummy_video(900);
+        stale.seek_gen = 0;
+        assert!(buf.push_video(stale).is_err());
+
+        // A frame carrying the new epoch must be accepted.
+        let mut fresh = dummy_video(950);
+        fresh.seek_gen = epoch;
+        assert!(buf.push_video(fresh).is_ok());
     }
 }
