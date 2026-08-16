@@ -249,7 +249,6 @@ impl PipelineController {
                         }
                     },
                     PipelineCommand::Stop => {
-                        state = PipelineState::Stopped;
                         break;
                     }
                 },
@@ -263,7 +262,6 @@ impl PipelineController {
                                 state = PipelineState::Playing;
                             } else {
                                 // End of stream.
-                                state = PipelineState::Stopped;
                                 break;
                             }
                         }
@@ -272,7 +270,6 @@ impl PipelineController {
                                 let epoch = buffer.current_seek_epoch();
                                 Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_queue);
                             } else {
-                                state = PipelineState::Stopped;
                                 break;
                             }
                         }
@@ -283,7 +280,6 @@ impl PipelineController {
                                 state = PipelineState::Playing;
                             } else {
                                 // No frame after seek. Treat as end-of-stream for now.
-                                state = PipelineState::Stopped;
                                 break;
                             }
                         }

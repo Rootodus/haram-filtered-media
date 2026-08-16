@@ -7,11 +7,9 @@ use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use hfm_core::ml::PeopleSegFilter;
 use hfm_core::pipeline::{
-    FrameSource, HEIGHT, N_V, PipelineCommand, PipelineController, SeekDelta, VIDEO_SLOT_SIZE,
-    WIDTH,
+    FrameSource, HEIGHT, PipelineCommand, PipelineController, SeekDelta, WIDTH,
 };
 use std::sync::Arc;
-use std::time::Duration;
 use wgpu::util::DeviceExt;
 use wgpu::{
     BackendOptions, Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,
