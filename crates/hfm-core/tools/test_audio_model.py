@@ -5,10 +5,9 @@ import time
 # Use CPU for now (DML not available in this env)
 providers = ["CPUExecutionProvider"]
 
-
-# https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/sherpa-onnx-spleeter-2stems-fp16.tar.bz2
+# https://huggingface.co/StemSplitio/htdemucs-ft-vocals-onnx/blob/main/htdemucs_ft_vocals_fp16weights.onnx
 session = ort.InferenceSession(
-    "../models/sherpa-onnx-spleeter-2stems-fp16/vocals.fp16.onnx", providers=providers
+    "../models/htdemucs_ft_vocals_fp16weights.onnx", providers=providers
 )
 
 print("Providers:", session.get_providers())
