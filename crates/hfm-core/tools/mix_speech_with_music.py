@@ -4,7 +4,7 @@ import numpy as np
 
 # Paths to your source files
 speech_path = "../assets/speech.wav"  # speech-only audio
-music_path = "../assets/bg_music.wav"  # music-only audio (instrumental)
+music_path = "../assets/music_bg.wav"  # music-only audio (instrumental)
 output_path = "../assets/mixed_audio.wav"
 
 # Target sample rate (must match Spleeter's model, i.e., 41000 Hz)
