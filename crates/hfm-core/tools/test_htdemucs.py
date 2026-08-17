@@ -26,7 +26,7 @@ def main():
         type=int,
         default=3,
         choices=[0, 1, 2, 3],
-        help="Stem to extract: 0=vocals, 1=drums, 2=bass, 3=other (default: 3)",
+        help="Stem to extract: 0=drums, 1=bass, 2=other, 3=vocals (default: 3)",
     )
     parser.add_argument(
         "--backend", default="cpu", choices=["cpu", "dml"], help="Execution provider"
