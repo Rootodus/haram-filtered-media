@@ -37,6 +37,12 @@ mod audio_bench {
                     let mut dml_builder = Session::builder()
                         .map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
                     dml_builder = dml_builder
+                        .with_parallel_execution(false)
+                        .map_err(|e| anyhow!("Failed to set execution mode: {}", e))?;
+                    dml_builder = dml_builder
+                        .with_memory_pattern(false)
+                        .map_err(|e| anyhow!("Failed to disable memory pattern: {}", e))?;
+                    dml_builder = dml_builder
                         .with_optimization_level(GraphOptimizationLevel::Level1)
                         .map_err(|e| anyhow!("Failed to set optimization level: {}", e))?;
                     dml_builder = dml_builder
