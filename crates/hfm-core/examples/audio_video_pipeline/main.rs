@@ -6,6 +6,8 @@ use hfm_core::ml::PeopleSegFilter;
 use hfm_core::pipeline::{PipelineCommand, PipelineController, SeekDelta};
 use renderer::Renderer;
 use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -13,10 +15,222 @@ use winit::{
     window::{Window, WindowId},
 };
 
+mod audio_test {
+    use anyhow::{Result, anyhow};
+    use ndarray::{Array, IxDyn};
+    use ort::session::Session;
+    use ort::session::builder::GraphOptimizationLevel;
+    use ort::value::Value;
+    use std::time::{Duration, Instant};
+
+    /// Build a session with a specific backend (cpu or dml)
+    fn build_session(path: &str, backend: &str) -> Result<Session> {
+        match backend {
+            "cpu" => {
+                let mut builder = Session::builder()
+                    .map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
+                builder = builder
+                    .with_optimization_level(GraphOptimizationLevel::Level1)
+                    .map_err(|e| anyhow!("Failed to set optimization level: {}", e))?;
+                builder = builder
+                    .with_intra_threads(1)
+                    .map_err(|e| anyhow!("Failed to set intra threads: {}", e))?;
+                builder = builder
+                    .with_execution_providers([ort::ep::CPUExecutionProvider::default().build()])
+                    .map_err(|e| anyhow!("Failed to set CPU provider: {}", e))?;
+                let session = builder
+                    .commit_from_file(path)
+                    .map_err(|e| anyhow!("Failed to load model on CPU: {}", e))?;
+                println!("SUCCESS: CPU backend active.");
+                Ok(session)
+            }
+            "dml" => {
+                #[cfg(target_os = "windows")]
+                {
+                    use ort::ep::DirectMLExecutionProvider;
+
+                    // Build DML session from scratch
+                    let mut dml_builder = Session::builder()
+                        .map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
+                    dml_builder = dml_builder
+                        .with_optimization_level(GraphOptimizationLevel::Level1)
+                        .map_err(|e| anyhow!("Failed to set optimization level: {}", e))?;
+                    dml_builder = dml_builder
+                        .with_intra_threads(1)
+                        .map_err(|e| anyhow!("Failed to set intra threads: {}", e))?;
+                    dml_builder = dml_builder
+                        .with_disable_cpu_fallback()
+                        .map_err(|e| anyhow!("Failed to disable CPU fallback: {}", e))?;
+                    dml_builder = dml_builder
+                        .with_execution_providers([DirectMLExecutionProvider::default().build()])
+                        .map_err(|e| anyhow!("Failed to set DirectML provider: {}", e))?;
+
+                    match dml_builder.commit_from_file(path) {
+                        Ok(session) => {
+                            println!("SUCCESS: DirectML hardware backend is active.");
+                            Ok(session)
+                        }
+                        Err(e) => {
+                            println!("DirectML failed: {}. Falling back to CPU...", e);
+                            // Build CPU session from scratch (do not reuse the moved builder)
+                            let mut cpu_builder = Session::builder().map_err(|e| {
+                                anyhow!("Failed to create CPU fallback builder: {}", e)
+                            })?;
+                            cpu_builder = cpu_builder
+                                .with_optimization_level(GraphOptimizationLevel::Level1)
+                                .map_err(|e| {
+                                    anyhow!("Failed to set CPU optimization level: {}", e)
+                                })?;
+                            cpu_builder = cpu_builder
+                                .with_intra_threads(1)
+                                .map_err(|e| anyhow!("Failed to set CPU intra threads: {}", e))?;
+                            cpu_builder = cpu_builder
+                                .with_execution_providers([ort::ep::CPUExecutionProvider::default(
+                                )
+                                .build()])
+                                .map_err(|e| {
+                                    anyhow!("Failed to set CPU provider in fallback: {}", e)
+                                })?;
+                            let session = cpu_builder.commit_from_file(path).map_err(|e| {
+                                anyhow!("Failed to load model on CPU fallback: {}", e)
+                            })?;
+                            println!("SUCCESS: CPU backend active (fallback).");
+                            Ok(session)
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    Err(anyhow!("DirectML is only supported on Windows"))
+                }
+            }
+            _ => Err(anyhow!("Unsupported backend: {}", backend)),
+        }
+    }
+
+    pub fn run_audio_benchmark(
+        model_path: String,
+        backend: String,
+        duration_secs: u64,
+        shape: Vec<usize>,
+    ) -> Result<()> {
+        // session must be mutable because run() may require &mut self
+        let mut session = build_session(&model_path, &backend)?;
+
+        let total_elements: usize = shape.iter().product();
+        let dummy_data = vec![0.0f32; total_elements];
+        let input_shape = IxDyn(&shape);
+        let input_array = Array::from_shape_vec(input_shape, dummy_data)?;
+        let input_value = Value::from_array(input_array)?;
+
+        // Warm-up
+        for _ in 0..5 {
+            let _ = session.run(ort::inputs![input_value.clone()])?;
+        }
+
+        let mut times = Vec::new();
+        let start = Instant::now();
+
+        while start.elapsed() < Duration::from_secs(duration_secs) {
+            let t0 = Instant::now();
+            let _ = session.run(ort::inputs![input_value.clone()])?;
+            times.push(t0.elapsed());
+        }
+
+        let n = times.len();
+        if n == 0 {
+            return Ok(());
+        }
+        let mean_us = times.iter().map(|d| d.as_micros() as f64).sum::<f64>() / n as f64;
+        let p95_us = {
+            let mut sorted = times
+                .iter()
+                .map(|d| d.as_micros() as f64)
+                .collect::<Vec<_>>();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted[(n * 95 / 100).min(n - 1)]
+        };
+        let samples = shape.get(2).copied().unwrap_or(1024) as f64;
+        let sample_rate = 16000.0;
+        let window_dur = samples / sample_rate;
+        let rtf = mean_us / 1_000_000.0 / window_dur;
+
+        println!("\n--- Audio Benchmark Results ---");
+        println!("Backend: {}", backend);
+        println!("Iterations: {}", n);
+        println!("Mean inference: {:.1} µs", mean_us);
+        println!("p95: {:.1} µs", p95_us);
+        println!("RTF: {:.3}", rtf);
+        println!("Throughput: {:.1} inf/s", n as f64 / duration_secs as f64);
+        if rtf < 0.1 {
+            println!("✅ RTF < 0.1 – suitable for real-time.");
+        } else {
+            println!("❌ RTF >= 0.1 – may be too slow.");
+        }
+
+        Ok(())
+    }
+}
+
+// Configuration struct
+struct AudioTestConfig {
+    model_path: String,
+    backend: String,
+    duration_secs: u64,
+    shape: Vec<usize>,
+}
+
+// Parse command line arguments (simple manual parsing)
+fn parse_args() -> Option<AudioTestConfig> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut model_path = None;
+    let mut backend = "cpu".to_string();
+    let mut duration = 30;
+    let mut shape = vec![1, 2, 1024];
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--audio-model" => {
+                model_path = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--audio-backend" => {
+                backend = args[i + 1].clone();
+                i += 2;
+            }
+            "--audio-duration" => {
+                duration = args[i + 1].parse().unwrap_or(30);
+                i += 2;
+            }
+            "--audio-shape" => {
+                let parts: Vec<usize> =
+                    args[i + 1].split(',').map(|s| s.parse().unwrap()).collect();
+                if parts.len() >= 3 {
+                    shape = parts;
+                }
+                i += 2;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    model_path.map(|path| AudioTestConfig {
+        model_path: path,
+        backend,
+        duration_secs: duration,
+        shape,
+    })
+}
+
 struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     pipeline: Option<PipelineController>,
+    audio_thread: Option<thread::JoinHandle<()>>,
+    frame_count: u32,
+    fps_timer: Instant,
 }
 
 impl Default for App {
@@ -25,6 +239,9 @@ impl Default for App {
             window: None,
             renderer: None,
             pipeline: None,
+            audio_thread: None,
+            frame_count: 0,
+            fps_timer: Instant::now(),
         }
     }
 }
@@ -36,6 +253,20 @@ impl App {
         let mut pipeline = PipelineController::new(Box::new(source), model);
         pipeline.start();
         self.pipeline = Some(pipeline);
+    }
+
+    fn start_audio_test(&mut self, config: AudioTestConfig) {
+        let handle = thread::spawn(move || {
+            if let Err(e) = audio_test::run_audio_benchmark(
+                config.model_path,
+                config.backend,
+                config.duration_secs,
+                config.shape,
+            ) {
+                eprintln!("Audio test error: {}", e);
+            }
+        });
+        self.audio_thread = Some(handle);
     }
 }
 
@@ -57,6 +288,10 @@ impl ApplicationHandler for App {
 
         self.init_pipeline();
 
+        if let Some(config) = parse_args() {
+            self.start_audio_test(config);
+        }
+
         self.window.as_ref().unwrap().request_redraw();
     }
 
@@ -72,6 +307,12 @@ impl ApplicationHandler for App {
                     .pop_processed_frame()
                     .map(|f| f.data);
                 renderer.render(frame);
+                self.frame_count += 1;
+                if self.fps_timer.elapsed() >= Duration::from_secs(1) {
+                    println!("Video FPS: {}", self.frame_count);
+                    self.frame_count = 0;
+                    self.fps_timer = Instant::now();
+                }
                 self.window.as_ref().unwrap().request_redraw();
             }
             WindowEvent::Resized(size) => {
