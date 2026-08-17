@@ -19,7 +19,7 @@ mod audio_bench {
                     .with_optimization_level(GraphOptimizationLevel::Level1)
                     .map_err(|e| anyhow!("Failed to set optimization level: {}", e))?;
                 builder = builder
-                    .with_intra_threads(1)
+                    .with_intra_threads(4)
                     .map_err(|e| anyhow!("Failed to set intra threads: {}", e))?;
                 builder = builder
                     .with_execution_providers([ort::ep::CPUExecutionProvider::default().build()])
