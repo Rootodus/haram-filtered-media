@@ -1,6 +1,6 @@
 import onnx
 
-# uv run python -c "import urllib.request; urllib.request.urlretrieve('https://huggingface.co/opencv/human_segmentation_pphumanseg/resolve/main/human_segmentation_pphumanseg_2023mar.onnx', 'models/pphumanseg.onnx')"
+# https://huggingface.co/opencv/human_segmentation_pphumanseg/blob/main/human_segmentation_pphumanseg_2023mar.onnx
 model = onnx.load("../models/pphumanseg.onnx")
 
 print("=== Model Info ===")
