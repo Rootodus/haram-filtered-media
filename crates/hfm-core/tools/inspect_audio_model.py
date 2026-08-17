@@ -23,3 +23,7 @@ ops = set()
 for node in model.graph.node:
     ops.add(node.op_type)
 print(f"Unique ops: {sorted(ops)}")
+
+print("\n=== Metadata ===")
+for entry in model.metadata_props:
+    print(f"  {entry.key}: {entry.value}")
