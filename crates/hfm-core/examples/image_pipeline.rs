@@ -1,7 +1,9 @@
+//! IMPORTANT: This file does not use the refactored version compared to video_pipeline.rs
+
 use crossbeam::queue::ArrayQueue;
 use hfm_core::filter::VideoFilter;
 use hfm_core::memory::{
-    PackedIndex, SlotPool, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED,
+    PackedIndex, STATE_GPU_UPLOADED, STATE_INGESTED, STATE_ML_COMMITTED, SlotPool,
 };
 use hfm_core::ml::PeopleSegFilter;
 use std::sync::Arc;
