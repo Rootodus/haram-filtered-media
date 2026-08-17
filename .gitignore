@@ -9,6 +9,7 @@ fallbacks/
 *.jpg
 *.png
 *.mp4
+*.wav
 temp.txt
 _temp.txt
 .compiler-diagnostics.json
