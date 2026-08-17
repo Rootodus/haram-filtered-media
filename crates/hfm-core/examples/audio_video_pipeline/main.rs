@@ -15,6 +15,17 @@ use winit::{
     window::{Window, WindowId},
 };
 
+// Audio imports
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ringbuf::HeapRb;
+use ringbuf::traits::{Consumer, Producer, Split};
+
+// Audio constants
+const SAMPLE_RATE: u32 = 48_000;
+const CHANNELS: u16 = 2;
+const SPSC_CAPACITY: usize = 16384;
+
+// Audio test module (unchanged – for dummy benchmark)
 mod audio_test {
     use anyhow::{Result, anyhow};
     use ndarray::{Array, IxDyn};
@@ -228,7 +239,10 @@ struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     pipeline: Option<PipelineController>,
-    audio_thread: Option<thread::JoinHandle<()>>,
+    audio_source: Option<GstSource>,
+    audio_output_thread: Option<thread::JoinHandle<()>>,
+    audio_stream: Option<cpal::Stream>, // keep the stream alive
+    audio_test_thread: Option<thread::JoinHandle<()>>,
     frame_count: u32,
     fps_timer: Instant,
 }
@@ -239,7 +253,10 @@ impl Default for App {
             window: None,
             renderer: None,
             pipeline: None,
-            audio_thread: None,
+            audio_source: None,
+            audio_output_thread: None,
+            audio_stream: None,
+            audio_test_thread: None,
             frame_count: 0,
             fps_timer: Instant::now(),
         }
@@ -266,12 +283,76 @@ impl App {
                 eprintln!("Audio test error: {}", e);
             }
         });
-        self.audio_thread = Some(handle);
+        self.audio_test_thread = Some(handle);
+    }
+
+    fn start_audio_output(&mut self) {
+        // Create a separate GstSource for audio
+        let audio_source = GstSource::new().expect("Failed to create audio source");
+        self.audio_source = Some(audio_source);
+
+        // Ring buffer
+        let producer = HeapRb::<f32>::new(SPSC_CAPACITY);
+        let (mut producer, mut consumer) = producer.split();
+
+        // Spawn thread to pull audio frames
+        let mut audio_source = self.audio_source.take().unwrap();
+        let output_handle = thread::spawn(move || {
+            while let Some((samples, _pts)) = audio_source.pull_audio_frame() {
+                let mut offset = 0;
+                let total = samples.len();
+                while offset < total {
+                    let written = producer.push_slice(&samples[offset..]);
+                    if written == 0 {
+                        thread::sleep(Duration::from_micros(100));
+                    } else {
+                        offset += written;
+                    }
+                }
+            }
+            eprintln!("Audio output thread finished");
+        });
+        self.audio_output_thread = Some(output_handle);
+
+        // Set up CPAL output
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .expect("No audio output device");
+        let config = device.default_output_config().expect("No default config");
+        let sample_rate = config.sample_rate();
+        let channels = config.channels();
+
+        if sample_rate != SAMPLE_RATE || channels != CHANNELS {
+            eprintln!(
+                "Warning: audio format mismatch – expected {} Hz, {} channels",
+                SAMPLE_RATE, CHANNELS
+            );
+        }
+
+        let stream_config = config.config();
+        let stream = device
+            .build_output_stream(
+                stream_config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let n = consumer.pop_slice(data);
+                    if n < data.len() {
+                        data[n..].fill(0.0);
+                    }
+                },
+                |err| eprintln!("Audio error: {}", err),
+                None,
+            )
+            .unwrap();
+
+        stream.play().unwrap();
+        self.audio_stream = Some(stream);
     }
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Create window and renderer
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -286,8 +367,13 @@ impl ApplicationHandler for App {
         let renderer = pollster::block_on(Renderer::new(window));
         self.renderer = Some(renderer);
 
+        // Start video pipeline
         self.init_pipeline();
 
+        // Start audio output
+        self.start_audio_output();
+
+        // Start audio test if requested
         if let Some(config) = parse_args() {
             self.start_audio_test(config);
         }
