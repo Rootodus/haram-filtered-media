@@ -3,9 +3,9 @@ import numpy as np
 
 providers = ["DmlExecutionProvider"]  # no CPU fallback
 
-# https://huggingface.co/StemSplitio/htdemucs-ft-vocals-onnx/blob/main/htdemucs_ft_vocals_fp16weights.onnx
+# https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/sherpa-onnx-spleeter-2stems-fp16.tar.bz2
 session = ort.InferenceSession(
-    "../models/htdemucs_ft_vocals_fp16weights.onnx", providers=providers
+    "../models/sherpa-onnx-spleeter-2stems-fp16/vocals.fp16.onnx", providers=providers
 )
 
 print("Providers:", session.get_providers())

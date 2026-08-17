@@ -1,7 +1,7 @@
 import onnx
 
-# https://huggingface.co/StemSplitio/htdemucs-ft-vocals-onnx/blob/main/htdemucs_ft_vocals_fp16weights.onnx
-model = onnx.load("../models/htdemucs_ft_vocals_fp16weights.onnx")
+# https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/sherpa-onnx-spleeter-2stems-fp16.tar.bz2
+model = onnx.load("../models/sherpa-onnx-spleeter-2stems-fp16/vocals.fp16.onnx")
 
 print("=== Model Info ===")
 print(f"IR Version: {model.ir_version}")
