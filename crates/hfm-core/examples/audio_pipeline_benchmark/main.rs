@@ -22,7 +22,7 @@ mod audio_bench {
                     .with_intra_threads(4)
                     .map_err(|e| anyhow!("Failed to set intra threads: {}", e))?;
                 builder = builder
-                    .with_execution_providers([ort::ep::CPUExecutionProvider::default().build()])
+                    .with_execution_providers([ort::ep::CPU::default().build()])
                     .map_err(|e| anyhow!("Failed to set CPU provider: {}", e))?;
                 let session = builder
                     .commit_from_file(path)
@@ -33,7 +33,7 @@ mod audio_bench {
             "dml" => {
                 #[cfg(target_os = "windows")]
                 {
-                    use ort::ep::DirectMLExecutionProvider;
+                    use ort::ep::DirectML;
                     let mut dml_builder = Session::builder()
                         .map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
                     dml_builder = dml_builder
@@ -49,10 +49,7 @@ mod audio_bench {
                         .with_intra_threads(1)
                         .map_err(|e| anyhow!("Failed to set intra threads: {}", e))?;
                     dml_builder = dml_builder
-                        .with_disable_cpu_fallback()
-                        .map_err(|e| anyhow!("Failed to disable CPU fallback: {}", e))?;
-                    dml_builder = dml_builder
-                        .with_execution_providers([DirectMLExecutionProvider::default().build()])
+                        .with_execution_providers([DirectML::default().build()])
                         .map_err(|e| anyhow!("Failed to set DirectML provider: {}", e))?;
                     match dml_builder.commit_from_file(path) {
                         Ok(session) => {
@@ -73,9 +70,7 @@ mod audio_bench {
                                 .with_intra_threads(1)
                                 .map_err(|e| anyhow!("Failed to set CPU intra threads: {}", e))?;
                             cpu_builder = cpu_builder
-                                .with_execution_providers([ort::ep::CPUExecutionProvider::default(
-                                )
-                                .build()])
+                                .with_execution_providers([ort::ep::CPU::default().build()])
                                 .map_err(|e| {
                                     anyhow!("Failed to set CPU provider in fallback: {}", e)
                                 })?;

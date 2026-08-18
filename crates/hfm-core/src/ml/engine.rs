@@ -9,7 +9,8 @@ pub fn init_session(path: &str) -> Result<Session> {
     // --- 1. APPLE SILICON TRACK ---
     #[cfg(target_vendor = "apple")]
     {
-        use ort::ep::CoreMLExecutionProvider;
+        use ort::ep::CoreML;
+
         let mut builder =
             Session::builder().map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
         builder = builder
@@ -19,7 +20,7 @@ pub fn init_session(path: &str) -> Result<Session> {
             .with_intra_threads(1)
             .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
         builder = builder
-            .with_execution_providers([CoreMLExecutionProvider::default().build()])
+            .with_execution_providers([CoreML::default().build()])
             .map_err(|e| anyhow!("Failed to set CoreML provider: {:?}", e))?;
 
         match builder.commit_from_file(path) {
@@ -38,7 +39,7 @@ pub fn init_session(path: &str) -> Result<Session> {
 
     #[cfg(target_os = "windows")]
     {
-        use ort::ep::DirectMLExecutionProvider;
+        use ort::ep::DirectML;
 
         let mut builder =
             Session::builder().map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
@@ -48,12 +49,8 @@ pub fn init_session(path: &str) -> Result<Session> {
         builder = builder
             .with_intra_threads(1)
             .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
-        // Keep CPU fallback disabled for DirectML (it works)
         builder = builder
-            .with_disable_cpu_fallback()
-            .map_err(|e| anyhow!("Failed to disable CPU fallback: {:?}", e))?;
-        builder = builder
-            .with_execution_providers([DirectMLExecutionProvider::default().build()])
+            .with_execution_providers([DirectML::default().build()])
             .map_err(|e| anyhow!("Failed to set DirectML provider: {:?}", e))?;
 
         match builder.commit_from_file(path) {
@@ -70,7 +67,8 @@ pub fn init_session(path: &str) -> Result<Session> {
     // --- 3. LINUX TRACK ---
     #[cfg(target_os = "linux")]
     {
-        use ort::ep::OpenVINOExecutionProvider;
+        use ort::ep::OpenVINO;
+
         let mut ov_builder =
             Session::builder().map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
         ov_builder = ov_builder
@@ -80,9 +78,7 @@ pub fn init_session(path: &str) -> Result<Session> {
             .with_intra_threads(1)
             .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
         ov_builder = ov_builder
-            .with_execution_providers([OpenVINOExecutionProvider::default()
-                .with_device_type("GPU")
-                .build()])
+            .with_execution_providers([OpenVINO::default().with_device_type("GPU").build()])
             .map_err(|e| anyhow!("Failed to set OpenVINO provider: {:?}", e))?;
 
         match ov_builder.commit_from_file(path) {
@@ -109,7 +105,7 @@ pub fn init_session(path: &str) -> Result<Session> {
         .with_intra_threads(1)
         .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
     cpu_builder = cpu_builder
-        .with_execution_providers([ort::ep::CPUExecutionProvider::default().build()])
+        .with_execution_providers([ort::ep::CPU::default().build()])
         .map_err(|e| anyhow!("Failed to set CPU provider: {:?}", e))?;
 
     let session = cpu_builder
