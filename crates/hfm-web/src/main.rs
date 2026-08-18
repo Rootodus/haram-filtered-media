@@ -93,9 +93,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let session = match Session::builder()?
             .with_intra_threads(1)?
             .with_inter_threads(1)?
-            .with_execution_providers([
-                ort::execution_providers::DirectMLExecutionProvider::default().build(),
-            ])?
+            .with_execution_providers([ort::ep::DirectML::default().build()])?
             .commit_from_file(path)
         {
             Ok(s) => {
@@ -113,9 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 Session::builder()?
                     .with_intra_threads(1)?
                     .with_inter_threads(1)?
-                    .with_execution_providers([
-                        ort::execution_providers::CPUExecutionProvider::default().build(),
-                    ])?
+                    .with_execution_providers([ort::ep::CPU::default().build()])?
                     .commit_from_file(path)?
             }
         };
