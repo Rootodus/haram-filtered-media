@@ -1,6 +1,7 @@
 mod gst_source;
 mod renderer;
 
+use anyhow::Result;
 use gst_source::GstSource;
 use hfm_core::ml::PeopleSegFilter;
 use hfm_core::pipeline::{PipelineCommand, PipelineController, SeekDelta};
@@ -15,27 +16,30 @@ use winit::{
     window::{Window, WindowId},
 };
 
-// Audio imports
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Producer, Split};
 
 // Audio constants
-const SAMPLE_RATE: u32 = 48_000;
+const SAMPLE_RATE: u32 = 44100; // Must match the model (HT-Demucs expects 44.1 kHz)
 const CHANNELS: u16 = 2;
-const SPSC_CAPACITY: usize = 16384;
+const SPSC_CAPACITY: usize = 1_048_576; // ~12 seconds of stereo float
 
-// Audio test module (unchanged – for dummy benchmark)
-mod audio_test {
+// Audio processing constants
+const WINDOW_SAMPLES: usize = 343980; // HT-Demucs fixed window
+const OVERLAP_RATIO: f32 = 0.25; // 25% overlap
+const STEP_SAMPLES: usize = ((WINDOW_SAMPLES as f32) * (1.0 - OVERLAP_RATIO)) as usize; // 257,985
+
+// We'll reuse the session builder from the audio_pipeline_benchmark.
+// We'll make it public in a separate module or copy it here.
+// For brevity, I'll include it inline (but you can move to a shared module).
+
+mod audio_bench {
     use anyhow::{Result, anyhow};
-    use ndarray::{Array, IxDyn};
     use ort::session::Session;
     use ort::session::builder::GraphOptimizationLevel;
-    use ort::value::Value;
-    use std::time::{Duration, Instant};
 
-    /// Build a session with a specific backend (cpu or dml)
-    fn build_session(path: &str, backend: &str) -> Result<Session> {
+    pub fn build_session(path: &str, backend: &str) -> Result<Session> {
         match backend {
             "cpu" => {
                 let mut builder = Session::builder()
@@ -44,10 +48,10 @@ mod audio_test {
                     .with_optimization_level(GraphOptimizationLevel::Level1)
                     .map_err(|e| anyhow!("Failed to set optimization level: {}", e))?;
                 builder = builder
-                    .with_intra_threads(1)
+                    .with_intra_threads(4)
                     .map_err(|e| anyhow!("Failed to set intra threads: {}", e))?;
                 builder = builder
-                    .with_execution_providers([ort::ep::CPUExecutionProvider::default().build()])
+                    .with_execution_providers([ort::ep::CPU::default().build()])
                     .map_err(|e| anyhow!("Failed to set CPU provider: {}", e))?;
                 let session = builder
                     .commit_from_file(path)
@@ -58,9 +62,6 @@ mod audio_test {
             "dml" => {
                 #[cfg(target_os = "windows")]
                 {
-                    use ort::ep::DirectMLExecutionProvider;
-
-                    // Build DML session from scratch
                     let mut dml_builder = Session::builder()
                         .map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
                     dml_builder = dml_builder
@@ -70,12 +71,8 @@ mod audio_test {
                         .with_intra_threads(1)
                         .map_err(|e| anyhow!("Failed to set intra threads: {}", e))?;
                     dml_builder = dml_builder
-                        .with_disable_cpu_fallback()
-                        .map_err(|e| anyhow!("Failed to disable CPU fallback: {}", e))?;
-                    dml_builder = dml_builder
-                        .with_execution_providers([DirectMLExecutionProvider::default().build()])
+                        .with_execution_providers([ort::ep::DirectML::default().build()])
                         .map_err(|e| anyhow!("Failed to set DirectML provider: {}", e))?;
-
                     match dml_builder.commit_from_file(path) {
                         Ok(session) => {
                             println!("SUCCESS: DirectML hardware backend is active.");
@@ -83,7 +80,6 @@ mod audio_test {
                         }
                         Err(e) => {
                             println!("DirectML failed: {}. Falling back to CPU...", e);
-                            // Build CPU session from scratch (do not reuse the moved builder)
                             let mut cpu_builder = Session::builder().map_err(|e| {
                                 anyhow!("Failed to create CPU fallback builder: {}", e)
                             })?;
@@ -93,15 +89,11 @@ mod audio_test {
                                     anyhow!("Failed to set CPU optimization level: {}", e)
                                 })?;
                             cpu_builder = cpu_builder
-                                .with_intra_threads(1)
+                                .with_intra_threads(4)
                                 .map_err(|e| anyhow!("Failed to set CPU intra threads: {}", e))?;
                             cpu_builder = cpu_builder
-                                .with_execution_providers([ort::ep::CPUExecutionProvider::default(
-                                )
-                                .build()])
-                                .map_err(|e| {
-                                    anyhow!("Failed to set CPU provider in fallback: {}", e)
-                                })?;
+                                .with_execution_providers([ort::ep::CPU::default().build()])
+                                .map_err(|e| anyhow!("Failed to set CPU provider: {}", e))?;
                             let session = cpu_builder.commit_from_file(path).map_err(|e| {
                                 anyhow!("Failed to load model on CPU fallback: {}", e)
                             })?;
@@ -118,86 +110,19 @@ mod audio_test {
             _ => Err(anyhow!("Unsupported backend: {}", backend)),
         }
     }
-
-    pub fn run_audio_benchmark(
-        model_path: String,
-        backend: String,
-        duration_secs: u64,
-        shape: Vec<usize>,
-    ) -> Result<()> {
-        // session must be mutable because run() may require &mut self
-        let mut session = build_session(&model_path, &backend)?;
-
-        let total_elements: usize = shape.iter().product();
-        let dummy_data = vec![0.0f32; total_elements];
-        let input_shape = IxDyn(&shape);
-        let input_array = Array::from_shape_vec(input_shape, dummy_data)?;
-        let input_value = Value::from_array(input_array)?;
-
-        // Warm-up
-        for _ in 0..5 {
-            let _ = session.run(ort::inputs![input_value.clone()])?;
-        }
-
-        let mut times = Vec::new();
-        let start = Instant::now();
-
-        while start.elapsed() < Duration::from_secs(duration_secs) {
-            let t0 = Instant::now();
-            let _ = session.run(ort::inputs![input_value.clone()])?;
-            times.push(t0.elapsed());
-        }
-
-        let n = times.len();
-        if n == 0 {
-            return Ok(());
-        }
-        let mean_us = times.iter().map(|d| d.as_micros() as f64).sum::<f64>() / n as f64;
-        let p95_us = {
-            let mut sorted = times
-                .iter()
-                .map(|d| d.as_micros() as f64)
-                .collect::<Vec<_>>();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            sorted[(n * 95 / 100).min(n - 1)]
-        };
-        let samples = shape.get(2).copied().unwrap_or(1024) as f64;
-        let sample_rate = 16000.0;
-        let window_dur = samples / sample_rate;
-        let rtf = mean_us / 1_000_000.0 / window_dur;
-
-        println!("\n--- Audio Benchmark Results ---");
-        println!("Backend: {}", backend);
-        println!("Iterations: {}", n);
-        println!("Mean inference: {:.1} µs", mean_us);
-        println!("p95: {:.1} µs", p95_us);
-        println!("RTF: {:.3}", rtf);
-        println!("Throughput: {:.1} inf/s", n as f64 / duration_secs as f64);
-        if rtf < 0.1 {
-            println!("✅ RTF < 0.1 – suitable for real-time.");
-        } else {
-            println!("❌ RTF >= 0.1 – may be too slow.");
-        }
-
-        Ok(())
-    }
 }
 
-// Configuration struct
 struct AudioTestConfig {
     model_path: String,
     backend: String,
-    duration_secs: u64,
-    shape: Vec<usize>,
+    window_size: usize,
 }
 
-// Parse command line arguments (simple manual parsing)
-fn parse_args() -> Option<AudioTestConfig> {
+fn parse_audio_args() -> Option<AudioTestConfig> {
     let args: Vec<String> = std::env::args().collect();
     let mut model_path = None;
     let mut backend = "cpu".to_string();
-    let mut duration = 30;
-    let mut shape = vec![1, 2, 1024];
+    let mut window_size = WINDOW_SAMPLES;
 
     let mut i = 1;
     while i < args.len() {
@@ -210,16 +135,8 @@ fn parse_args() -> Option<AudioTestConfig> {
                 backend = args[i + 1].clone();
                 i += 2;
             }
-            "--audio-duration" => {
-                duration = args[i + 1].parse().unwrap_or(30);
-                i += 2;
-            }
-            "--audio-shape" => {
-                let parts: Vec<usize> =
-                    args[i + 1].split(',').map(|s| s.parse().unwrap()).collect();
-                if parts.len() >= 3 {
-                    shape = parts;
-                }
+            "--audio-window" => {
+                window_size = args[i + 1].parse().unwrap_or(WINDOW_SAMPLES);
                 i += 2;
             }
             _ => {
@@ -230,8 +147,7 @@ fn parse_args() -> Option<AudioTestConfig> {
     model_path.map(|path| AudioTestConfig {
         model_path: path,
         backend,
-        duration_secs: duration,
-        shape,
+        window_size,
     })
 }
 
@@ -239,12 +155,14 @@ struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     pipeline: Option<PipelineController>,
-    audio_source: Option<GstSource>,
-    audio_output_thread: Option<thread::JoinHandle<()>>,
-    audio_stream: Option<cpal::Stream>, // keep the stream alive
-    audio_test_thread: Option<thread::JoinHandle<()>>,
+    audio_pull_thread: Option<thread::JoinHandle<()>>,
+    audio_process_thread: Option<thread::JoinHandle<()>>,
+    audio_output_stream: Option<cpal::Stream>,
     frame_count: u32,
     fps_timer: Instant,
+    // We'll keep the raw producer and output consumer in the struct to avoid dropping them.
+    _raw_prod: Option<HeapRb<f32>>, // Actually we need the split parts; easier to store as Option<Producer> and Consumer.
+                                    // But we'll manage them inside the threads.
 }
 
 impl Default for App {
@@ -253,12 +171,12 @@ impl Default for App {
             window: None,
             renderer: None,
             pipeline: None,
-            audio_source: None,
-            audio_output_thread: None,
-            audio_stream: None,
-            audio_test_thread: None,
+            audio_pull_thread: None,
+            audio_process_thread: None,
+            audio_output_stream: None,
             frame_count: 0,
             fps_timer: Instant::now(),
+            _raw_prod: None,
         }
     }
 }
@@ -272,37 +190,33 @@ impl App {
         self.pipeline = Some(pipeline);
     }
 
-    fn start_audio_test(&mut self, config: AudioTestConfig) {
-        let handle = thread::spawn(move || {
-            if let Err(e) = audio_test::run_audio_benchmark(
-                config.model_path,
-                config.backend,
-                config.duration_secs,
-                config.shape,
-            ) {
-                eprintln!("Audio test error: {}", e);
-            }
-        });
-        self.audio_test_thread = Some(handle);
-    }
+    fn start_audio_pipeline(&mut self, config: AudioTestConfig) -> Result<()> {
+        // Build ONNX session
+        let mut session = audio_bench::build_session(&config.model_path, &config.backend)?;
 
-    fn start_audio_output(&mut self) {
-        // Create a separate GstSource for audio
-        let audio_source = GstSource::new().expect("Failed to create audio source");
-        self.audio_source = Some(audio_source);
+        // Create ring buffers for raw and processed audio
+        let raw_rb = HeapRb::<f32>::new(SPSC_CAPACITY);
+        let (mut raw_prod, mut raw_cons) = raw_rb.split();
 
-        // Ring buffer
-        let producer = HeapRb::<f32>::new(SPSC_CAPACITY);
-        let (mut producer, mut consumer) = producer.split();
+        let out_rb = HeapRb::<f32>::new(SPSC_CAPACITY);
+        let (mut out_prod, mut out_cons) = out_rb.split();
 
-        // Spawn thread to pull audio frames
-        let mut audio_source = self.audio_source.take().unwrap();
-        let output_handle = thread::spawn(move || {
-            while let Some((samples, _pts)) = audio_source.pull_audio_frame() {
+        // Pre-compute Hann window
+        let window_samples = config.window_size;
+        let hann: Vec<f32> = (0..window_samples)
+            .map(|i| {
+                0.5 * (1.0
+                    - (2.0 * std::f32::consts::PI * i as f32 / (window_samples - 1) as f32).cos())
+            })
+            .collect();
+
+        // Spawn audio pull thread
+        let mut gst_source = GstSource::new().expect("Failed to create GStreamer source for audio");
+        let pull_handle = thread::spawn(move || {
+            while let Some((samples, _pts)) = gst_source.pull_audio_frame() {
                 let mut offset = 0;
-                let total = samples.len();
-                while offset < total {
-                    let written = producer.push_slice(&samples[offset..]);
+                while offset < samples.len() {
+                    let written = raw_prod.push_slice(&samples[offset..]);
                     if written == 0 {
                         thread::sleep(Duration::from_micros(100));
                     } else {
@@ -310,11 +224,82 @@ impl App {
                     }
                 }
             }
-            eprintln!("Audio output thread finished");
+            eprintln!("Audio pull thread finished");
         });
-        self.audio_output_thread = Some(output_handle);
+        self.audio_pull_thread = Some(pull_handle);
 
-        // Set up CPAL output
+        // Spawn processing thread
+        let process_handle = thread::spawn(move || {
+            let mut buffer = Vec::with_capacity(window_samples * 2); // stereo
+            let mut overlap_buf = vec![0.0f32; window_samples * 2 + STEP_SAMPLES * 2];
+            let mut out_offset = 0;
+
+            loop {
+                // Read raw samples
+                let mut chunk = vec![0.0f32; 4096]; // fixed‑size buffer
+                let n = raw_cons.pop_slice(&mut chunk);
+                if n == 0 {
+                    thread::sleep(Duration::from_micros(100));
+                    continue;
+                }
+                chunk.truncate(n);
+                buffer.extend_from_slice(&chunk);
+
+                // Process full windows
+                while buffer.len() >= window_samples * 2 {
+                    let window: Vec<f32> = buffer.drain(0..window_samples * 2).collect();
+                    // Convert to tensor [1, 2, window_samples]
+                    let arr = ndarray::Array::from_shape_vec((1, 2, window_samples), window)
+                        .expect("Failed to create ndarray");
+                    let input_value =
+                        ort::value::Value::from_array(arr).expect("Failed to create value");
+                    let t0 = Instant::now();
+                    let outputs = session
+                        .run(ort::inputs![input_value])
+                        .expect("Inference failed");
+                    let elapsed = t0.elapsed().as_secs_f64();
+                    println!("Audio inference time: {:.3}s", elapsed);
+
+                    let separated = &outputs[0];
+                    let separated_arr = separated
+                        .try_extract_array::<f32>()
+                        .expect("Failed to extract tensor");
+                    let vocals = separated_arr.slice(ndarray::s![0, 3, .., ..]); // -> [2, window_samples]
+                    // Apply Hann and add to overlap buffer
+                    for ch in 0..2 {
+                        for i in 0..window_samples {
+                            overlap_buf[out_offset + i * 2 + ch] += vocals[[ch, i]] * hann[i];
+                        }
+                    }
+                    out_offset += STEP_SAMPLES * 2;
+
+                    // If we have enough samples ready, push to output ring buffer
+                    if out_offset >= STEP_SAMPLES * 2 {
+                        let ready = &overlap_buf[0..STEP_SAMPLES * 2];
+                        let mut written = 0;
+                        while written < ready.len() {
+                            let n = out_prod.push_slice(&ready[written..]);
+                            if n == 0 {
+                                thread::sleep(Duration::from_micros(100));
+                            } else {
+                                written += n;
+                            }
+                        }
+                        // Shift overlap buffer
+                        for i in 0..(overlap_buf.len() - STEP_SAMPLES * 2) {
+                            overlap_buf[i] = overlap_buf[i + STEP_SAMPLES * 2];
+                        }
+                        for i in (overlap_buf.len() - STEP_SAMPLES * 2)..overlap_buf.len() {
+                            overlap_buf[i] = 0.0;
+                        }
+                        out_offset -= STEP_SAMPLES * 2;
+                    }
+                }
+            }
+        });
+        self.audio_process_thread = Some(process_handle);
+
+        // Set up CPAL output (unchanged, but now reading from out_cons)
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -335,7 +320,7 @@ impl App {
             .build_output_stream(
                 stream_config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let n = consumer.pop_slice(data);
+                    let n = out_cons.pop_slice(data);
                     if n < data.len() {
                         data[n..].fill(0.0);
                     }
@@ -346,18 +331,19 @@ impl App {
             .unwrap();
 
         stream.play().unwrap();
-        self.audio_stream = Some(stream);
+        self.audio_output_stream = Some(stream);
+
+        Ok(())
     }
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Create window and renderer
         let window = Arc::new(
             event_loop
                 .create_window(
                     winit::window::WindowAttributes::default()
-                        .with_title("Audio+Video Pipeline")
+                        .with_title("Audio+Video Pipeline (with Music Removal)")
                         .with_inner_size(winit::dpi::LogicalSize::new(960, 540)),
                 )
                 .unwrap(),
@@ -367,15 +353,13 @@ impl ApplicationHandler for App {
         let renderer = pollster::block_on(Renderer::new(window));
         self.renderer = Some(renderer);
 
-        // Start video pipeline
         self.init_pipeline();
 
-        // Start audio output
-        self.start_audio_output();
-
-        // Start audio test if requested
-        if let Some(config) = parse_args() {
-            self.start_audio_test(config);
+        // Start audio processing if model specified
+        if let Some(config) = parse_audio_args() {
+            if let Err(e) = self.start_audio_pipeline(config) {
+                eprintln!("Failed to start audio pipeline: {}", e);
+            }
         }
 
         self.window.as_ref().unwrap().request_redraw();
