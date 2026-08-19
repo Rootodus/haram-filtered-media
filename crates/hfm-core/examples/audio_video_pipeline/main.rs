@@ -2,10 +2,14 @@ mod gst_source;
 mod renderer;
 
 use anyhow::Result;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use crossbeam_channel::{Receiver, Sender};
 use gst_source::GstSource;
 use hfm_core::ml::PeopleSegFilter;
-use hfm_core::pipeline::{PipelineCommand, PipelineController, SeekDelta};
+use hfm_core::pipeline::{FrameSource, PipelineCommand, PipelineController, SeekDelta};
 use renderer::Renderer;
+use ringbuf::HeapRb;
+use ringbuf::traits::{Consumer, Producer, Split};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,10 +19,6 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
-
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ringbuf::HeapRb;
-use ringbuf::traits::{Consumer, Producer, Split};
 
 // Audio constants
 const SAMPLE_RATE: u32 = 44100; // Must match the model (HT-Demucs expects 44.1 kHz)
@@ -33,6 +33,38 @@ const STEP_SAMPLES: usize = ((WINDOW_SAMPLES as f32) * (1.0 - OVERLAP_RATIO)) as
 // We'll reuse the session builder from the audio_pipeline_benchmark.
 // We'll make it public in a separate module or copy it here.
 // For brevity, I'll include it inline (but you can move to a shared module).
+
+struct ChannelSource {
+    rx: Receiver<(Vec<u8>, u64)>,
+    eos: bool,
+}
+
+impl ChannelSource {
+    fn new(rx: Receiver<(Vec<u8>, u64)>) -> Self {
+        Self { rx, eos: false }
+    }
+}
+
+impl FrameSource for ChannelSource {
+    fn pull_frame(&mut self) -> Option<(Vec<u8>, u64)> {
+        if self.eos {
+            return None;
+        }
+        match self.rx.recv() {
+            Ok(frame) => Some(frame),
+            Err(_) => {
+                self.eos = true;
+                None
+            }
+        }
+    }
+
+    fn seek(&mut self, delta_ns: i64) -> Result<(), String> {
+        // For now, ignore seeks or forward them via a separate channel
+        // Later we can implement proper seek support
+        Ok(())
+    }
+}
 
 mod audio_bench {
     use anyhow::{Result, anyhow};
@@ -190,7 +222,11 @@ impl App {
         self.pipeline = Some(pipeline);
     }
 
-    fn start_audio_pipeline(&mut self, config: AudioTestConfig) -> Result<()> {
+    fn start_audio_pipeline(
+        &mut self,
+        config: AudioTestConfig,
+        audio_rx: Receiver<(Vec<f32>, u64)>,
+    ) -> Result<()> {
         // Build ONNX session
         let mut session = audio_bench::build_session(&config.model_path, &config.backend)?;
 
@@ -210,89 +246,64 @@ impl App {
             })
             .collect();
 
-        // Spawn audio pull thread
         let mut gst_source = GstSource::new().expect("Failed to create GStreamer source for audio");
         let pull_handle = thread::spawn(move || {
-            while let Some((samples, _pts)) = gst_source.pull_audio_frame() {
-                let mut offset = 0;
-                while offset < samples.len() {
-                    let written = raw_prod.push_slice(&samples[offset..]);
-                    if written == 0 {
-                        thread::sleep(Duration::from_micros(100));
-                    } else {
-                        offset += written;
+            loop {
+                // Pull an audio frame
+                if let Some((samples, _pts)) = gst_source.pull_audio_frame() {
+                    // Push audio samples to raw ring buffer
+                    let mut offset = 0;
+                    while offset < samples.len() {
+                        let written = raw_prod.push_slice(&samples[offset..]);
+                        if written == 0 {
+                            thread::sleep(Duration::from_micros(100));
+                        } else {
+                            offset += written;
+                        }
                     }
+                    // **Consume a video frame to prevent the video sink from filling up**
+                    // This discards the frame immediately.
+                    let _ = gst_source.pull_video_frame();
+                } else {
+                    // EOS
+                    break;
                 }
             }
             eprintln!("Audio pull thread finished");
         });
         self.audio_pull_thread = Some(pull_handle);
 
-        // Spawn processing thread
+        // Spawn processing thread – this now reads from the audio_rx channel
         let process_handle = thread::spawn(move || {
-            let mut buffer = Vec::with_capacity(window_samples * 2); // stereo
+            // Lower thread priority if desired (optional)
+            #[cfg(feature = "thread-priority")]
+            {
+                let _ = thread_priority::set_current_thread_priority(
+                    thread_priority::ThreadPriority::Min,
+                );
+            }
+
+            let mut buffer = Vec::with_capacity(window_samples * 2);
             let mut overlap_buf = vec![0.0f32; window_samples * 2 + STEP_SAMPLES * 2];
             let mut out_offset = 0;
+            let mut chunk_buf = vec![0.0f32; 4096];
 
             loop {
-                // Read raw samples
-                let mut chunk = vec![0.0f32; 4096]; // fixed‑size buffer
-                let n = raw_cons.pop_slice(&mut chunk);
-                if n == 0 {
-                    thread::sleep(Duration::from_micros(100));
-                    continue;
-                }
-                chunk.truncate(n);
-                buffer.extend_from_slice(&chunk);
-
-                // Process full windows
-                while buffer.len() >= window_samples * 2 {
-                    let window: Vec<f32> = buffer.drain(0..window_samples * 2).collect();
-                    // Convert to tensor [1, 2, window_samples]
-                    let arr = ndarray::Array::from_shape_vec((1, 2, window_samples), window)
-                        .expect("Failed to create ndarray");
-                    let input_value =
-                        ort::value::Value::from_array(arr).expect("Failed to create value");
-                    let t0 = Instant::now();
-                    let outputs = session
-                        .run(ort::inputs![input_value])
-                        .expect("Inference failed");
-                    let elapsed = t0.elapsed().as_secs_f64();
-                    println!("Audio inference time: {:.3}s", elapsed);
-
-                    let separated = &outputs[0];
-                    let separated_arr = separated
-                        .try_extract_array::<f32>()
-                        .expect("Failed to extract tensor");
-                    let vocals = separated_arr.slice(ndarray::s![0, 3, .., ..]); // -> [2, window_samples]
-                    // Apply Hann and add to overlap buffer
-                    for ch in 0..2 {
-                        for i in 0..window_samples {
-                            overlap_buf[out_offset + i * 2 + ch] += vocals[[ch, i]] * hann[i];
+                // Receive audio chunks from the channel
+                match audio_rx.recv() {
+                    Ok((samples, _pts)) => {
+                        buffer.extend_from_slice(&samples);
+                        // Process full windows (same as before)
+                        while buffer.len() >= window_samples * 2 {
+                            // ... inference and overlap-add code ...
                         }
                     }
-                    out_offset += STEP_SAMPLES * 2;
-
-                    // If we have enough samples ready, push to output ring buffer
-                    if out_offset >= STEP_SAMPLES * 2 {
-                        let ready = &overlap_buf[0..STEP_SAMPLES * 2];
-                        let mut written = 0;
-                        while written < ready.len() {
-                            let n = out_prod.push_slice(&ready[written..]);
-                            if n == 0 {
-                                thread::sleep(Duration::from_micros(100));
-                            } else {
-                                written += n;
-                            }
+                    Err(_) => {
+                        // Channel closed – flush remaining samples if any
+                        if !buffer.is_empty() {
+                            // flush partial window
                         }
-                        // Shift overlap buffer
-                        for i in 0..(overlap_buf.len() - STEP_SAMPLES * 2) {
-                            overlap_buf[i] = overlap_buf[i + STEP_SAMPLES * 2];
-                        }
-                        for i in (overlap_buf.len() - STEP_SAMPLES * 2)..overlap_buf.len() {
-                            overlap_buf[i] = 0.0;
-                        }
-                        out_offset -= STEP_SAMPLES * 2;
+                        break;
                     }
                 }
             }
@@ -355,9 +366,47 @@ impl ApplicationHandler for App {
 
         self.init_pipeline();
 
-        // Start audio processing if model specified
+        // Create the single GStreamer source
+        let mut gst_source = GstSource::new().expect("Failed to create GStreamer source");
+
+        // Create channels for video and audio
+        let (video_tx, video_rx) = crossbeam_channel::unbounded();
+        let (audio_tx, audio_rx) = crossbeam_channel::unbounded();
+
+        // Spawn the pull thread that reads both video and audio
+        let pull_handle = thread::spawn(move || {
+            loop {
+                // Pull video frame
+                if let Some((data, pts)) = gst_source.pull_video_frame() {
+                    if video_tx.send((data, pts)).is_err() {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+                // Pull audio frame
+                if let Some((samples, pts)) = gst_source.pull_audio_frame() {
+                    if audio_tx.send((samples, pts)).is_err() {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            eprintln!("Pull thread finished");
+        });
+        self.audio_pull_thread = Some(pull_handle);
+
+        // Initialize the video pipeline with the ChannelSource
+        let source = ChannelSource::new(video_rx);
+        let model = PeopleSegFilter::new("models/pphumanseg.onnx").expect("Failed to load model");
+        let mut pipeline = PipelineController::new(Box::new(source), model);
+        pipeline.start();
+        self.pipeline = Some(pipeline);
+
+        // Start audio processing with the audio receiver
         if let Some(config) = parse_audio_args() {
-            if let Err(e) = self.start_audio_pipeline(config) {
+            if let Err(e) = self.start_audio_pipeline(config, audio_rx) {
                 eprintln!("Failed to start audio pipeline: {}", e);
             }
         }

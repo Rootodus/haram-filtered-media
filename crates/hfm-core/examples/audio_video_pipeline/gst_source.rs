@@ -44,12 +44,12 @@ impl GstSource {
         // ---- Audio branch ----
         let audio_convert = gst::ElementFactory::make("audioconvert").build()?;
         let audio_resample = gst::ElementFactory::make("audioresample").build()?;
-        // We want raw PCM, e.g., 48 kHz, stereo, f32.
+        // ---- Audio branch ----
         let audio_sink = gst_app::AppSink::builder()
             .caps(
                 &gst::Caps::builder("audio/x-raw")
                     .field("format", "F32LE")
-                    .field("rate", 48000 as i32)
+                    .field("rate", 44100 as i32) // changed from 48000
                     .field("channels", 2 as i32)
                     .field("layout", "interleaved")
                     .build(),
