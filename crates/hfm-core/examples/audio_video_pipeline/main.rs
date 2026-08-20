@@ -73,11 +73,11 @@ fn spawn_source_pump(
             // Pull and send one video frame, if available.
             {
                 let source = gst_source.lock().unwrap();
-                if let Some(frame) = source.try_pull_video_frame() {
+                if let Some((data, pts_ns)) = source.try_pull_video_frame() {
                     let current_gen = generation.current();
                     let msg = RawVideoFrame {
-                        data: frame.data,
-                        pts_ns: frame.pts_ns,
+                        data,
+                        pts_ns,
                         generation: current_gen,
                     };
                     if video_tx.send(msg).is_err() {
@@ -90,11 +90,11 @@ fn spawn_source_pump(
             // If audio is enabled, pull and send one audio chunk.
             if let Some(audio_tx) = audio_tx.as_ref() {
                 let source = gst_source.lock().unwrap();
-                if let Some(chunk) = source.try_pull_audio_frame() {
+                if let Some((samples, pts_ns)) = source.try_pull_audio_frame() {
                     let current_gen = generation.current();
                     let msg = RawAudioChunk {
-                        samples: chunk.samples,
-                        pts_ns: chunk.pts_ns,
+                        samples,
+                        pts_ns,
                         generation: current_gen,
                     };
                     if audio_tx.send(msg).is_err() {

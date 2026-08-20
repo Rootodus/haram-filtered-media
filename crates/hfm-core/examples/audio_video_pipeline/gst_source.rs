@@ -14,8 +14,6 @@
 //! NOTE: This is an interface-first skeleton. Real GStreamer logic is
 //! intentionally absent.
 
-use crate::types::{RawAudioChunk, RawVideoFrame};
-
 pub struct GstSource {
     // Real pipeline fields will be added here later.
     _private: (),
@@ -37,14 +35,14 @@ impl GstSource {
     /// Try to pull the next raw video frame.
     ///
     /// Returns `None` when no frame is currently available or on EOS.
-    pub fn try_pull_video_frame(&self) -> Option<RawVideoFrame> {
+    pub fn try_pull_video_frame(&self) -> Option<(Vec<u8>, u64)> {
         todo!("GstSource::try_pull_video_frame")
     }
 
     /// Try to pull the next raw audio chunk.
     ///
     /// Returns `None` when no chunk is currently available or on EOS.
-    pub fn try_pull_audio_frame(&self) -> Option<RawAudioChunk> {
+    pub fn try_pull_audio_frame(&self) -> Option<(Vec<f32>, u64)> {
         todo!("GstSource::try_pull_audio_frame")
     }
 
