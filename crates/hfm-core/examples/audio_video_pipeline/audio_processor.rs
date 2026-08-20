@@ -200,7 +200,15 @@ pub fn start_audio_pipeline(
                     if next_output_pts_ns.is_none() {
                         next_output_pts_ns = Some(pts);
                     }
+
                     input_buffer.extend_from_slice(&chunk);
+
+                    if input_buffer.len() < 100_000 {
+                        println!(
+                            "[AUDIO_PROC] received chunk, buffer len={}",
+                            input_buffer.len()
+                        );
+                    }
 
                     while input_buffer.len() >= window_samples * 2 {
                         // Extract window
@@ -257,6 +265,7 @@ pub fn start_audio_pipeline(
                         let mut written = 0;
                         while written < output_hop.len() {
                             written += out_prod.push_slice(&output_hop[written..]);
+                            println!("[AUDIO_PROC] first output hop pushed, pts={}", current_pts);
                             if written < output_hop.len() {
                                 thread::sleep(Duration::from_millis(1));
                             }
@@ -301,9 +310,14 @@ pub fn start_audio_pipeline(
     let stream_config = supported_config.config();
 
     // Wait for at least ~100 ms of pre‑buffer before starting playback.
+    println!(
+        "[AUDIO] prebuffer wait begin, occupied={}",
+        out_cons.occupied_len()
+    );
     while out_cons.occupied_len() < (SAMPLE_RATE as usize / 10) * CHANNELS as usize {
         thread::sleep(Duration::from_millis(10));
     }
+    println!("[AUDIO] prebuffer wait done");
 
     // Now clone av_sync for the CPAL callback and move out_cons.
     let av_sync_cpal = av_sync.clone();
@@ -328,6 +342,7 @@ pub fn start_audio_pipeline(
     stream
         .play()
         .map_err(|e| anyhow!("Failed to start audio stream: {e}"))?;
+    println!("[AUDIO] stream.play() returned successfully");
 
     Ok(AudioPipelineHandles {
         process_thread: process_handle,

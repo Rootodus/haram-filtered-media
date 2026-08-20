@@ -52,7 +52,11 @@ impl FrameSource for ChannelSource {
         }
     }
 
-    fn seek(&mut self, _delta_ns: i64) -> Result<(), String> {
+    fn seek(&mut self, delta_ns: i64) -> Result<(), String> {
+        println!(
+            "[SEEK] ChannelSource seek called delta={}, ignoring",
+            delta_ns
+        );
         Ok(())
     }
 }
@@ -227,7 +231,10 @@ impl ApplicationHandler for App {
 
         if let (Some(config), Some(audio_rx)) = (audio_config, audio_rx) {
             let av_sync = self.av_sync.clone().expect("audio sync must exist");
-            match audio_processor::start_audio_pipeline(config, audio_rx, av_sync) {
+            println!("[MAIN] about to start audio pipeline");
+            let result = audio_processor::start_audio_pipeline(config, audio_rx, av_sync);
+            println!("[MAIN] start_audio_pipeline returned");
+            match result {
                 Ok(handles) => {
                     self.audio_pipeline = Some(AudioPipelineHandles {
                         process_thread: handles.process_thread,
@@ -254,11 +261,18 @@ impl ApplicationHandler for App {
                 if let Some(frame) = frame {
                     let pts = frame.pts.0;
                     if let Some(av_sync) = self.av_sync.as_ref() {
+                        println!(
+                            "[RENDER] wait_video pts={}, audio_clock={}, initialized={}",
+                            pts,
+                            av_sync.audio_clock().now_ns(),
+                            av_sync.audio_clock().is_initialized()
+                        );
                         av_sync.wait_video(pts);
                     }
                     renderer.render(Some(frame.data));
                     if let Some(av_sync) = self.av_sync.as_ref() {
                         av_sync.report_video_pts(pts);
+                        println!("[RENDER] frame shown pts={}", pts);
                     }
                 } else {
                     renderer.render(None);
