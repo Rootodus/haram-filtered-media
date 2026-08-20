@@ -179,8 +179,16 @@ impl ApplicationHandler for App {
             let (audio_tx, audio_rx) = crossbeam_channel::bounded::<(Vec<f32>, u64)>(128);
 
             let audio_source = gst_source.clone();
+            let av_sync_pull = av_sync.clone().expect("audio sync must exist");
+
             let pull_handle = thread::spawn(move || {
                 loop {
+                    // If seeking, skip pulling/sending to avoid stale chunks.
+                    if av_sync_pull.get_state() == PlaybackState::Seeking {
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+
                     let source = audio_source.lock().unwrap();
                     match source.try_pull_audio_frame(Duration::from_millis(5)) {
                         Some((samples, pts)) => {

@@ -57,8 +57,6 @@ impl AudioClock {
     }
 
     /// Wait until the audio clock reaches `target_ns`.
-    ///
-    /// Used by the video renderer to hold a frame until its PTS is audible.
     pub fn wait_until(&self, target_ns: u64) {
         loop {
             let now = self.now_ns();
@@ -92,6 +90,8 @@ pub struct AvSync {
     video_ended: AtomicBool,
     /// Shared playback state (Buffering, Playing, Seeking).
     state: RwLock<PlaybackState>,
+    /// Flag to request the audio processor to flush its internal buffers.
+    audio_flush_requested: AtomicBool,
 }
 
 impl AvSync {
@@ -102,6 +102,7 @@ impl AvSync {
             max_audio_lead_ns: max_audio_lead_ms * 1_000_000,
             video_ended: AtomicBool::new(false),
             state: RwLock::new(PlaybackState::Buffering),
+            audio_flush_requested: AtomicBool::new(false),
         }
     }
 
@@ -136,7 +137,6 @@ impl AvSync {
     /// If audio is ahead of video by more than `max_audio_lead_ns`, this
     /// method blocks until video catches up (or video has ended).
     pub fn gate_audio_output(&self, audio_pts_ns: u64) {
-        // If video has ended, audio can run freely.
         if self.video_ended.load(Ordering::Acquire) {
             return;
         }
@@ -155,8 +155,6 @@ impl AvSync {
     }
 
     /// Wait until the audio clock reaches `target_ns`.
-    /// If the audio clock is not initialised, return immediately (used by
-    /// video renderer before first audio).
     pub fn wait_video(&self, target_ns: u64) {
         if !self.audio_clock.is_initialized() {
             return;
@@ -164,12 +162,24 @@ impl AvSync {
         self.audio_clock.wait_until(target_ns);
     }
 
-    /// Reset everything after a seek: audio clock, last video PTS, video-ended.
+    /// Reset everything after a seek: audio clock, last video PTS, video-ended,
+    /// and request audio processor to flush internal buffers.
     pub fn reset_after_seek(&self) {
         self.audio_clock.reset();
         self.last_video_pts_ns.store(0, Ordering::Release);
         self.clear_video_ended();
+        self.audio_flush_requested.store(true, Ordering::Release);
         self.set_state(PlaybackState::Buffering);
+    }
+
+    /// Check whether the audio processor should flush its internal buffers.
+    pub fn is_audio_flush_requested(&self) -> bool {
+        self.audio_flush_requested.load(Ordering::Acquire)
+    }
+
+    /// Clear the audio flush flag (call after flushing).
+    pub fn clear_audio_flush_requested(&self) {
+        self.audio_flush_requested.store(false, Ordering::Release);
     }
 
     /// Accessor for the audio clock (for CPAL callback).

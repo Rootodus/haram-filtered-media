@@ -7,7 +7,9 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Value;
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -32,13 +34,20 @@ pub struct AudioTestConfig {
     pub window_size: usize,
 }
 
+/// Metadata for a chunk of audio waiting in the output ring buffer.
+struct AudioChunkMeta {
+    pts_ns: u64,
+    frames: usize,
+}
+
 fn build_session(path: &str, backend: &str) -> Result<Session> {
     match backend {
         "cpu" => {
             let cpus = thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(4);
-            let intra_threads = cpus.saturating_sub(1).max(1);
+            // Use half the available threads to avoid starving the rest of the system.
+            let intra_threads = (cpus / 2).max(1);
 
             let mut builder =
                 Session::builder().map_err(|e| anyhow!("Failed to create session builder: {e}"))?;
@@ -241,16 +250,32 @@ pub fn start_audio_pipeline(
         .default_output_config()
         .map_err(|e| anyhow!("No default output config: {e}"))?;
     let output_rate = default_config.sample_rate();
+    let output_rate_num = output_rate as usize;
     let output_channels = default_config.channels() as usize;
 
     println!(
         "[AUDIO] output device: rate={}, channels={}",
-        output_rate, output_channels
+        output_rate_num, output_channels
     );
+
+    // Buffer watermarks
+    let low_watermark = output_rate_num * output_channels * 3 / 2; // 1.5 seconds
+    let high_watermark = output_rate_num * output_channels * 5; // 5 seconds
 
     // Output ring buffer for CPAL
     let out_rb = HeapRb::<f32>::new(SPSC_CAPACITY);
     let (mut out_prod, mut out_cons) = out_rb.split();
+
+    // Shared metadata queue for PTS of buffered audio chunks
+    let meta: Arc<Mutex<VecDeque<AudioChunkMeta>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let meta_prod = meta.clone();
+    let meta_cons_cb = meta.clone();
+    let meta_cons_mon = meta.clone();
+
+    // Shared occupied sample count for the CPAL monitor thread
+    let occupied_shared = Arc::new(AtomicUsize::new(0));
+    let occupied_shared_cb = occupied_shared.clone();
+    let occupied_shared_mon = occupied_shared.clone();
 
     // Clone av_sync for the processing thread
     let av_sync_process = av_sync.clone();
@@ -265,6 +290,19 @@ pub fn start_audio_pipeline(
         let mut overlap_out: Vec<f32> = vec![0.0; window_samples * 2];
 
         loop {
+            // Check for audio flush request (e.g. after seek).
+            if av_sync_process.is_audio_flush_requested() {
+                // Drain any queued raw audio from the channel.
+                while let Ok(_) = audio_rx.try_recv() {}
+                // Clear internal buffers.
+                input_buffer.clear();
+                overlap_out.fill(0.0);
+                next_output_pts_ns = None;
+                // Clear the flag.
+                av_sync_process.clear_audio_flush_requested();
+                println!("[AUDIO_PROC] flushed internal buffers after seek");
+            }
+
             match audio_rx.recv() {
                 Ok((chunk, pts)) => {
                     if next_output_pts_ns.is_none() {
@@ -316,16 +354,26 @@ pub fn start_audio_pipeline(
                         av_sync_process.gate_audio_output(current_pts);
 
                         // Resample to output device rate if necessary.
-                        let output_hop_resampled = if output_rate != SAMPLE_RATE {
+                        let output_hop_resampled = if output_rate_num != SAMPLE_RATE as usize {
                             resample_interleaved(
                                 &output_hop,
                                 SAMPLE_RATE,
-                                output_rate,
+                                output_rate_num as u32,
                                 output_channels,
                             )
                         } else {
                             output_hop
                         };
+
+                        // Push metadata for the upcoming chunk.
+                        let output_frames = output_hop_resampled.len() / output_channels;
+                        {
+                            let mut meta = meta_prod.lock().unwrap();
+                            meta.push_back(AudioChunkMeta {
+                                pts_ns: current_pts,
+                                frames: output_frames,
+                            });
+                        }
 
                         // Push output_hop_resampled losslessly into ring buffer.
                         let mut written = 0;
@@ -335,6 +383,9 @@ pub fn start_audio_pipeline(
                                 thread::sleep(Duration::from_millis(1));
                             }
                         }
+
+                        // Update occupied count for the monitor.
+                        occupied_shared.store(out_prod.occupied_len(), Ordering::Release);
                     }
                 }
                 Err(_) => {
@@ -352,9 +403,8 @@ pub fn start_audio_pipeline(
     let av_sync_cpal_closure = av_sync_cpal.clone();
 
     let cpal_handle = thread::spawn(move || {
-        // Wait for at least ~100 ms of pre‑buffer.
-        let prebuffer_frames = (output_rate as usize / 10) * output_channels;
-        while out_cons.occupied_len() < prebuffer_frames {
+        // Wait for at least high_watermark samples before starting playback.
+        while out_cons.occupied_len() < high_watermark {
             thread::sleep(Duration::from_millis(10));
         }
 
@@ -366,10 +416,32 @@ pub fn start_audio_pipeline(
                     if n < data.len() {
                         data[n..].fill(0.0);
                     }
+
                     let frames_played = n / output_channels;
+
+                    // Update metadata queue for consumed frames.
+                    {
+                        let mut meta = meta_cons_cb.lock().unwrap();
+                        let mut remaining = frames_played;
+                        while remaining > 0 && !meta.is_empty() {
+                            let front_frames = meta.front().unwrap().frames;
+                            if front_frames > remaining {
+                                meta.front_mut().unwrap().frames -= remaining;
+                                remaining = 0;
+                            } else {
+                                remaining -= front_frames;
+                                meta.pop_front();
+                            }
+                        }
+                    }
+
+                    // Advance audio clock by actual frames played.
                     av_sync_cpal_closure
                         .audio_clock()
                         .advance_by_frames(frames_played);
+
+                    // Update occupied count.
+                    occupied_shared_cb.store(out_cons.occupied_len(), Ordering::Release);
                 },
                 |err| eprintln!("Audio error: {err}"),
                 None,
@@ -381,9 +453,28 @@ pub fn start_audio_pipeline(
 
         av_sync_cpal.set_state(PlaybackState::Playing);
 
-        // Keep the stream alive indefinitely.
+        // Monitor loop: toggles buffering/playing based on ring buffer level.
         loop {
-            thread::sleep(Duration::from_secs(3600));
+            let occupied = occupied_shared_mon.load(Ordering::Acquire);
+            let state = av_sync_cpal.get_state();
+
+            if state == PlaybackState::Playing && occupied < low_watermark {
+                av_sync_cpal.set_state(PlaybackState::Buffering);
+                println!("[AUDIO] buffering (low watermark)");
+            } else if state == PlaybackState::Buffering && occupied > high_watermark {
+                // Re‑base audio clock to the PTS of the next unplayed chunk.
+                let next_pts = {
+                    let meta = meta_cons_mon.lock().unwrap();
+                    meta.front().map(|m| m.pts_ns)
+                };
+                if let Some(pts) = next_pts {
+                    av_sync_cpal.audio_clock().set_base_pts(pts);
+                }
+                av_sync_cpal.set_state(PlaybackState::Playing);
+                println!("[AUDIO] resuming playback");
+            }
+
+            thread::sleep(Duration::from_millis(50));
         }
     });
 
