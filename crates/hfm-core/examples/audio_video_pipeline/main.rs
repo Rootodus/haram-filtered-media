@@ -93,76 +93,82 @@ fn parse_audio_args() -> Option<AudioTestConfig> {
     })
 }
 
-fn spawn_source_pump(
+fn spawn_video_pump(
     gst_source: Arc<Mutex<GstSource>>,
     video_tx: Sender<RawVideoFrame>,
-    audio_tx: Option<Sender<RawAudioChunk>>,
     generation: Arc<SeekGeneration>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let mut video_eos = false;
-        let mut audio_eos = audio_tx.is_none(); // no audio requested means audio is "done"
-
-        while !(video_eos && audio_eos) {
-            if !video_eos {
+        loop {
+            let maybe_frame = {
                 let source = gst_source.lock().unwrap();
-                match source.try_pull_video_frame(Duration::from_millis(5)) {
-                    Some((data, pts_ns)) => {
-                        let current_gen = generation.current();
-                        let msg = RawVideoFrame {
-                            data,
-                            pts_ns,
-                            generation: current_gen,
-                        };
-                        drop(source);
-                        if video_tx.send(msg).is_err() {
-                            break;
-                        }
-                        continue;
-                    }
-                    None if source.is_video_eos() => {
-                        video_eos = true;
-                        println!("[PUMP] video EOS");
-                        drop(source);
-                        continue;
-                    }
-                    None => {
-                        drop(source);
+                source.try_pull_video_frame(Duration::from_millis(5))
+            };
+
+            match maybe_frame {
+                Some((data, pts_ns)) => {
+                    let msg = RawVideoFrame {
+                        data,
+                        pts_ns,
+                        generation: generation.current(),
+                    };
+                    if video_tx.send(msg).is_err() {
+                        break;
                     }
                 }
-            }
-
-            if let Some(audio_tx) = audio_tx.as_ref() {
-                if !audio_eos {
+                None => {
                     let source = gst_source.lock().unwrap();
-                    match source.try_pull_audio_frame(Duration::from_millis(5)) {
-                        Some((samples, pts_ns)) => {
-                            let current_gen = generation.current();
-                            let msg = RawAudioChunk {
-                                samples,
-                                pts_ns,
-                                generation: current_gen,
-                            };
-                            drop(source);
-                            if audio_tx.send(msg).is_err() {
-                                break;
-                            }
-                            continue;
-                        }
-                        None if source.is_audio_eos() => {
-                            audio_eos = true;
-                            println!("[PUMP] audio EOS");
-                            drop(source);
-                            continue;
-                        }
-                        None => {
-                            drop(source);
-                        }
+                    let eos = source.is_video_eos();
+                    drop(source);
+
+                    if eos {
+                        println!("[PUMP] video EOS");
+                        break;
                     }
+
+                    thread::sleep(Duration::from_millis(1));
                 }
             }
+        }
+    })
+}
 
-            thread::sleep(Duration::from_millis(1));
+fn spawn_audio_pump(
+    gst_source: Arc<Mutex<GstSource>>,
+    audio_tx: Sender<RawAudioChunk>,
+    generation: Arc<SeekGeneration>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        loop {
+            let maybe_chunk = {
+                let source = gst_source.lock().unwrap();
+                source.try_pull_audio_frame(Duration::from_millis(5))
+            };
+
+            match maybe_chunk {
+                Some((samples, pts_ns)) => {
+                    let msg = RawAudioChunk {
+                        samples,
+                        pts_ns,
+                        generation: generation.current(),
+                    };
+                    if audio_tx.send(msg).is_err() {
+                        break;
+                    }
+                }
+                None => {
+                    let source = gst_source.lock().unwrap();
+                    let eos = source.is_audio_eos();
+                    drop(source);
+
+                    if eos {
+                        println!("[PUMP] audio EOS");
+                        break;
+                    }
+
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
         }
     })
 }
@@ -174,7 +180,8 @@ struct App {
 
     gst_source: Option<Arc<Mutex<GstSource>>>,
 
-    _source_pump: Option<thread::JoinHandle<()>>,
+    _video_pump: Option<thread::JoinHandle<()>>,
+    _audio_pump: Option<thread::JoinHandle<()>>,
     _audio_processor: Option<thread::JoinHandle<()>>,
     _audio_output: Option<thread::JoinHandle<()>>,
 
@@ -193,7 +200,8 @@ impl App {
             renderer: None,
             pipeline: None,
             gst_source: None,
-            _source_pump: None,
+            _video_pump: None,
+            _audio_pump: None,
             _audio_processor: None,
             _audio_output: None,
             generation: Arc::new(SeekGeneration::new()),
@@ -222,6 +230,10 @@ impl ApplicationHandler for App {
         self.renderer = Some(renderer);
 
         let audio_config = parse_audio_args();
+        if audio_config.is_none() {
+            // Video-only mode: no audio output will ever clear the buffering flag.
+            self.buffering.set(false);
+        }
 
         let gst_source = Arc::new(Mutex::new(
             GstSource::new().expect("failed to create GStreamer source"),
@@ -230,20 +242,8 @@ impl ApplicationHandler for App {
 
         let (video_tx, video_rx) = bounded::<RawVideoFrame>(4);
 
-        let audio_channel = if audio_config.is_some() {
-            let (tx, rx) = bounded::<RawAudioChunk>(128);
-            Some((tx, rx))
-        } else {
-            None
-        };
-
-        let pump = spawn_source_pump(
-            gst_source.clone(),
-            video_tx,
-            audio_channel.as_ref().map(|(tx, _)| tx.clone()),
-            self.generation.clone(),
-        );
-        self._source_pump = Some(pump);
+        let video_pump = spawn_video_pump(gst_source.clone(), video_tx, self.generation.clone());
+        self._video_pump = Some(video_pump);
 
         let video_source = ChannelVideoSource {
             rx: video_rx,
@@ -255,7 +255,13 @@ impl ApplicationHandler for App {
         pipeline.start();
         self.pipeline = Some(pipeline);
 
-        if let (Some(config), Some((_, raw_audio_rx))) = (audio_config, audio_channel) {
+        if let Some(config) = audio_config {
+            let (raw_audio_tx, raw_audio_rx) = bounded::<RawAudioChunk>(128);
+
+            let audio_pump =
+                spawn_audio_pump(gst_source.clone(), raw_audio_tx, self.generation.clone());
+            self._audio_pump = Some(audio_pump);
+
             let (processed_audio_tx, processed_audio_rx) = bounded::<ProcessedAudioChunk>(128);
 
             let audio_processor = spawn_audio_processor(
@@ -292,12 +298,9 @@ impl ApplicationHandler for App {
                 } else if let Some(pipeline) = self.pipeline.as_ref() {
                     match pipeline.pop_processed_frame() {
                         Some(frame) => {
-                            // PTS-based pacing: wait until audio clock catches up.
                             if self.audio_clock.is_initialized() {
                                 let now = self.audio_clock.now_ns();
                                 if frame.pts.0 > now {
-                                    // Frame is early. Skip rendering this time and ask
-                                    // for another redraw soon.
                                     self.window.as_ref().unwrap().request_redraw();
                                     return;
                                 }
