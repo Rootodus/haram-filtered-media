@@ -11,6 +11,8 @@
 //! NOTE: This is an interface-first skeleton. Constructors and trivial getters
 //! are implemented so `main.rs` can compile. All operational methods are stubs.
 
+#![allow(dead_code)]
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Shared audio-driven media clock.
