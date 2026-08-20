@@ -11,7 +11,7 @@ mod sync;
 mod types;
 
 use crate::audio_output::spawn_audio_output;
-use crate::audio_processor::spawn_audio_processor;
+use crate::audio_processor::{AudioTestConfig, spawn_audio_processor};
 use crate::gst_source::GstSource;
 use crate::renderer::Renderer;
 use crate::sync::{AudioClock, BufferingFlag, SeekGeneration};
@@ -32,10 +32,9 @@ use winit::{
 const SAMPLE_RATE: u32 = 44100;
 const CHANNELS: u16 = 2;
 const SEEK_DELTA_NS: i64 = 10_000_000_000;
+const WINDOW_SAMPLES: usize = 343_980;
 
 /// Adapter that turns `Receiver<RawVideoFrame>` into `hfm_core::FrameSource`.
-///
-/// It drops stale frames by checking the shared seek generation.
 struct ChannelVideoSource {
     rx: Receiver<RawVideoFrame>,
     generation: Arc<SeekGeneration>,
@@ -49,7 +48,6 @@ impl FrameSource for ChannelVideoSource {
                     if frame.generation == self.generation.current() {
                         return Some((frame.data, frame.pts_ns));
                     }
-                    // Stale frame; discard and wait for next one.
                 }
                 Err(_) => return None,
             }
@@ -57,9 +55,42 @@ impl FrameSource for ChannelVideoSource {
     }
 
     fn seek(&mut self, _delta_ns: i64) -> Result<(), String> {
-        // The real GStreamer seek is handled by the composition root.
         Ok(())
     }
+}
+
+fn parse_audio_args() -> Option<AudioTestConfig> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut model_path = None;
+    let mut backend = "cpu".to_string();
+    let mut window_size = WINDOW_SAMPLES;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--audio-model" => {
+                model_path = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--audio-backend" => {
+                backend = args[i + 1].clone();
+                i += 2;
+            }
+            "--audio-window" => {
+                window_size = args[i + 1].parse().unwrap_or(WINDOW_SAMPLES);
+                i += 2;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    model_path.map(|path| AudioTestConfig {
+        model_path: path,
+        backend,
+        window_size,
+    })
 }
 
 fn spawn_source_pump(
@@ -69,42 +100,68 @@ fn spawn_source_pump(
     generation: Arc<SeekGeneration>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        loop {
-            // Pull and send one video frame, if available.
-            {
+        let mut video_eos = false;
+        let mut audio_eos = audio_tx.is_none(); // no audio requested means audio is "done"
+
+        while !(video_eos && audio_eos) {
+            if !video_eos {
                 let source = gst_source.lock().unwrap();
-                if let Some((data, pts_ns)) = source.try_pull_video_frame() {
-                    let current_gen = generation.current();
-                    let msg = RawVideoFrame {
-                        data,
-                        pts_ns,
-                        generation: current_gen,
-                    };
-                    if video_tx.send(msg).is_err() {
-                        break;
+                match source.try_pull_video_frame(Duration::from_millis(5)) {
+                    Some((data, pts_ns)) => {
+                        let current_gen = generation.current();
+                        let msg = RawVideoFrame {
+                            data,
+                            pts_ns,
+                            generation: current_gen,
+                        };
+                        drop(source);
+                        if video_tx.send(msg).is_err() {
+                            break;
+                        }
+                        continue;
                     }
-                    continue;
+                    None if source.is_video_eos() => {
+                        video_eos = true;
+                        println!("[PUMP] video EOS");
+                        drop(source);
+                        continue;
+                    }
+                    None => {
+                        drop(source);
+                    }
                 }
             }
 
-            // If audio is enabled, pull and send one audio chunk.
             if let Some(audio_tx) = audio_tx.as_ref() {
-                let source = gst_source.lock().unwrap();
-                if let Some((samples, pts_ns)) = source.try_pull_audio_frame() {
-                    let current_gen = generation.current();
-                    let msg = RawAudioChunk {
-                        samples,
-                        pts_ns,
-                        generation: current_gen,
-                    };
-                    if audio_tx.send(msg).is_err() {
-                        break;
+                if !audio_eos {
+                    let source = gst_source.lock().unwrap();
+                    match source.try_pull_audio_frame(Duration::from_millis(5)) {
+                        Some((samples, pts_ns)) => {
+                            let current_gen = generation.current();
+                            let msg = RawAudioChunk {
+                                samples,
+                                pts_ns,
+                                generation: current_gen,
+                            };
+                            drop(source);
+                            if audio_tx.send(msg).is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                        None if source.is_audio_eos() => {
+                            audio_eos = true;
+                            println!("[PUMP] audio EOS");
+                            drop(source);
+                            continue;
+                        }
+                        None => {
+                            drop(source);
+                        }
                     }
-                    continue;
                 }
             }
 
-            // No data available. Yield briefly.
             thread::sleep(Duration::from_millis(1));
         }
     })
@@ -164,7 +221,7 @@ impl ApplicationHandler for App {
         let renderer = pollster::block_on(Renderer::new(window));
         self.renderer = Some(renderer);
 
-        let use_audio = std::env::args().any(|a| a == "--audio-model");
+        let audio_config = parse_audio_args();
 
         let gst_source = Arc::new(Mutex::new(
             GstSource::new().expect("failed to create GStreamer source"),
@@ -173,14 +230,13 @@ impl ApplicationHandler for App {
 
         let (video_tx, video_rx) = bounded::<RawVideoFrame>(4);
 
-        let audio_channel = if use_audio {
+        let audio_channel = if audio_config.is_some() {
             let (tx, rx) = bounded::<RawAudioChunk>(128);
             Some((tx, rx))
         } else {
             None
         };
 
-        // Spawn the source pump thread.
         let pump = spawn_source_pump(
             gst_source.clone(),
             video_tx,
@@ -189,7 +245,6 @@ impl ApplicationHandler for App {
         );
         self._source_pump = Some(pump);
 
-        // Start the video worker (existing hfm-core pipeline).
         let video_source = ChannelVideoSource {
             rx: video_rx,
             generation: self.generation.clone(),
@@ -200,18 +255,22 @@ impl ApplicationHandler for App {
         pipeline.start();
         self.pipeline = Some(pipeline);
 
-        // Start the audio worker and output sink, if requested.
-        if let Some((_, raw_audio_rx)) = audio_channel {
+        if let (Some(config), Some((_, raw_audio_rx))) = (audio_config, audio_channel) {
             let (processed_audio_tx, processed_audio_rx) = bounded::<ProcessedAudioChunk>(128);
 
-            let audio_processor =
-                spawn_audio_processor(raw_audio_rx, processed_audio_tx, self.generation.clone());
+            let audio_processor = spawn_audio_processor(
+                config,
+                raw_audio_rx,
+                processed_audio_tx,
+                self.generation.clone(),
+            );
             self._audio_processor = Some(audio_processor);
 
             let audio_output = spawn_audio_output(
                 processed_audio_rx,
                 self.audio_clock.clone(),
                 self.buffering.clone(),
+                self.generation.clone(),
                 SAMPLE_RATE,
                 CHANNELS,
             );
@@ -228,13 +287,21 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 let renderer = self.renderer.as_mut().unwrap();
 
-                // Buffering/black screen has priority.
                 if self.buffering.is_buffering() {
                     renderer.render(None);
                 } else if let Some(pipeline) = self.pipeline.as_ref() {
                     match pipeline.pop_processed_frame() {
                         Some(frame) => {
-                            // TODO: use audio clock PTS pacing once implemented.
+                            // PTS-based pacing: wait until audio clock catches up.
+                            if self.audio_clock.is_initialized() {
+                                let now = self.audio_clock.now_ns();
+                                if frame.pts.0 > now {
+                                    // Frame is early. Skip rendering this time and ask
+                                    // for another redraw soon.
+                                    self.window.as_ref().unwrap().request_redraw();
+                                    return;
+                                }
+                            }
                             renderer.render(Some(frame.data));
                         }
                         None => {
@@ -281,20 +348,15 @@ impl ApplicationHandler for App {
                 };
 
                 if let Some(delta) = delta {
-                    // 1. Invalidate all stale work.
                     self.generation.increment();
-
-                    // 2. Reset playback timing state.
                     self.audio_clock.reset();
                     self.buffering.set(true);
 
-                    // 3. Seek the real GStreamer source.
                     if let Some(source) = self.gst_source.as_ref() {
                         let mut source = source.lock().unwrap();
                         let _ = source.seek(delta.to_i64());
                     }
 
-                    // 4. Flush the video pipeline's internal buffers.
                     if let Some(pipeline) = self.pipeline.as_ref() {
                         let _ = pipeline.send_command(PipelineCommand::Seek(delta));
                     }

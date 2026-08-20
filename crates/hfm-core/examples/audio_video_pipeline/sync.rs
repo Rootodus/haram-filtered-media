@@ -7,11 +7,6 @@
 //! - `BufferingFlag`     : atomic flag used by the renderer to show black during underrun
 //!
 //! No complex state machine. No cross-thread blocking.
-//!
-//! NOTE: This is an interface-first skeleton. Constructors and trivial getters
-//! are implemented so `main.rs` can compile. All operational methods are stubs.
-
-#![allow(dead_code)]
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -32,28 +27,31 @@ impl AudioClock {
     }
 
     /// Called once when the first processed audio chunk is ready.
-    pub fn set_base_pts(&self, _pts_ns: u64) {
-        todo!("AudioClock::set_base_pts")
+    pub fn set_base_pts(&self, pts_ns: u64) {
+        self.current_ns.store(pts_ns, Ordering::Release);
+        self.initialized.store(true, Ordering::Release);
     }
 
     /// Advance the clock by `frames` frames played by the audio device.
-    pub fn advance_by_frames(&self, _frames: usize) {
-        todo!("AudioClock::advance_by_frames")
+    pub fn advance_by_frames(&self, frames: usize) {
+        let delta_ns = (frames as u64 * 1_000_000_000) / self.sample_rate as u64;
+        self.current_ns.fetch_add(delta_ns, Ordering::AcqRel);
     }
 
     /// Current media position in nanoseconds.
     pub fn now_ns(&self) -> u64 {
-        self.current_ns.load(Ordering::Relaxed)
+        self.current_ns.load(Ordering::Acquire)
     }
 
     /// True after the clock has been initialized with an actual PTS.
     pub fn is_initialized(&self) -> bool {
-        self.initialized.load(Ordering::Relaxed)
+        self.initialized.load(Ordering::Acquire)
     }
 
     /// Reset the clock after a seek.
     pub fn reset(&self) {
-        todo!("AudioClock::reset")
+        self.current_ns.store(0, Ordering::Release);
+        self.initialized.store(false, Ordering::Release);
     }
 }
 
@@ -71,12 +69,12 @@ impl SeekGeneration {
 
     /// Current generation value.
     pub fn current(&self) -> u64 {
-        self.generation.load(Ordering::Relaxed)
+        self.generation.load(Ordering::Acquire)
     }
 
     /// Increment the generation. Called on each seek.
     pub fn increment(&self) -> u64 {
-        todo!("SeekGeneration::increment")
+        self.generation.fetch_add(1, Ordering::AcqRel) + 1
     }
 }
 
@@ -92,28 +90,11 @@ impl BufferingFlag {
         }
     }
 
-    pub fn set(&self, _value: bool) {
-        todo!("BufferingFlag::set")
+    pub fn set(&self, value: bool) {
+        self.buffering.store(value, Ordering::Release);
     }
 
     pub fn is_buffering(&self) -> bool {
-        self.buffering.load(Ordering::Relaxed)
-    }
-}
-
-/// Plain container for the shared primitives.
-pub struct AvSync {
-    pub audio_clock: AudioClock,
-    pub generation: SeekGeneration,
-    pub buffering: BufferingFlag,
-}
-
-impl AvSync {
-    pub fn new(sample_rate: u32) -> Self {
-        Self {
-            audio_clock: AudioClock::new(sample_rate),
-            generation: SeekGeneration::new(),
-            buffering: BufferingFlag::new(true), // start in buffering state
-        }
+        self.buffering.load(Ordering::Acquire)
     }
 }
