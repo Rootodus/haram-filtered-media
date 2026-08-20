@@ -178,8 +178,28 @@ fn run_inference(
         .try_extract_tensor::<f32>()
         .map_err(|e| anyhow!("Failed to extract output tensor: {e}"))?;
 
-    // raw_slice is planar [1,2,window_samples], but we ignore batch dimension.
-    Ok(planar_to_interleaved(raw_slice, window_samples))
+    // The output tensor shape is [1, 4, 2, window_samples]
+    // (batch, sources, channels, samples).
+    // Select source index 3 (vocals) and interleave its two channels.
+    let n = window_samples;
+    let source_offset = 3 * 2 * n; // source 3, two channels
+    if raw_slice.len() < source_offset + 2 * n {
+        return Err(anyhow!(
+            "Output tensor too small for source index 3: got {}",
+            raw_slice.len()
+        ));
+    }
+
+    let left = &raw_slice[source_offset..source_offset + n];
+    let right = &raw_slice[source_offset + n..source_offset + 2 * n];
+
+    let mut interleaved = vec![0.0f32; n * 2];
+    for i in 0..n {
+        interleaved[i * 2] = left[i];
+        interleaved[i * 2 + 1] = right[i];
+    }
+
+    Ok(interleaved)
 }
 
 /// Start the audio processing pipeline.
