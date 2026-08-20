@@ -1,6 +1,18 @@
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
+
+/// High‑level playback state shared between threads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaybackState {
+    /// Not enough data to start or continue playback.
+    Buffering,
+    /// Normal playback.
+    Playing,
+    /// A seek is in progress; all buffers are being flushed.
+    Seeking,
+}
 
 /// Shared audio‑driven media clock.
 ///
@@ -11,17 +23,15 @@ pub struct AudioClock {
     /// Current audio playback position in nanoseconds.
     current_ns: AtomicU64,
     sample_rate: u32,
-    channels: u16,
     /// Set to true when the first audio chunk is known.
     initialized: AtomicBool,
 }
 
 impl AudioClock {
-    pub fn new(sample_rate: u32, channels: u16) -> Self {
+    pub fn new(sample_rate: u32) -> Self {
         Self {
             current_ns: AtomicU64::new(0),
             sample_rate,
-            channels,
             initialized: AtomicBool::new(false),
         }
     }
@@ -55,7 +65,6 @@ impl AudioClock {
             if now >= target_ns {
                 break;
             }
-            // Sleep in small increments to avoid busy spinning.
             thread::sleep(Duration::from_millis(1));
         }
     }
@@ -63,14 +72,16 @@ impl AudioClock {
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Acquire)
     }
+
+    /// Reset the clock, e.g. after a seek.
+    pub fn reset(&self) {
+        self.current_ns.store(0, Ordering::Release);
+        self.initialized.store(false, Ordering::Release);
+    }
 }
 
-/// Synchronisation controller shared between audio processing and video
-/// rendering.
-///
-/// The audio processing thread uses this object to avoid getting too far
-/// ahead of video. The video renderer uses it to wait for audio time before
-/// displaying frames.
+/// Synchronisation controller shared between audio processing, video
+/// rendering, and the demux pump.
 pub struct AvSync {
     pub audio_clock: AudioClock,
     /// PTS of the last video frame that was actually displayed.
@@ -79,16 +90,29 @@ pub struct AvSync {
     max_audio_lead_ns: u64,
     /// Set when video source has ended; audio may then run to completion.
     video_ended: AtomicBool,
+    /// Shared playback state (Buffering, Playing, Seeking).
+    state: RwLock<PlaybackState>,
 }
 
 impl AvSync {
-    pub fn new(sample_rate: u32, channels: u16, max_audio_lead_ms: u64) -> Self {
+    pub fn new(sample_rate: u32, max_audio_lead_ms: u64) -> Self {
         Self {
-            audio_clock: AudioClock::new(sample_rate, channels),
+            audio_clock: AudioClock::new(sample_rate),
             last_video_pts_ns: AtomicU64::new(0),
             max_audio_lead_ns: max_audio_lead_ms * 1_000_000,
             video_ended: AtomicBool::new(false),
+            state: RwLock::new(PlaybackState::Buffering),
         }
+    }
+
+    /// Set the current playback state.
+    pub fn set_state(&self, new_state: PlaybackState) {
+        *self.state.write().unwrap() = new_state;
+    }
+
+    /// Get the current playback state.
+    pub fn get_state(&self) -> PlaybackState {
+        *self.state.read().unwrap()
     }
 
     /// Call from the video rendering path immediately after a frame is drawn.
@@ -97,11 +121,13 @@ impl AvSync {
     }
 
     /// Mark that the video source has reached end‑of‑stream.
-    ///
-    /// This disables the audio‑lead gating and allows audio to continue to
-    /// the end without waiting for further video frames.
     pub fn set_video_ended(&self) {
         self.video_ended.store(true, Ordering::Release);
+    }
+
+    /// Reset the video-ended flag (used after seek).
+    pub fn clear_video_ended(&self) {
+        self.video_ended.store(false, Ordering::Release);
     }
 
     /// Called by the audio processing thread before pushing a processed
@@ -117,13 +143,9 @@ impl AvSync {
 
         loop {
             let video_pts = self.last_video_pts_ns.load(Ordering::Acquire);
-            // If no video frame displayed yet, do not block; the audio clock
-            // may not be initialized either. Start‑up logic should ensure
-            // both are ready before playback.
             if video_pts == 0 {
                 break;
             }
-
             let lead = audio_pts_ns.saturating_sub(video_pts);
             if lead <= self.max_audio_lead_ns {
                 break;
@@ -133,15 +155,21 @@ impl AvSync {
     }
 
     /// Wait until the audio clock reaches `target_ns`.
-    ///
-    /// Used by the video renderer to hold a frame until its PTS is audible.
+    /// If the audio clock is not initialised, return immediately (used by
+    /// video renderer before first audio).
     pub fn wait_video(&self, target_ns: u64) {
-        // If audio clock is not initialized yet, do not wait. This prevents
-        // a deadlock when the first video frame is ready before audio output.
         if !self.audio_clock.is_initialized() {
             return;
         }
         self.audio_clock.wait_until(target_ns);
+    }
+
+    /// Reset everything after a seek: audio clock, last video PTS, video-ended.
+    pub fn reset_after_seek(&self) {
+        self.audio_clock.reset();
+        self.last_video_pts_ns.store(0, Ordering::Release);
+        self.clear_video_ended();
+        self.set_state(PlaybackState::Buffering);
     }
 
     /// Accessor for the audio clock (for CPAL callback).

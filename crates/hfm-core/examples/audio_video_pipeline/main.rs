@@ -5,15 +5,14 @@ mod sync;
 
 use crate::audio_processor::AudioTestConfig;
 use anyhow::Result;
-use crossbeam_channel::{Receiver, Sender};
 use gst_source::GstSource;
 use hfm_core::ml::PeopleSegFilter;
 use hfm_core::pipeline::{FrameSource, PipelineCommand, PipelineController, SeekDelta};
 use renderer::Renderer;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use sync::AvSync;
+use sync::{AvSync, PlaybackState};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -21,43 +20,44 @@ use winit::{
     window::{Window, WindowId},
 };
 
-// Audio constants
 const SAMPLE_RATE: u32 = 44100;
 const CHANNELS: u16 = 2;
-const WINDOW_SAMPLES: usize = 343980;
+const WINDOW_SAMPLES: usize = 343_980;
 
-/// Video frame source backed by a crossbeam channel.
-struct ChannelSource {
-    rx: Receiver<(Vec<u8>, u64)>,
-    eos: bool,
+/// Wrapper around `GstSource` that provides thread‑safe access via a mutex.
+/// Implements `FrameSource` so the video pipeline can use it directly.
+struct SharedGstSource {
+    inner: Arc<Mutex<GstSource>>,
+    av_sync: Option<Arc<AvSync>>,
 }
 
-impl ChannelSource {
-    fn new(rx: Receiver<(Vec<u8>, u64)>) -> Self {
-        Self { rx, eos: false }
+impl SharedGstSource {
+    fn new(inner: Arc<Mutex<GstSource>>, av_sync: Option<Arc<AvSync>>) -> Self {
+        Self { inner, av_sync }
     }
 }
 
-impl FrameSource for ChannelSource {
+impl FrameSource for SharedGstSource {
     fn pull_frame(&mut self) -> Option<(Vec<u8>, u64)> {
-        if self.eos {
-            return None;
-        }
-        match self.rx.recv() {
-            Ok(frame) => Some(frame),
-            Err(_) => {
-                self.eos = true;
-                None
+        loop {
+            let source = self.inner.lock().unwrap();
+            match source.try_pull_video_frame(Duration::from_millis(5)) {
+                Some(frame) => return Some(frame),
+                None if source.is_video_eos() => return None,
+                None => {
+                    drop(source);
+                    std::thread::sleep(Duration::from_millis(1));
+                }
             }
         }
     }
 
     fn seek(&mut self, delta_ns: i64) -> Result<(), String> {
-        println!(
-            "[SEEK] ChannelSource seek called delta={}, ignoring",
-            delta_ns
-        );
-        Ok(())
+        let result = self.inner.lock().unwrap().seek(delta_ns);
+        if let Some(av_sync) = self.av_sync.as_ref() {
+            av_sync.reset_after_seek();
+        }
+        result
     }
 }
 
@@ -97,14 +97,14 @@ fn parse_audio_args() -> Option<AudioTestConfig> {
 
 struct AudioPipelineHandles {
     process_thread: thread::JoinHandle<()>,
-    output_stream: cpal::Stream,
+    cpal_thread: thread::JoinHandle<()>,
+    pull_thread: thread::JoinHandle<()>,
 }
 
 struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     pipeline: Option<PipelineController>,
-    demux_pump_thread: Option<thread::JoinHandle<()>>,
     audio_pipeline: Option<AudioPipelineHandles>,
     frame_count: u32,
     fps_timer: Instant,
@@ -117,7 +117,6 @@ impl Default for App {
             window: None,
             renderer: None,
             pipeline: None,
-            demux_pump_thread: None,
             audio_pipeline: None,
             frame_count: 0,
             fps_timer: Instant::now(),
@@ -127,60 +126,11 @@ impl Default for App {
 }
 
 impl App {
-    fn spawn_demux_pump(
-        gst_source: GstSource,
-        video_tx: Sender<(Vec<u8>, u64)>,
-        audio_tx: Option<Sender<(Vec<f32>, u64)>>,
-        av_sync: Option<Arc<AvSync>>,
-    ) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            let mut video_eos = false;
-            let mut audio_eos = false;
-            let poll_timeout = Duration::from_millis(5);
-
-            while !(video_eos && audio_eos) {
-                if !video_eos {
-                    match gst_source.try_pull_video_frame(poll_timeout) {
-                        Some((data, pts)) => {
-                            if video_tx.send((data, pts)).is_err() {
-                                break;
-                            }
-                        }
-                        None if gst_source.is_video_eos() => {
-                            video_eos = true;
-                            println!("[PUMP] Video EOS");
-                            if let Some(sync) = av_sync.as_ref() {
-                                sync.set_video_ended();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                if let Some(audio_tx) = audio_tx.as_ref() {
-                    if !audio_eos {
-                        match gst_source.try_pull_audio_frame(poll_timeout) {
-                            Some((samples, pts)) => {
-                                if audio_tx.send((samples, pts)).is_err() {
-                                    break;
-                                }
-                            }
-                            None if gst_source.is_audio_eos() => {
-                                audio_eos = true;
-                                println!("[PUMP] Audio EOS");
-                            }
-                            _ => {}
-                        }
-                    }
-                } else {
-                    audio_eos = true;
-                }
-
-                std::thread::yield_now();
-            }
-
-            println!("[PUMP] Demux pump finished");
-        })
+    fn is_playing(&self) -> bool {
+        match self.av_sync.as_ref() {
+            Some(sync) => sync.get_state() == PlaybackState::Playing,
+            None => true, // video-only always plays
+        }
     }
 }
 
@@ -190,7 +140,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     winit::window::WindowAttributes::default()
-                        .with_title("Audio+Video Pipeline (No-Drop, Synced)")
+                        .with_title("Audio+Video Pipeline (Buffered Sync)")
                         .with_inner_size(winit::dpi::LogicalSize::new(960, 540)),
                 )
                 .unwrap(),
@@ -201,50 +151,77 @@ impl ApplicationHandler for App {
         self.renderer = Some(renderer);
 
         let audio_config = parse_audio_args();
-        let av_sync_opt = if audio_config.is_some() {
-            Some(Arc::new(AvSync::new(SAMPLE_RATE, CHANNELS, 200)))
+        let av_sync = if audio_config.is_some() {
+            Some(Arc::new(AvSync::new(SAMPLE_RATE, 200)))
         } else {
             None
         };
-        self.av_sync = av_sync_opt.clone();
+        self.av_sync = av_sync.clone();
 
-        let gst_source = GstSource::new().expect("Failed to create GStreamer source");
+        // Create a single shared GStreamer source.
+        let gst_source = Arc::new(Mutex::new(
+            GstSource::new().expect("Failed to create GStreamer source"),
+        ));
 
-        let (video_tx, video_rx) = crossbeam_channel::bounded::<(Vec<u8>, u64)>(4);
-        let (audio_tx, audio_rx) = if audio_config.is_some() {
-            let (tx, rx) = crossbeam_channel::bounded::<(Vec<f32>, u64)>(128);
-            (Some(tx), Some(rx))
-        } else {
-            (None, None)
-        };
-
-        let pump_handle =
-            Self::spawn_demux_pump(gst_source, video_tx, audio_tx, av_sync_opt.clone());
-        self.demux_pump_thread = Some(pump_handle);
-
-        let video_source = ChannelSource::new(video_rx);
-        let model = PeopleSegFilter::new("models/pphumanseg.onnx")
-            .expect("Failed to load PPHumanSeg model");
+        // Video pipeline using the shared source.
+        let video_source = SharedGstSource::new(gst_source.clone(), av_sync.clone());
+        let model =
+            PeopleSegFilter::new("models/pphumanseg.onnx").expect("Failed to load PPHumanSeg");
         let mut pipeline = PipelineController::new(Box::new(video_source), model);
         pipeline.start();
         self.pipeline = Some(pipeline);
 
-        if let (Some(config), Some(audio_rx)) = (audio_config, audio_rx) {
-            let av_sync = self.av_sync.clone().expect("audio sync must exist");
-            println!("[MAIN] about to start audio pipeline");
-            let result = audio_processor::start_audio_pipeline(config, audio_rx, av_sync);
-            println!("[MAIN] start_audio_pipeline returned");
-            match result {
+        // Audio path: if audio model is provided, spawn a pull thread that
+        // reads audio from the shared source and sends it to the audio
+        // processor. The processor runs asynchronously and will start CPAL
+        // when ready.
+        if let Some(config) = audio_config {
+            let (audio_tx, audio_rx) = crossbeam_channel::bounded::<(Vec<f32>, u64)>(128);
+
+            let audio_source = gst_source.clone();
+            let pull_handle = thread::spawn(move || {
+                loop {
+                    let source = audio_source.lock().unwrap();
+                    match source.try_pull_audio_frame(Duration::from_millis(5)) {
+                        Some((samples, pts)) => {
+                            drop(source);
+                            if audio_tx.send((samples, pts)).is_err() {
+                                break;
+                            }
+                        }
+                        None if source.is_audio_eos() => break,
+                        None => {
+                            drop(source);
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                    }
+                }
+                println!("[AUDIO_PULL] finished");
+            });
+
+            match audio_processor::start_audio_pipeline(config, audio_rx, av_sync.unwrap()) {
                 Ok(handles) => {
                     self.audio_pipeline = Some(AudioPipelineHandles {
                         process_thread: handles.process_thread,
-                        output_stream: handles.output_stream,
+                        cpal_thread: handles.cpal_thread,
+                        pull_thread: pull_handle,
                     });
                 }
                 Err(e) => {
                     eprintln!("Failed to start audio pipeline: {e}");
                 }
             }
+        }
+
+        // If no audio, we are always playing.
+        if self.av_sync.is_none() {
+            // No state needed; video-only.
+        } else {
+            // Initially buffering until audio ready.
+            self.av_sync
+                .as_ref()
+                .unwrap()
+                .set_state(PlaybackState::Buffering);
         }
 
         self.window.as_ref().unwrap().request_redraw();
@@ -255,27 +232,29 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
 
             WindowEvent::RedrawRequested => {
-                let renderer = self.renderer.as_mut().unwrap();
-                let frame = self.pipeline.as_ref().unwrap().pop_processed_frame();
+                let playing = match self.av_sync.as_ref() {
+                    Some(sync) => sync.get_state() == PlaybackState::Playing,
+                    None => true,
+                };
 
-                if let Some(frame) = frame {
-                    let pts = frame.pts.0;
-                    if let Some(av_sync) = self.av_sync.as_ref() {
-                        println!(
-                            "[RENDER] wait_video pts={}, audio_clock={}, initialized={}",
-                            pts,
-                            av_sync.audio_clock().now_ns(),
-                            av_sync.audio_clock().is_initialized()
-                        );
-                        av_sync.wait_video(pts);
-                    }
-                    renderer.render(Some(frame.data));
-                    if let Some(av_sync) = self.av_sync.as_ref() {
-                        av_sync.report_video_pts(pts);
-                        println!("[RENDER] frame shown pts={}", pts);
-                    }
-                } else {
+                let renderer = self.renderer.as_mut().unwrap();
+
+                if !playing {
                     renderer.render(None);
+                } else {
+                    let frame = self.pipeline.as_ref().unwrap().pop_processed_frame();
+                    if let Some(frame) = frame {
+                        let pts = frame.pts.0;
+                        if let Some(av_sync) = self.av_sync.as_ref() {
+                            av_sync.wait_video(pts);
+                        }
+                        renderer.render(Some(frame.data));
+                        if let Some(av_sync) = self.av_sync.as_ref() {
+                            av_sync.report_video_pts(pts);
+                        }
+                    } else {
+                        renderer.render(None);
+                    }
                 }
 
                 self.frame_count += 1;
@@ -308,11 +287,17 @@ impl ApplicationHandler for App {
                 if let Some(pipeline) = self.pipeline.as_ref() {
                     match named_key {
                         winit::keyboard::NamedKey::ArrowLeft => {
+                            if let Some(av_sync) = self.av_sync.as_ref() {
+                                av_sync.set_state(PlaybackState::Seeking);
+                            }
                             let _ = pipeline.send_command(PipelineCommand::Seek(
                                 SeekDelta::Backward(SEEK_DELTA_NS as u64),
                             ));
                         }
                         winit::keyboard::NamedKey::ArrowRight => {
+                            if let Some(av_sync) = self.av_sync.as_ref() {
+                                av_sync.set_state(PlaybackState::Seeking);
+                            }
                             let _ = pipeline.send_command(PipelineCommand::Seek(
                                 SeekDelta::Forward(SEEK_DELTA_NS as u64),
                             ));
