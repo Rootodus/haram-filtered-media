@@ -2181,6 +2181,7 @@ dependencies = [
  "static_assertions",
  "symphonia",
  "thiserror 2.0.20",
+ "thread-priority",
  "tracing",
  "tracing-subscriber",
  "wgpu",
@@ -5387,6 +5388,20 @@ name = "thousands"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bf63baf9f5039dadc247375c29eb13706706cfde997d0330d05aa63a77d8820"
+
+[[package]]
+name = "thread-priority"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d2e834949be5111506bb252643498af1514f600d9e1dceedaa42afae155b67f"
+dependencies = [
+ "bitflags 2.13.1",
+ "cfg-if",
+ "libc",
+ "log",
+ "rustversion",
+ "windows 0.62.2",
+]
 
 [[package]]
 name = "thread_local"

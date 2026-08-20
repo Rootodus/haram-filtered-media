@@ -35,6 +35,7 @@ thiserror = "2.0.20"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false }
 yscv-video = "0.1.11"
+thread-priority = "3.1.1"
 # --- Unique Web Dependencies (Used only by hfm-web) ---
 chromiumoxide = { version = "0.9.1", default-features = false }
 encase = "0.12.0"

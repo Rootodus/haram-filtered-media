@@ -50,6 +50,7 @@ tracing-subscriber = { workspace = true, features = [
     "sharded-slab"
 ] }
 yscv-video = { workspace = true }
+thread-priority = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wgpu = { workspace = true, features = ["dx12", "wgsl"] }
