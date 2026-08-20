@@ -184,6 +184,7 @@ struct App {
     audio_clock: Arc<AudioClock>,
     buffering: Arc<BufferingFlag>,
 
+    has_audio: bool,
     frame_count: u32,
     fps_timer: Instant,
 }
@@ -202,6 +203,7 @@ impl App {
             generation: Arc::new(SeekGeneration::new()),
             audio_clock: Arc::new(AudioClock::new(SAMPLE_RATE)),
             buffering: Arc::new(BufferingFlag::new(true)),
+            has_audio: false,
             frame_count: 0,
             fps_timer: Instant::now(),
         }
@@ -225,7 +227,9 @@ impl ApplicationHandler for App {
         self.renderer = Some(renderer);
 
         let audio_config = parse_audio_args();
-        if audio_config.is_none() {
+        self.has_audio = audio_config.is_some();
+
+        if !self.has_audio {
             // Video-only mode: no audio output will ever clear the buffering flag.
             self.buffering.set(false);
         }
@@ -291,25 +295,30 @@ impl ApplicationHandler for App {
                 if self.buffering.is_buffering() {
                     renderer.render(None);
                 } else if let Some(pipeline) = self.pipeline.as_ref() {
-                    if let Some(frame) = pipeline.pop_processed_frame() {
+                    // Peek the next frame's PTS without removing it.
+                    if let Some(front_pts) = pipeline.peek_video_pts() {
                         if self.audio_clock.is_initialized() {
                             let now = self.audio_clock.now_ns();
-                            if frame.pts.0 > now {
+                            if front_pts > now {
+                                // Frame is early. Wait and redraw later.
                                 self.window.as_ref().unwrap().request_redraw();
                                 return;
                             }
                         }
-                        renderer.render(Some(frame.data));
 
-                        self.frame_count += 1;
-                        if self.fps_timer.elapsed() >= Duration::from_secs(1) {
-                            println!("Video FPS: {}", self.frame_count);
-                            self.frame_count = 0;
-                            self.fps_timer = Instant::now();
+                        // PTS is due. Pop and render.
+                        if let Some(frame) = pipeline.pop_processed_frame() {
+                            renderer.render(Some(frame.data));
+
+                            self.frame_count += 1;
+                            if self.fps_timer.elapsed() >= Duration::from_secs(1) {
+                                println!("Video FPS: {}", self.frame_count);
+                                self.frame_count = 0;
+                                self.fps_timer = Instant::now();
+                            }
                         }
                     }
-                    // If no new frame is available, do not render black.
-                    // This prevents flicker between video frames.
+                    // If no frame is available, do nothing. This prevents flicker.
                 }
 
                 self.window.as_ref().unwrap().request_redraw();
@@ -343,7 +352,11 @@ impl ApplicationHandler for App {
                 if let Some(delta) = delta {
                     self.generation.increment();
                     self.audio_clock.reset();
-                    self.buffering.set(true);
+
+                    // Only set buffering on seek if audio is actually present.
+                    if self.has_audio {
+                        self.buffering.set(true);
+                    }
 
                     if let Some(source) = self.gst_source.as_ref() {
                         let mut source = source.lock().unwrap();

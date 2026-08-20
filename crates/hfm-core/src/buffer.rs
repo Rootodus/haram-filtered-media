@@ -2,6 +2,7 @@
 
 use crossbeam::queue::ArrayQueue;
 use parking_lot::Mutex;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Presentation timestamp in nanoseconds (monotonic).
@@ -38,12 +39,14 @@ pub struct MediaBuffer {
     // Last PTS for monotonicity checks (per stream)
     video_last_pts: Mutex<Option<Pts>>,
     audio_last_pts: Mutex<Option<Pts>>,
-    // Known durations for fill‑level estimation
+    // Known durations for fill-level estimation
     video_frame_duration_secs: f32,
     audio_chunk_duration_secs: f32,
     capacity_secs: f32,
     flush_gen: AtomicU64,
     push_lock: Mutex<()>,
+    // FIFO of queued video PTS values, used for non-destructive peek.
+    video_pts_deque: Mutex<VecDeque<u64>>,
 }
 
 impl MediaBuffer {
@@ -68,14 +71,14 @@ impl MediaBuffer {
             capacity_secs,
             flush_gen: AtomicU64::new(0),
             push_lock: Mutex::new(()),
+            video_pts_deque: Mutex::new(VecDeque::new()),
         }
     }
 
     pub fn push_video(&self, frame: VideoFrame) -> Result<(), VideoFrame> {
-        // Acquire the lock to prevent races with flush
+        // Acquire the lock to prevent races with flush and pop.
         let _lock = self.push_lock.lock();
 
-        // Check buffer-side generation
         let current_flush_gen = self.flush_gen.load(Ordering::Acquire);
         if frame.seek_gen != current_flush_gen {
             // Frame is from an older generation – discard it
@@ -98,6 +101,7 @@ impl MediaBuffer {
         match self.video_queue.push(frame) {
             Ok(()) => {
                 *self.video_last_pts.lock() = Some(pts);
+                self.video_pts_deque.lock().push_back(pts.0);
                 self.update_state_after_push();
                 Ok(())
             }
@@ -129,7 +133,14 @@ impl MediaBuffer {
     }
 
     pub fn pop_video(&self) -> Option<VideoFrame> {
+        // Lock to keep pop and peek consistent.
+        let _lock = self.push_lock.lock();
+
         let frame = self.video_queue.pop()?;
+
+        // Remove the corresponding PTS from the FIFO.
+        self.video_pts_deque.lock().pop_front();
+
         self.update_state_after_pop();
         Some(frame)
     }
@@ -138,6 +149,12 @@ impl MediaBuffer {
         let chunk = self.audio_queue.pop()?;
         self.update_state_after_pop();
         Some(chunk)
+    }
+
+    /// Return the PTS of the next video frame without removing it.
+    pub fn peek_video_pts(&self) -> Option<u64> {
+        let _lock = self.push_lock.lock();
+        self.video_pts_deque.lock().front().copied()
     }
 
     fn update_state_after_push(&self) {
@@ -162,13 +179,10 @@ impl MediaBuffer {
         matches!(*self.state.lock(), BufferState::Seeking)
     }
 
-    /// Returns the current buffer fill level in seconds (estimated from queue length × duration).
+    /// Returns the current buffer fill level in seconds.
     pub fn fill_level_secs(&self) -> f32 {
         let video_dur = self.video_queue.len() as f32 * self.video_frame_duration_secs;
         let audio_dur = self.audio_queue.len() as f32 * self.audio_chunk_duration_secs;
-        // Use the minimum to avoid underrun (if both streams are present)
-        // If audio is not used, its len is 0, so audio_dur = 0 → min becomes 0, which is wrong.
-        // So we only consider audio if it has data.
         if self.audio_queue.is_empty() {
             video_dur
         } else {
@@ -176,38 +190,28 @@ impl MediaBuffer {
         }
     }
 
-    /// Returns the current seek epoch.
-    ///
-    /// Frames must carry this value in `VideoFrame.seek_gen` to be accepted.
     pub fn current_seek_epoch(&self) -> u64 {
         self.flush_gen.load(Ordering::Acquire)
     }
 
-    /// Flushes both queues, increments the seek epoch, and returns the new epoch.
-    ///
-    /// After this call, only frames with `seek_gen == returned_epoch` will be accepted.
     pub fn flush(&self) -> u64 {
         let _lock = self.push_lock.lock();
 
-        // Increment epoch. `fetch_add` returns the previous value, so `+ 1`
-        // gives the new epoch.
         let new_epoch = self.flush_gen.fetch_add(1, Ordering::Release) + 1;
 
-        // Clear queues
         while self.video_queue.pop().is_some() {}
         while self.audio_queue.pop().is_some() {}
 
-        // Reset PTS tracking
+        self.video_pts_deque.lock().clear();
+
         *self.video_last_pts.lock() = None;
         *self.audio_last_pts.lock() = None;
 
-        // Transition state to Seeking
         *self.state.lock() = BufferState::Seeking;
 
         new_epoch
     }
 
-    /// Marks the seek as completed. Transitions to `Empty` or `Active` based on queue content.
     pub fn seek_completed(&self) {
         let mut state = self.state.lock();
         if let BufferState::Seeking = *state {

@@ -112,6 +112,14 @@ impl PipelineController {
         Some(frame)
     }
 
+    /// Return the PTS of the next processed video frame without removing it.
+    ///
+    /// This is used by the presentation layer to decide whether to wait for
+    /// the audio clock or render immediately.
+    pub fn peek_video_pts(&self) -> Option<u64> {
+        self.buffer.peek_video_pts()
+    }
+
     pub fn start(&mut self) {
         let source = self.source.take().expect("Controller already started");
         let model = self.model.take().expect("Controller already started");
@@ -161,7 +169,6 @@ impl PipelineController {
         running: Arc<AtomicBool>,
     ) {
         while running.load(Ordering::Acquire) {
-            // Blocking receive – no busy‑wait, no drop
             match ml_rx.recv() {
                 Ok(packed) => {
                     let _ = slot_pool.with_payload_mut(packed, |payload| {
@@ -183,19 +190,13 @@ impl PipelineController {
                         frame = returned_frame;
                         thread::sleep(Duration::from_millis(1));
                     }
-                    // Frame successfully pushed; no explicit slot release needed here because
-                    // pop_processed_frame() later discards the slot.
                 }
-                Err(_) => {
-                    // Sender dropped – shutdown
-                    break;
-                }
+                Err(_) => break,
             }
         }
     }
 
     // Helper: enqueue a frame (write to slot, set generation, send to ML queue).
-    // This version blocks if no slot is available or ML queue is full.
     fn enqueue_frame(
         rgba: Vec<u8>,
         pts_ns: u64,
@@ -203,7 +204,6 @@ impl PipelineController {
         slot_pool: &Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         ml_tx: &Sender<PackedIndex>,
     ) {
-        // Claim a slot, waiting until one becomes free.
         let packed = loop {
             if let Some(packed) = slot_pool.try_claim() {
                 break packed;
@@ -217,10 +217,7 @@ impl PipelineController {
         slot_pool.set_pts_ns(packed, pts_ns);
         slot_pool.set_seek_gen(packed, seek_gen);
 
-        // Blocking send: if ML thread is behind, controller waits here.
-        // This propagates backpressure to the video source.
         if ml_tx.send(packed).is_err() {
-            // ML thread stopped; discard the slot and bail out
             slot_pool.discard_slot(packed);
         }
     }
@@ -238,7 +235,6 @@ impl PipelineController {
         println!("[CONTROLLER] Run loop started");
 
         while running.load(Ordering::Acquire) {
-            // Check for commands without blocking
             match cmd_rx.try_recv() {
                 Ok(cmd) => match cmd {
                     PipelineCommand::Seek(delta) => match &mut state {
@@ -263,39 +259,36 @@ impl PipelineController {
                         break;
                     }
                 },
-                Err(TryRecvError::Empty) => {
-                    // No command; pull a frame if state allows.
-                    match &mut state {
-                        PipelineState::Idle => {
-                            if let Some((rgba, pts_ns)) = source.pull_frame() {
-                                let epoch = buffer.current_seek_epoch();
-                                Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
-                                state = PipelineState::Playing;
-                            } else {
-                                break;
-                            }
-                        }
-                        PipelineState::Playing => {
-                            if let Some((rgba, pts_ns)) = source.pull_frame() {
-                                let epoch = buffer.current_seek_epoch();
-                                Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
-                            } else {
-                                break;
-                            }
-                        }
-                        PipelineState::Seeking { epoch } => {
-                            if let Some((rgba, pts_ns)) = source.pull_frame() {
-                                Self::enqueue_frame(rgba, pts_ns, *epoch, &slot_pool, &ml_tx);
-                                state = PipelineState::Playing;
-                            } else {
-                                break;
-                            }
-                        }
-                        PipelineState::Stopped => {
+                Err(TryRecvError::Empty) => match &mut state {
+                    PipelineState::Idle => {
+                        if let Some((rgba, pts_ns)) = source.pull_frame() {
+                            let epoch = buffer.current_seek_epoch();
+                            Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
+                            state = PipelineState::Playing;
+                        } else {
                             break;
                         }
                     }
-                }
+                    PipelineState::Playing => {
+                        if let Some((rgba, pts_ns)) = source.pull_frame() {
+                            let epoch = buffer.current_seek_epoch();
+                            Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
+                        } else {
+                            break;
+                        }
+                    }
+                    PipelineState::Seeking { epoch } => {
+                        if let Some((rgba, pts_ns)) = source.pull_frame() {
+                            Self::enqueue_frame(rgba, pts_ns, *epoch, &slot_pool, &ml_tx);
+                            state = PipelineState::Playing;
+                        } else {
+                            break;
+                        }
+                    }
+                    PipelineState::Stopped => {
+                        break;
+                    }
+                },
                 Err(TryRecvError::Disconnected) => break,
             }
         }
