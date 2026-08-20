@@ -137,6 +137,11 @@ impl AvSync {
     /// If audio is ahead of video by more than `max_audio_lead_ns`, this
     /// method blocks until video catches up (or video has ended).
     pub fn gate_audio_output(&self, audio_pts_ns: u64) {
+        // Do not gate during Buffering/Seeking.
+        if self.get_state() != PlaybackState::Playing {
+            return;
+        }
+
         if self.video_ended.load(Ordering::Acquire) {
             return;
         }
