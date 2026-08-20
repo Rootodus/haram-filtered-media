@@ -1,8 +1,3 @@
-//! Composition root for the audio/video pipeline example.
-//!
-//! This file only wires modules together. It contains no GStreamer,
-//! ONNX, CPAL, wgpu, or processing-loop logic itself.
-
 mod audio_output;
 mod audio_processor;
 mod gst_source;
@@ -296,30 +291,25 @@ impl ApplicationHandler for App {
                 if self.buffering.is_buffering() {
                     renderer.render(None);
                 } else if let Some(pipeline) = self.pipeline.as_ref() {
-                    match pipeline.pop_processed_frame() {
-                        Some(frame) => {
-                            if self.audio_clock.is_initialized() {
-                                let now = self.audio_clock.now_ns();
-                                if frame.pts.0 > now {
-                                    self.window.as_ref().unwrap().request_redraw();
-                                    return;
-                                }
+                    if let Some(frame) = pipeline.pop_processed_frame() {
+                        if self.audio_clock.is_initialized() {
+                            let now = self.audio_clock.now_ns();
+                            if frame.pts.0 > now {
+                                self.window.as_ref().unwrap().request_redraw();
+                                return;
                             }
-                            renderer.render(Some(frame.data));
                         }
-                        None => {
-                            renderer.render(None);
+                        renderer.render(Some(frame.data));
+
+                        self.frame_count += 1;
+                        if self.fps_timer.elapsed() >= Duration::from_secs(1) {
+                            println!("Video FPS: {}", self.frame_count);
+                            self.frame_count = 0;
+                            self.fps_timer = Instant::now();
                         }
                     }
-                } else {
-                    renderer.render(None);
-                }
-
-                self.frame_count += 1;
-                if self.fps_timer.elapsed() >= Duration::from_secs(1) {
-                    println!("Video FPS: {}", self.frame_count);
-                    self.frame_count = 0;
-                    self.fps_timer = Instant::now();
+                    // If no new frame is available, do not render black.
+                    // This prevents flicker between video frames.
                 }
 
                 self.window.as_ref().unwrap().request_redraw();
