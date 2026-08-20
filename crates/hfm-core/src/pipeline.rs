@@ -5,10 +5,11 @@ use crate::buffer::{MediaBuffer, Pts, VideoFrame};
 use crate::filter::VideoFilter;
 use crate::memory::{PackedIndex, SlotPool};
 use crate::ml::PeopleSegFilter;
-use crossbeam::queue::ArrayQueue;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
 
 /// Constants for the video resolution (must match the model's expected input size).
 pub const WIDTH: u32 = 960;
@@ -61,11 +62,12 @@ pub struct PipelineController {
     model: Option<Arc<PeopleSegFilter>>,
     buffer: Arc<MediaBuffer>,
     slot_pool: Option<Arc<SlotPool<VIDEO_SLOT_SIZE>>>,
-    ml_queue: Option<Arc<ArrayQueue<PackedIndex>>>,
+    ml_tx: Option<Sender<PackedIndex>>,
+    ml_rx: Option<Receiver<PackedIndex>>,
     cmd_rx: Receiver<PipelineCommand>,
     cmd_tx: Sender<PipelineCommand>,
-    _ml_handle: Option<std::thread::JoinHandle<()>>,
-    _controller_handle: Option<std::thread::JoinHandle<()>>,
+    _ml_handle: Option<thread::JoinHandle<()>>,
+    _controller_handle: Option<thread::JoinHandle<()>>,
     running: Arc<AtomicBool>,
 }
 
@@ -73,9 +75,9 @@ impl PipelineController {
     pub fn new(source: Box<dyn FrameSource>, model: PeopleSegFilter) -> Self {
         let pool = Arc::new(SlotPool::<VIDEO_SLOT_SIZE>::new(N_V));
         let buffer = Arc::new(MediaBuffer::new(5.0, 30.0, 44100, 2048));
-        let ml_queue = Arc::new(ArrayQueue::<PackedIndex>::new(N_V));
+        let (ml_tx, ml_rx) = bounded::<PackedIndex>(N_V);
         let running = Arc::new(AtomicBool::new(true));
-        let (tx, rx) = bounded(32);
+        let (cmd_tx, cmd_rx) = bounded(32);
 
         PipelineController {
             state: PipelineState::Idle,
@@ -83,9 +85,10 @@ impl PipelineController {
             model: Some(Arc::new(model)),
             buffer: buffer.clone(),
             slot_pool: Some(pool),
-            ml_queue: Some(ml_queue),
-            cmd_rx: rx,
-            cmd_tx: tx,
+            ml_tx: Some(ml_tx),
+            ml_rx: Some(ml_rx),
+            cmd_rx,
+            cmd_tx,
             _ml_handle: None,
             _controller_handle: None,
             running,
@@ -114,7 +117,8 @@ impl PipelineController {
         let model = self.model.take().expect("Controller already started");
         let buffer = self.buffer.clone();
         let slot_pool = self.slot_pool.clone().expect("Controller already started");
-        let ml_queue = self.ml_queue.clone().expect("Controller already started");
+        let ml_tx = self.ml_tx.take().expect("Controller already started");
+        let ml_rx = self.ml_rx.take().expect("Controller already started");
         let cmd_rx = self.cmd_rx.clone();
         let running = self.running.clone();
 
@@ -123,29 +127,22 @@ impl PipelineController {
         // Spawn ML thread
         let ml_slot_pool = slot_pool.clone();
         let ml_model = model;
-        let ml_queue_clone = ml_queue.clone();
         let ml_buffer = buffer.clone();
         let ml_running = running.clone();
-        let ml_handle = std::thread::spawn(move || {
-            Self::ml_thread(
-                ml_queue_clone,
-                ml_slot_pool,
-                ml_model,
-                ml_buffer,
-                ml_running,
-            );
+        let ml_handle = thread::spawn(move || {
+            Self::ml_thread(ml_rx, ml_slot_pool, ml_model, ml_buffer, ml_running);
         });
 
         let controller_slot_pool = slot_pool.clone();
-        let controller_ml_queue = ml_queue.clone();
+        let controller_ml_tx = ml_tx.clone();
 
-        let controller_handle = std::thread::spawn(move || {
+        let controller_handle = thread::spawn(move || {
             Self::run_loop(
                 state,
                 source,
                 buffer,
                 controller_slot_pool,
-                controller_ml_queue,
+                controller_ml_tx,
                 cmd_rx,
                 running,
             );
@@ -155,57 +152,76 @@ impl PipelineController {
         self._controller_handle = Some(controller_handle);
     }
 
-    // ML thread: consumes from queue, runs inference, pushes to buffer.
+    // ML thread: consumes from blocking queue, runs inference, pushes to buffer.
     fn ml_thread(
-        ml_queue: Arc<ArrayQueue<PackedIndex>>,
+        ml_rx: Receiver<PackedIndex>,
         slot_pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         model: Arc<PeopleSegFilter>,
         buffer: Arc<MediaBuffer>,
         running: Arc<AtomicBool>,
     ) {
         while running.load(Ordering::Acquire) {
-            if let Some(packed) = ml_queue.pop() {
-                let _ = slot_pool
-                    .with_payload_mut(packed, |payload| model.filter_frame(payload, WIDTH, HEIGHT));
-                let pts_ns = slot_pool.get_pts_ns(packed);
-                let pts = Pts(pts_ns);
-                let data = slot_pool.with_payload_mut(packed, |p| p.to_vec());
-                let seek_gen = slot_pool.get_seek_gen(packed);
-                let frame = VideoFrame {
-                    pts,
-                    slot: packed,
-                    data,
-                    seek_gen,
-                };
-                if let Err(_) = buffer.push_video(frame) {
-                    slot_pool.discard_slot(packed);
+            // Blocking receive – no busy‑wait, no drop
+            match ml_rx.recv() {
+                Ok(packed) => {
+                    let _ = slot_pool.with_payload_mut(packed, |payload| {
+                        model.filter_frame(payload, WIDTH, HEIGHT)
+                    });
+                    let pts_ns = slot_pool.get_pts_ns(packed);
+                    let pts = Pts(pts_ns);
+                    let data = slot_pool.with_payload_mut(packed, |p| p.to_vec());
+                    let seek_gen = slot_pool.get_seek_gen(packed);
+                    let frame = VideoFrame {
+                        pts,
+                        slot: packed,
+                        data,
+                        seek_gen,
+                    };
+
+                    let mut frame = frame;
+                    while let Err(returned_frame) = buffer.push_video(frame) {
+                        frame = returned_frame;
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    // Frame successfully pushed; no explicit slot release needed here because
+                    // pop_processed_frame() later discards the slot.
                 }
-            } else {
-                std::thread::sleep(std::time::Duration::from_micros(100));
+                Err(_) => {
+                    // Sender dropped – shutdown
+                    break;
+                }
             }
         }
     }
 
-    // Helper: enqueue a frame (write to slot, set generation, push to ML queue)
+    // Helper: enqueue a frame (write to slot, set generation, send to ML queue).
+    // This version blocks if no slot is available or ML queue is full.
     fn enqueue_frame(
         rgba: Vec<u8>,
         pts_ns: u64,
         seek_gen: u64,
         slot_pool: &Arc<SlotPool<VIDEO_SLOT_SIZE>>,
-        ml_queue: &Arc<ArrayQueue<PackedIndex>>,
+        ml_tx: &Sender<PackedIndex>,
     ) {
-        if let Some(packed) = slot_pool.try_claim() {
-            slot_pool.with_payload_mut(packed, |payload| {
-                payload.copy_from_slice(&rgba);
-            });
-            slot_pool.set_pts_ns(packed, pts_ns);
-            slot_pool.set_seek_gen(packed, seek_gen);
-            if let Err(_) = ml_queue.push(packed) {
-                eprintln!("[CONTROLLER] ML queue full, dropping frame");
-                slot_pool.discard_slot(packed);
+        // Claim a slot, waiting until one becomes free.
+        let packed = loop {
+            if let Some(packed) = slot_pool.try_claim() {
+                break packed;
             }
-        } else {
-            eprintln!("[CONTROLLER] No free slot available");
+            thread::sleep(Duration::from_millis(1));
+        };
+
+        slot_pool.with_payload_mut(packed, |payload| {
+            payload.copy_from_slice(&rgba);
+        });
+        slot_pool.set_pts_ns(packed, pts_ns);
+        slot_pool.set_seek_gen(packed, seek_gen);
+
+        // Blocking send: if ML thread is behind, controller waits here.
+        // This propagates backpressure to the video source.
+        if ml_tx.send(packed).is_err() {
+            // ML thread stopped; discard the slot and bail out
+            slot_pool.discard_slot(packed);
         }
     }
 
@@ -215,7 +231,7 @@ impl PipelineController {
         mut source: Box<dyn FrameSource>,
         buffer: Arc<MediaBuffer>,
         slot_pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
-        ml_queue: Arc<ArrayQueue<PackedIndex>>,
+        ml_tx: Sender<PackedIndex>,
         cmd_rx: Receiver<PipelineCommand>,
         running: Arc<AtomicBool>,
     ) {
@@ -227,16 +243,11 @@ impl PipelineController {
                 Ok(cmd) => match cmd {
                     PipelineCommand::Seek(delta) => match &mut state {
                         PipelineState::Idle | PipelineState::Playing => {
-                            // Flush the buffer first and get the new epoch.
                             let new_epoch = buffer.flush();
                             let delta_i64 = delta.to_i64();
 
                             if let Err(e) = source.seek(delta_i64) {
                                 eprintln!("[CONTROLLER] Seek failed: {}", e);
-                                // Even if the source seek fails, the buffer has already
-                                // been flushed. We move to Seeking with the new epoch so
-                                // that if the source continues producing frames they
-                                // will be accepted and playback can resume.
                             }
 
                             state = PipelineState::Seeking { epoch: new_epoch };
@@ -258,28 +269,25 @@ impl PipelineController {
                         PipelineState::Idle => {
                             if let Some((rgba, pts_ns)) = source.pull_frame() {
                                 let epoch = buffer.current_seek_epoch();
-                                Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_queue);
+                                Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
                                 state = PipelineState::Playing;
                             } else {
-                                // End of stream.
                                 break;
                             }
                         }
                         PipelineState::Playing => {
                             if let Some((rgba, pts_ns)) = source.pull_frame() {
                                 let epoch = buffer.current_seek_epoch();
-                                Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_queue);
+                                Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
                             } else {
                                 break;
                             }
                         }
                         PipelineState::Seeking { epoch } => {
-                            // Pull the first frame after seek.
                             if let Some((rgba, pts_ns)) = source.pull_frame() {
-                                Self::enqueue_frame(rgba, pts_ns, *epoch, &slot_pool, &ml_queue);
+                                Self::enqueue_frame(rgba, pts_ns, *epoch, &slot_pool, &ml_tx);
                                 state = PipelineState::Playing;
                             } else {
-                                // No frame after seek. Treat as end-of-stream for now.
                                 break;
                             }
                         }

@@ -6,6 +6,7 @@ use gstreamer::prelude::GstBinExtManual;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use hfm_core::pipeline::{FrameSource, HEIGHT, WIDTH};
+use std::time::Duration;
 
 pub struct GstSource {
     pipeline: gst::Pipeline,
@@ -37,14 +38,13 @@ impl GstSource {
                     .build(),
             )
             .async_(true)
-            .drop(true)
+            .drop(false)
             .build();
         let video_sink_element = video_sink.upcast_ref::<gst::Element>().clone();
 
         // ---- Audio branch ----
         let audio_convert = gst::ElementFactory::make("audioconvert").build()?;
         let audio_resample = gst::ElementFactory::make("audioresample").build()?;
-        // ---- Audio branch ----
         let audio_sink = gst_app::AppSink::builder()
             .caps(
                 &gst::Caps::builder("audio/x-raw")
@@ -55,7 +55,7 @@ impl GstSource {
                     .build(),
             )
             .async_(true)
-            .drop(true)
+            .drop(false)
             .build();
         let audio_sink_element = audio_sink.upcast_ref::<gst::Element>().clone();
 
@@ -75,7 +75,6 @@ impl GstSource {
         gst::Element::link_many(&[&src, &decodebin])?;
 
         // We will link the video and audio branches via pad-added signals.
-
         let video_convert_clone = video_convert.clone();
         let audio_convert_clone = audio_convert.clone();
         let video_scale_clone = video_scale.clone();
@@ -160,7 +159,62 @@ impl GstSource {
         })
     }
 
-    // Pull a video frame (existing)
+    // ------------------------------------------------------------------
+    // Non-blocking pull with timeout (used by the unified pump thread)
+    // ------------------------------------------------------------------
+
+    /// Try to pull a video frame within `timeout`.
+    /// Returns `Some((rgba, pts_ns))` if a frame is available.
+    /// Returns `None` on timeout or if sink is EOS.
+    pub fn try_pull_video_frame(&self, timeout: Duration) -> Option<(Vec<u8>, u64)> {
+        let sample = self
+            .video_sink
+            .try_pull_sample(Some(gst::ClockTime::from_nseconds(
+                timeout.as_nanos() as u64
+            )))?;
+
+        let buffer = sample.buffer()?;
+        let map = buffer.map_readable().ok()?;
+        let data = map.as_slice().to_vec();
+        let pts_ns = buffer.pts().map(|c| c.nseconds()).unwrap_or(0);
+        Some((data, pts_ns))
+    }
+
+    /// Try to pull an audio frame within `timeout`.
+    /// Returns `Some((samples, pts_ns))` if data is available.
+    /// Returns `None` on timeout or if sink is EOS.
+    pub fn try_pull_audio_frame(&self, timeout: Duration) -> Option<(Vec<f32>, u64)> {
+        let sample = self
+            .audio_sink
+            .try_pull_sample(Some(gst::ClockTime::from_nseconds(
+                timeout.as_nanos() as u64
+            )))?;
+
+        let buffer = sample.buffer()?;
+        let map = buffer.map_readable().ok()?;
+        let data = map.as_slice();
+        let samples =
+            unsafe { std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / 4) };
+        let pts_ns = buffer.pts().map(|c| c.nseconds()).unwrap_or(0);
+        Some((samples.to_vec(), pts_ns))
+    }
+
+    /// Check if the video sink has reached end-of-stream.
+    pub fn is_video_eos(&self) -> bool {
+        self.video_sink.is_eos()
+    }
+
+    /// Check if the audio sink has reached end-of-stream.
+    pub fn is_audio_eos(&self) -> bool {
+        self.audio_sink.is_eos()
+    }
+
+    // ------------------------------------------------------------------
+    // Legacy blocking pull methods (kept for compatibility, but not used
+    // by the new unified pump)
+    // ------------------------------------------------------------------
+
+    /// Pull a video frame (blocking, with short sleep on error).
     pub fn pull_video_frame(&mut self) -> Option<(Vec<u8>, u64)> {
         loop {
             match self.video_sink.pull_sample() {
@@ -181,16 +235,14 @@ impl GstSource {
         }
     }
 
-    // Pull an audio frame (new)
+    /// Pull an audio frame (blocking, with short sleep on error).
     pub fn pull_audio_frame(&mut self) -> Option<(Vec<f32>, u64)> {
         loop {
             match self.audio_sink.pull_sample() {
                 Ok(sample) => {
                     let buffer = sample.buffer()?;
                     let map = buffer.map_readable().ok()?;
-                    // The audio data is F32LE interleaved.
                     let data = map.as_slice();
-                    // We need to reinterpret as f32.
                     let samples = unsafe {
                         std::slice::from_raw_parts(data.as_ptr() as *const f32, data.len() / 4)
                     };
@@ -209,7 +261,7 @@ impl GstSource {
 }
 
 impl FrameSource for GstSource {
-    // `pull_frame` for the video source (kept for compatibility with existing pipeline)
+    // `pull_frame` for the video source (kept for compatibility)
     fn pull_frame(&mut self) -> Option<(Vec<u8>, u64)> {
         self.pull_video_frame()
     }
