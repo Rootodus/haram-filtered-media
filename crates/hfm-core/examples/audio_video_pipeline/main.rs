@@ -209,6 +209,7 @@ struct App {
     has_audio: bool,
     frame_count: u32,
     fps_timer: Instant,
+    last_frame: Option<Vec<u8>>,
 }
 
 impl App {
@@ -229,6 +230,7 @@ impl App {
             has_audio: false,
             frame_count: 0,
             fps_timer: Instant::now(),
+            last_frame: None,
         }
     }
 }
@@ -316,7 +318,7 @@ impl ApplicationHandler for App {
                 let renderer = self.renderer.as_mut().unwrap();
 
                 if self.buffering.is_buffering() {
-                    renderer.render(None);
+                    renderer.render(self.last_frame.clone());
                 } else if let Some(pipeline) = self.pipeline.as_ref() {
                     if let Some(front_pts) = pipeline.peek_video_pts() {
                         if self.audio_clock.is_initialized() {
@@ -328,7 +330,10 @@ impl ApplicationHandler for App {
                         }
 
                         if let Some(frame) = pipeline.pop_processed_frame() {
-                            renderer.render(Some(frame.data));
+                            let data = frame.data;
+
+                            renderer.render(Some(data.clone()));
+                            self.last_frame = Some(data);
 
                             self.frame_count += 1;
                             if self.fps_timer.elapsed() >= Duration::from_secs(1) {
@@ -337,6 +342,8 @@ impl ApplicationHandler for App {
                                 self.fps_timer = Instant::now();
                             }
                         }
+                    } else {
+                        renderer.render(self.last_frame.clone());
                     }
                 }
 
