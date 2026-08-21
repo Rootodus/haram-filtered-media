@@ -2190,6 +2190,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hfm-player"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "cpal",
+ "crossbeam-channel",
+ "gstreamer",
+ "gstreamer-app",
+ "gstreamer-video",
+ "hfm-core",
+ "parking_lot",
+ "pollster 1.0.1",
+ "ringbuf",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "hfm-web"
 version = "0.1.0"
 dependencies = [

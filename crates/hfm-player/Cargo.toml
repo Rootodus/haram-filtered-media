@@ -1,0 +1,23 @@
+[package]
+name = "hfm-player"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# Workspace dependencies (shared with hfm-core and hfm-web)
+anyhow = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
+crossbeam-channel = { workspace = true }
+parking_lot = { workspace = true }
+pollster = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+ringbuf = { workspace = true }
+cpal = { workspace = true }
+# Core library
+hfm-core = { path = "../hfm-core" }
+# Player-specific dependencies (not used by hfm-core)
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+gstreamer-video = { workspace = true }
