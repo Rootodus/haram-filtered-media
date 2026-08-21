@@ -31,6 +31,7 @@ const SAMPLE_RATE: u32 = 44100;
 const CHANNELS: u16 = 2;
 const SEEK_DELTA_NS: i64 = 10_000_000_000;
 const WINDOW_SAMPLES: usize = 343_980;
+const SEEK_DEBOUNCE_MS: u64 = 200; // 200 ms between seeks
 
 /// Adapter that turns `Receiver<RawVideoFrame>` into `hfm_core::FrameSource`.
 struct ChannelVideoSource {
@@ -210,6 +211,7 @@ struct App {
     frame_count: u32,
     fps_timer: Instant,
     last_frame: Option<Vec<u8>>,
+    last_seek_time: Instant,
 }
 
 impl App {
@@ -231,6 +233,7 @@ impl App {
             frame_count: 0,
             fps_timer: Instant::now(),
             last_frame: None,
+            last_seek_time: Instant::now(),
         }
     }
 }
@@ -376,6 +379,13 @@ impl ApplicationHandler for App {
                 };
 
                 if let Some(delta) = delta {
+                    let now = Instant::now();
+                    if now - self.last_seek_time < Duration::from_millis(SEEK_DEBOUNCE_MS) {
+                        // Ignore this seek if it's too soon after the last one.
+                        return;
+                    }
+                    self.last_seek_time = now;
+
                     let generation_val;
                     {
                         let mut source = self.gst_source.as_ref().unwrap().lock().unwrap();
