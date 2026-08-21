@@ -33,7 +33,14 @@ impl AudioClock {
     }
 
     /// Advance the clock by `frames` frames played by the audio device.
+    ///
+    /// Does nothing while the clock is uninitialized. This prevents
+    /// pre-seek audio from advancing a reset media clock.
     pub fn advance_by_frames(&self, frames: usize) {
+        if !self.initialized.load(Ordering::Acquire) {
+            return;
+        }
+
         let delta_ns = (frames as u64 * 1_000_000_000) / self.sample_rate as u64;
         self.current_ns.fetch_add(delta_ns, Ordering::AcqRel);
     }

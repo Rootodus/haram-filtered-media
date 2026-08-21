@@ -1,20 +1,5 @@
-//! Audio output worker.
-//!
-//! This module owns CPAL playback and consumes `ProcessedAudioChunk`s.
-//!
-//! It does not know about:
-//! - GStreamer
-//! - ONNX
-//! - HT-Demucs
-//! - video
-//!
-//! It only:
-//! 1. Receives processed PCM chunks
-//! 2. Sends them to the audio device
-//! 3. Advances the shared `AudioClock`
-//! 4. Updates the `BufferingFlag` based on buffer occupancy
-
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -70,6 +55,7 @@ fn resample_interleaved(input: &[f32], src_rate: u32, dst_rate: u32, channels: u
 /// 3. Pushes them into a ring buffer consumed by CPAL
 /// 4. Advances the shared `AudioClock` in the CPAL callback
 /// 5. Updates the `BufferingFlag` based on ring buffer occupancy
+/// 6. Clears the ring buffer when a new seek generation arrives
 ///
 /// It does not know about GStreamer, ONNX, or video.
 pub fn spawn_audio_output(
@@ -77,6 +63,7 @@ pub fn spawn_audio_output(
     audio_clock: Arc<AudioClock>,
     buffering: Arc<BufferingFlag>,
     generation: Arc<SeekGeneration>,
+    clear_audio: Arc<AtomicBool>,
     source_rate: u32,
     _channels: u16,
 ) -> JoinHandle<()> {
@@ -113,14 +100,27 @@ pub fn spawn_audio_output(
         let high_watermark = output_rate as usize * output_channels * 5; // 5 s
 
         let mut base_pts_initialized = false;
+        let mut current_generation = generation.current();
+
+        // Helper to drain all samples from the consumer side.
+        fn drain_consumer<C: Consumer<Item = f32>>(out_cons: &mut C) {
+            while out_cons.try_pop().is_some() {}
+        }
 
         // Prebuffer: wait until we have at least high_watermark samples before
-        // starting CPAL playback. This avoids immediate underruns.
+        // starting CPAL playback.
         while out_prod.occupied_len() < high_watermark {
             match rx.recv() {
                 Ok(chunk) => {
                     if chunk.generation != generation.current() {
-                        continue; // stale chunk from before a seek
+                        continue; // stale chunk
+                    }
+
+                    // Detect generation change and restart prebuffer.
+                    if chunk.generation != current_generation {
+                        drain_consumer(&mut out_cons);
+                        current_generation = chunk.generation;
+                        base_pts_initialized = false;
                     }
 
                     if !base_pts_initialized {
@@ -147,10 +147,7 @@ pub fn spawn_audio_output(
                         }
                     }
                 }
-                Err(_) => {
-                    // Channel closed before we could prebuffer. Exit.
-                    return;
-                }
+                Err(_) => return,
             }
         }
 
@@ -158,11 +155,20 @@ pub fn spawn_audio_output(
 
         let audio_clock_cb = audio_clock.clone();
         let buffering_cb = buffering.clone();
+        let clear_audio_cb = clear_audio.clone();
 
         let stream = device
             .build_output_stream(
                 default_config.config(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    // If a seek occurred, clear all old audio before playing.
+                    if clear_audio_cb.load(Ordering::Acquire) {
+                        data.fill(0.0);
+                        while out_cons.try_pop().is_some() {}
+                        clear_audio_cb.store(false, Ordering::Release);
+                        return;
+                    }
+
                     let n = out_cons.pop_slice(data);
                     if n < data.len() {
                         data[n..].fill(0.0);
@@ -188,14 +194,31 @@ pub fn spawn_audio_output(
         stream.play().expect("Failed to start audio stream");
         println!("[AUDIO_OUT] playback started");
 
-        // Continue receiving and pushing processed audio.
+        // Main receive loop.
         loop {
             match rx.recv() {
                 Ok(chunk) => {
                     if chunk.generation != generation.current() {
-                        // Discard stale chunks. Note: this does not clear
-                        // the ring buffer, but prevents new stale data.
-                        continue;
+                        continue; // stale
+                    }
+
+                    // New generation: request the callback to clear old audio.
+                    if chunk.generation != current_generation {
+                        clear_audio.store(true, Ordering::SeqCst);
+
+                        // Wait until callback has drained old samples.
+                        while clear_audio.load(Ordering::Acquire) {
+                            thread::sleep(Duration::from_millis(1));
+                        }
+
+                        current_generation = chunk.generation;
+                        audio_clock.reset();
+                        base_pts_initialized = false;
+                    }
+
+                    if !base_pts_initialized {
+                        audio_clock.set_base_pts(chunk.pts_ns);
+                        base_pts_initialized = true;
                     }
 
                     let samples = if output_rate != source_rate {
@@ -211,6 +234,11 @@ pub fn spawn_audio_output(
 
                     let mut written = 0;
                     while written < samples.len() {
+                        // Stop pushing if generation changes mid-push.
+                        if chunk.generation != generation.current() {
+                            break;
+                        }
+
                         written += out_prod.push_slice(&samples[written..]);
                         if written < samples.len() {
                             thread::sleep(Duration::from_millis(1));

@@ -194,12 +194,20 @@ impl MediaBuffer {
         self.flush_gen.load(Ordering::Acquire)
     }
 
-    pub fn flush(&self) -> u64 {
+    /// Flush all queued media and set the accepted seek epoch to `epoch`.
+    ///
+    /// Returns the video frames that were discarded, so the caller can
+    /// release their slots.
+    pub fn flush_to(&self, epoch: u64) -> Vec<VideoFrame> {
         let _lock = self.push_lock.lock();
 
-        let new_epoch = self.flush_gen.fetch_add(1, Ordering::Release) + 1;
+        // Accept exactly the supplied generation.
+        self.flush_gen.store(epoch, Ordering::Release);
 
-        while self.video_queue.pop().is_some() {}
+        let mut discarded = Vec::new();
+        while let Some(frame) = self.video_queue.pop() {
+            discarded.push(frame);
+        }
         while self.audio_queue.pop().is_some() {}
 
         self.video_pts_deque.lock().clear();
@@ -209,7 +217,7 @@ impl MediaBuffer {
 
         *self.state.lock() = BufferState::Seeking;
 
-        new_epoch
+        discarded
     }
 
     pub fn seek_completed(&self) {
@@ -306,15 +314,15 @@ mod tests {
         let buf = MediaBuffer::new(1.0, 30.0, 44100, 2048);
         buf.push_video(dummy_video(1000)).unwrap();
 
-        let epoch = buf.flush();
-        assert_eq!(epoch, 1);
+        let discarded = buf.flush_to(1);
+        assert_eq!(discarded.len(), 1);
         assert_eq!(buf.current_seek_epoch(), 1);
         assert_eq!(buf.video_len(), 0);
         assert!(matches!(*buf.state.lock(), BufferState::Seeking));
 
         // Frame after flush must have the new generation.
         let mut frame = dummy_video(500);
-        frame.seek_gen = epoch;
+        frame.seek_gen = 1;
         buf.push_video(frame).unwrap();
         assert_eq!(buf.video_len(), 1);
         buf.seek_completed();
@@ -322,7 +330,7 @@ mod tests {
 
         // Push another frame with the same epoch.
         let mut frame2 = dummy_video(600);
-        frame2.seek_gen = epoch;
+        frame2.seek_gen = 1;
         assert!(buf.push_video(frame2).is_ok());
     }
 
@@ -340,8 +348,8 @@ mod tests {
         first.seek_gen = 0;
         assert!(buf.push_video(first).is_ok());
 
-        let epoch = buf.flush();
-        assert_eq!(epoch, 1);
+        let discarded = buf.flush_to(1);
+        assert_eq!(discarded.len(), 1);
         assert_eq!(buf.current_seek_epoch(), 1);
 
         // A frame from the old epoch must be rejected.
@@ -351,7 +359,7 @@ mod tests {
 
         // A frame carrying the new epoch must be accepted.
         let mut fresh = dummy_video(950);
-        fresh.seek_gen = epoch;
+        fresh.seek_gen = 1;
         assert!(buf.push_video(fresh).is_ok());
     }
 }

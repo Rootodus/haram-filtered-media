@@ -13,7 +13,10 @@ use crate::sync::{AudioClock, BufferingFlag, SeekGeneration};
 use crate::types::{ProcessedAudioChunk, RawAudioChunk, RawVideoFrame};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use hfm_core::ml::PeopleSegFilter;
-use hfm_core::pipeline::{FrameSource, PipelineCommand, PipelineController, SeekDelta};
+use hfm_core::pipeline::{
+    FrameSource, PipelineCommand, PipelineController, PullOutcome, SeekDelta,
+};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -36,15 +39,29 @@ struct ChannelVideoSource {
 }
 
 impl FrameSource for ChannelVideoSource {
-    fn pull_frame(&mut self) -> Option<(Vec<u8>, u64)> {
+    fn try_pull_frame(&mut self, timeout: Duration) -> PullOutcome {
+        let deadline = Instant::now() + timeout;
+
         loop {
-            match self.rx.recv() {
+            let now = Instant::now();
+            if now >= deadline {
+                return PullOutcome::Empty;
+            }
+
+            let remaining = deadline - now;
+            match self.rx.recv_timeout(remaining) {
                 Ok(frame) => {
                     if frame.generation == self.generation.current() {
-                        return Some((frame.data, frame.pts_ns));
+                        return PullOutcome::Frame(frame.data, frame.pts_ns);
                     }
+                    // Stale generation frame. Discard and keep waiting.
                 }
-                Err(_) => return None,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    return PullOutcome::Empty;
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    return PullOutcome::Eos;
+                }
             }
         }
     }
@@ -95,9 +112,11 @@ fn spawn_video_pump(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         loop {
-            let maybe_frame = {
+            let (maybe_frame, current_gen) = {
                 let source = gst_source.lock().unwrap();
-                source.try_pull_video_frame(Duration::from_millis(5))
+                let frame = source.try_pull_video_frame(Duration::from_millis(5));
+                let current_generation = generation.current();
+                (frame, current_generation)
             };
 
             match maybe_frame {
@@ -105,7 +124,7 @@ fn spawn_video_pump(
                     let msg = RawVideoFrame {
                         data,
                         pts_ns,
-                        generation: generation.current(),
+                        generation: current_gen,
                     };
                     if video_tx.send(msg).is_err() {
                         break;
@@ -135,9 +154,11 @@ fn spawn_audio_pump(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         loop {
-            let maybe_chunk = {
+            let (maybe_chunk, current_gen) = {
                 let source = gst_source.lock().unwrap();
-                source.try_pull_audio_frame(Duration::from_millis(5))
+                let chunk = source.try_pull_audio_frame(Duration::from_millis(5));
+                let current_generation = generation.current();
+                (chunk, current_generation)
             };
 
             match maybe_chunk {
@@ -145,7 +166,7 @@ fn spawn_audio_pump(
                     let msg = RawAudioChunk {
                         samples,
                         pts_ns,
-                        generation: generation.current(),
+                        generation: current_gen,
                     };
                     if audio_tx.send(msg).is_err() {
                         break;
@@ -183,6 +204,7 @@ struct App {
     generation: Arc<SeekGeneration>,
     audio_clock: Arc<AudioClock>,
     buffering: Arc<BufferingFlag>,
+    audio_clear_requested: Arc<AtomicBool>,
 
     has_audio: bool,
     frame_count: u32,
@@ -203,6 +225,7 @@ impl App {
             generation: Arc::new(SeekGeneration::new()),
             audio_clock: Arc::new(AudioClock::new(SAMPLE_RATE)),
             buffering: Arc::new(BufferingFlag::new(true)),
+            audio_clear_requested: Arc::new(AtomicBool::new(false)),
             has_audio: false,
             frame_count: 0,
             fps_timer: Instant::now(),
@@ -230,7 +253,6 @@ impl ApplicationHandler for App {
         self.has_audio = audio_config.is_some();
 
         if !self.has_audio {
-            // Video-only mode: no audio output will ever clear the buffering flag.
             self.buffering.set(false);
         }
 
@@ -276,6 +298,7 @@ impl ApplicationHandler for App {
                 self.audio_clock.clone(),
                 self.buffering.clone(),
                 self.generation.clone(),
+                self.audio_clear_requested.clone(),
                 SAMPLE_RATE,
                 CHANNELS,
             );
@@ -295,18 +318,15 @@ impl ApplicationHandler for App {
                 if self.buffering.is_buffering() {
                     renderer.render(None);
                 } else if let Some(pipeline) = self.pipeline.as_ref() {
-                    // Peek the next frame's PTS without removing it.
                     if let Some(front_pts) = pipeline.peek_video_pts() {
                         if self.audio_clock.is_initialized() {
                             let now = self.audio_clock.now_ns();
                             if front_pts > now {
-                                // Frame is early. Wait and redraw later.
                                 self.window.as_ref().unwrap().request_redraw();
                                 return;
                             }
                         }
 
-                        // PTS is due. Pop and render.
                         if let Some(frame) = pipeline.pop_processed_frame() {
                             renderer.render(Some(frame.data));
 
@@ -318,7 +338,6 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
-                    // If no frame is available, do nothing. This prevents flicker.
                 }
 
                 self.window.as_ref().unwrap().request_redraw();
@@ -350,21 +369,26 @@ impl ApplicationHandler for App {
                 };
 
                 if let Some(delta) = delta {
-                    self.generation.increment();
-                    self.audio_clock.reset();
+                    let generation_val;
+                    {
+                        let mut source = self.gst_source.as_ref().unwrap().lock().unwrap();
 
-                    // Only set buffering on seek if audio is actually present.
-                    if self.has_audio {
-                        self.buffering.set(true);
-                    }
+                        generation_val = self.generation.increment();
+                        self.audio_clock.reset();
 
-                    if let Some(source) = self.gst_source.as_ref() {
-                        let mut source = source.lock().unwrap();
+                        if self.has_audio {
+                            self.buffering.set(true);
+                            self.audio_clear_requested.store(true, Ordering::SeqCst);
+                        }
+
                         let _ = source.seek(delta.to_i64());
                     }
 
                     if let Some(pipeline) = self.pipeline.as_ref() {
-                        let _ = pipeline.send_command(PipelineCommand::Seek(delta));
+                        let _ = pipeline.send_command(PipelineCommand::Seek {
+                            delta,
+                            generation: generation_val,
+                        });
                     }
                 }
             }

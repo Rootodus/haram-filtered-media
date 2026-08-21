@@ -19,8 +19,19 @@ pub const N_V: usize = 128;
 
 /// A source of video frames.
 pub trait FrameSource: Send + Sync {
-    fn pull_frame(&mut self) -> Option<(Vec<u8>, u64)>;
+    /// Try to pull a frame within `timeout`.
+    ///
+    /// Returns `Frame(data, pts)` when a frame is available, `Empty` when
+    /// no frame arrived before the timeout, and `Eos` when the stream ended.
+    fn try_pull_frame(&mut self, timeout: Duration) -> PullOutcome;
     fn seek(&mut self, delta_ns: i64) -> Result<(), String>;
+}
+
+/// Result from `FrameSource::try_pull_frame`.
+pub enum PullOutcome {
+    Frame(Vec<u8>, u64),
+    Empty,
+    Eos,
 }
 
 /// Direction and amount for a seek.
@@ -51,7 +62,7 @@ pub enum PipelineState {
 /// Commands sent to the pipeline controller.
 #[derive(Debug)]
 pub enum PipelineCommand {
-    Seek(SeekDelta),
+    Seek { delta: SeekDelta, generation: u64 },
     Stop,
 }
 
@@ -113,9 +124,6 @@ impl PipelineController {
     }
 
     /// Return the PTS of the next processed video frame without removing it.
-    ///
-    /// This is used by the presentation layer to decide whether to wait for
-    /// the audio clock or render immediately.
     pub fn peek_video_pts(&self) -> Option<u64> {
         self.buffer.peek_video_pts()
     }
@@ -130,7 +138,7 @@ impl PipelineController {
         let cmd_rx = self.cmd_rx.clone();
         let running = self.running.clone();
 
-        let state = std::mem::replace(&mut self.state, PipelineState::Stopped);
+        self.state = PipelineState::Stopped;
 
         // Spawn ML thread
         let ml_slot_pool = slot_pool.clone();
@@ -146,7 +154,6 @@ impl PipelineController {
 
         let controller_handle = thread::spawn(move || {
             Self::run_loop(
-                state,
                 source,
                 buffer,
                 controller_slot_pool,
@@ -186,9 +193,24 @@ impl PipelineController {
                     };
 
                     let mut frame = frame;
-                    while let Err(returned_frame) = buffer.push_video(frame) {
-                        frame = returned_frame;
-                        thread::sleep(Duration::from_millis(1));
+                    loop {
+                        // If the frame is from an old generation, discard it.
+                        if frame.seek_gen != buffer.current_seek_epoch() {
+                            slot_pool.discard_slot(frame.slot);
+                            break;
+                        }
+
+                        match buffer.push_video(frame) {
+                            Ok(()) => break,
+                            Err(returned) => {
+                                if returned.seek_gen != buffer.current_seek_epoch() {
+                                    slot_pool.discard_slot(returned.slot);
+                                    break;
+                                }
+                                frame = returned;
+                                thread::sleep(Duration::from_millis(1));
+                            }
+                        }
                     }
                 }
                 Err(_) => break,
@@ -224,7 +246,6 @@ impl PipelineController {
 
     // Controller loop – owns source, state, and pulls frames.
     fn run_loop(
-        mut state: PipelineState,
         mut source: Box<dyn FrameSource>,
         buffer: Arc<MediaBuffer>,
         slot_pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
@@ -237,58 +258,33 @@ impl PipelineController {
         while running.load(Ordering::Acquire) {
             match cmd_rx.try_recv() {
                 Ok(cmd) => match cmd {
-                    PipelineCommand::Seek(delta) => match &mut state {
-                        PipelineState::Idle | PipelineState::Playing => {
-                            let new_epoch = buffer.flush();
-                            let delta_i64 = delta.to_i64();
+                    PipelineCommand::Seek { delta, generation } => {
+                        // Flush with the exact generation from the app.
+                        let discarded = buffer.flush_to(generation);
 
-                            if let Err(e) = source.seek(delta_i64) {
-                                eprintln!("[CONTROLLER] Seek failed: {}", e);
-                            }
+                        // Release slots for frames that were sitting in the buffer.
+                        for frame in discarded {
+                            slot_pool.discard_slot(frame.slot);
+                        }
 
-                            state = PipelineState::Seeking { epoch: new_epoch };
+                        if let Err(e) = source.seek(delta.to_i64()) {
+                            eprintln!("[CONTROLLER] Seek failed: {}", e);
                         }
-                        PipelineState::Seeking { .. } => {
-                            eprintln!("[CONTROLLER] Overlapping seek ignored");
-                        }
-                        PipelineState::Stopped => {
-                            eprintln!("[CONTROLLER] Seek ignored (stopped)");
-                        }
-                    },
-                    PipelineCommand::Stop => {
-                        break;
                     }
+                    PipelineCommand::Stop => break,
                 },
-                Err(TryRecvError::Empty) => match &mut state {
-                    PipelineState::Idle => {
-                        if let Some((rgba, pts_ns)) = source.pull_frame() {
+                Err(TryRecvError::Empty) => {
+                    match source.try_pull_frame(Duration::from_millis(15)) {
+                        PullOutcome::Frame(rgba, pts_ns) => {
                             let epoch = buffer.current_seek_epoch();
                             Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
-                            state = PipelineState::Playing;
-                        } else {
-                            break;
+                        }
+                        PullOutcome::Eos => break,
+                        PullOutcome::Empty => {
+                            // No frame yet. Loop again and check for commands.
                         }
                     }
-                    PipelineState::Playing => {
-                        if let Some((rgba, pts_ns)) = source.pull_frame() {
-                            let epoch = buffer.current_seek_epoch();
-                            Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
-                        } else {
-                            break;
-                        }
-                    }
-                    PipelineState::Seeking { epoch } => {
-                        if let Some((rgba, pts_ns)) = source.pull_frame() {
-                            Self::enqueue_frame(rgba, pts_ns, *epoch, &slot_pool, &ml_tx);
-                            state = PipelineState::Playing;
-                        } else {
-                            break;
-                        }
-                    }
-                    PipelineState::Stopped => {
-                        break;
-                    }
-                },
+                }
                 Err(TryRecvError::Disconnected) => break,
             }
         }
