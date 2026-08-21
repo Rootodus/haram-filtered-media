@@ -169,6 +169,22 @@ pub fn spawn_audio_output(
                         return;
                     }
 
+                    let occupied = out_cons.occupied_len();
+
+                    // Not enough audio for this callback. Pause both streams before muting.
+                    if occupied < data.len() {
+                        buffering_cb.set(true);
+                        data.fill(0.0);
+                        return;
+                    }
+
+                    // Enough data. Update watermark state normally.
+                    if occupied < low_watermark {
+                        buffering_cb.set(true);
+                    } else if occupied > high_watermark {
+                        buffering_cb.set(false);
+                    }
+
                     let n = out_cons.pop_slice(data);
                     if n < data.len() {
                         data[n..].fill(0.0);
@@ -177,13 +193,6 @@ pub fn spawn_audio_output(
                     let frames_played = n / output_channels;
                     if frames_played > 0 {
                         audio_clock_cb.advance_by_frames(frames_played);
-                    }
-
-                    let occupied = out_cons.occupied_len();
-                    if occupied < low_watermark {
-                        buffering_cb.set(true);
-                    } else if occupied > high_watermark {
-                        buffering_cb.set(false);
                     }
                 },
                 |err| eprintln!("Audio error: {err}"),
