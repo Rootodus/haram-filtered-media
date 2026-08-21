@@ -10,8 +10,8 @@ use ringbuf::traits::{Consumer, Observer, Producer, Split};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::sync::{AudioClock, BufferingFlag, SeekGeneration};
-use crate::types::ProcessedAudioChunk;
+use hfm_core::coordination::{AudioClock, BufferingFlag, SeekGeneration};
+use hfm_core::media_messages::ProcessedAudioChunk;
 
 const SPSC_CAPACITY: usize = 1_048_576; // ~12 s of stereo float
 

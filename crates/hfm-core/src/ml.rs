@@ -1,7 +1,11 @@
-// Declare the submodules sitting inside the src/ml/ directory
+//! Machine learning module: ONNX session management and model implementations.
+
+pub mod config;
+pub mod demucs;
 pub mod engine;
 pub mod peopleseg;
 
-// Re-export the clean, public interfaces so external examples can import them effortlessly
-pub use engine::init_session;
+pub use config::{ExecutionProvider, SessionConfig};
+pub use demucs::{DemucsConfig, spawn_demucs_worker};
+pub use engine::{build_session, init_session};
 pub use peopleseg::PeopleSegFilter;

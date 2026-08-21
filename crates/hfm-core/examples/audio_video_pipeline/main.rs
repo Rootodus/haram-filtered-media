@@ -1,18 +1,14 @@
 mod audio_output;
-mod audio_processor;
 mod gst_source;
 mod renderer;
-mod sync;
-mod types;
 
 use crate::audio_output::spawn_audio_output;
-use crate::audio_processor::{AudioTestConfig, spawn_audio_processor};
 use crate::gst_source::GstSource;
 use crate::renderer::Renderer;
-use crate::sync::{AudioClock, BufferingFlag, SeekGeneration};
-use crate::types::{ProcessedAudioChunk, RawAudioChunk, RawVideoFrame};
 use crossbeam_channel::{Receiver, Sender, bounded};
-use hfm_core::ml::PeopleSegFilter;
+use hfm_core::coordination::{AudioClock, BufferingFlag, SeekGeneration};
+use hfm_core::media_messages::{ProcessedAudioChunk, RawAudioChunk, RawVideoFrame};
+use hfm_core::ml::{DemucsConfig, PeopleSegFilter, spawn_demucs_worker};
 use hfm_core::pipeline::{
     FrameSource, PipelineCommand, PipelineController, PullOutcome, SeekDelta,
 };
@@ -72,7 +68,7 @@ impl FrameSource for ChannelVideoSource {
     }
 }
 
-fn parse_audio_args() -> Option<AudioTestConfig> {
+fn parse_audio_args() -> Option<DemucsConfig> {
     let args: Vec<String> = std::env::args().collect();
     let mut model_path = None;
     let mut backend = "cpu".to_string();
@@ -99,7 +95,7 @@ fn parse_audio_args() -> Option<AudioTestConfig> {
         }
     }
 
-    model_path.map(|path| AudioTestConfig {
+    model_path.map(|path| DemucsConfig {
         model_path: path,
         backend,
         window_size,
@@ -290,7 +286,7 @@ impl ApplicationHandler for App {
 
             let (processed_audio_tx, processed_audio_rx) = bounded::<ProcessedAudioChunk>(128);
 
-            let audio_processor = spawn_audio_processor(
+            let audio_processor = spawn_demucs_worker(
                 config,
                 raw_audio_rx,
                 processed_audio_tx,

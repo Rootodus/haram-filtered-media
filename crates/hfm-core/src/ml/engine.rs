@@ -1,117 +1,93 @@
+//! ONNX session builder with configurable execution providers.
+//!
+//! This module replaces the previous hardcoded provider selection with a
+//! generic builder that accepts a `SessionConfig`. Both video and audio
+//! models use the same logic.
+
+use crate::ml::{ExecutionProvider, SessionConfig};
 use anyhow::{Result, anyhow};
-use ort::{session::Session, session::builder::GraphOptimizationLevel};
+use ort::session::Session;
 
-/// Handles cross-platform hardware acceleration backend assignment.
-/// Safely cleans up internal C++ pointers to bypass Send/Sync compilation errors.
-pub fn init_session(path: &str) -> Result<Session> {
-    println!("Instantiating ONNX runtime execution providers...");
+/// Build an ONNX session with the given configuration.
+///
+/// This is the primary function for creating sessions. It handles all
+/// execution provider registration and fallback logic.
+pub fn build_session(path: &str, config: SessionConfig) -> Result<Session> {
+    let mut builder =
+        Session::builder().map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
+    builder = builder
+        .with_optimization_level(config.optimization_level)
+        .map_err(|e| anyhow!("Failed to set optimization level: {:?}", e))?;
+    builder = builder
+        .with_intra_threads(config.intra_threads)
+        .map_err(|e| anyhow!("Failed to set intra threads: {}", e))?;
+    builder = builder
+        .with_inter_threads(config.inter_threads)
+        .map_err(|e| anyhow!("Failed to set inter threads: {}", e))?;
 
-    // --- 1. APPLE SILICON TRACK ---
-    #[cfg(target_vendor = "apple")]
-    {
-        use ort::ep::CoreML;
-
-        let mut builder =
-            Session::builder().map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
+    if config.disable_cpu_fallback {
         builder = builder
-            .with_optimization_level(GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow!("Failed to set optimization level: {:?}", e))?;
-        builder = builder
-            .with_intra_threads(1)
-            .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
-        builder = builder
-            .with_execution_providers([CoreML::default().build()])
-            .map_err(|e| anyhow!("Failed to set CoreML provider: {:?}", e))?;
+            .with_disable_cpu_fallback()
+            .map_err(|e| anyhow!("Failed to disable CPU fallback: {}", e))?;
+    }
 
-        match builder.commit_from_file(path) {
-            Ok(s) => {
-                println!("SUCCESS: CoreML (Apple Silicon NPU/Metal) hardware backend is active.");
-                return Ok(s);
+    // Register the requested provider.
+    match config.provider {
+        ExecutionProvider::Cpu => {
+            builder = builder
+                .with_execution_providers([ort::ep::CPU::default().build()])
+                .map_err(|e| anyhow!("Failed to set CPU provider: {}", e))?;
+        }
+        ExecutionProvider::DirectML => {
+            #[cfg(target_os = "windows")]
+            {
+                use ort::ep::DirectML;
+                builder = builder
+                    .with_execution_providers([DirectML::default().build()])
+                    .map_err(|e| anyhow!("Failed to set DirectML provider: {}", e))?;
             }
-            Err(e) => {
-                println!(
-                    "CoreML initialization failed: {}. Falling back to CPU...",
-                    e
-                );
+            #[cfg(not(target_os = "windows"))]
+            {
+                return Err(anyhow!("DirectML is only supported on Windows"));
+            }
+        }
+        ExecutionProvider::OpenVINO { device } => {
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            {
+                use ort::ep::OpenVINO;
+                builder = builder
+                    .with_execution_providers([OpenVINO::default()
+                        .with_device_type(&device)
+                        .build()])
+                    .map_err(|e| anyhow!("Failed to set OpenVINO provider: {}", e))?;
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            {
+                return Err(anyhow!("OpenVINO is only supported on Linux and Windows"));
+            }
+        }
+        ExecutionProvider::CoreML => {
+            #[cfg(target_vendor = "apple")]
+            {
+                use ort::ep::CoreML;
+                builder = builder
+                    .with_execution_providers([CoreML::default().build()])
+                    .map_err(|e| anyhow!("Failed to set CoreML provider: {}", e))?;
+            }
+            #[cfg(not(target_vendor = "apple"))]
+            {
+                return Err(anyhow!("CoreML is only supported on Apple platforms"));
             }
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        use ort::ep::DirectML;
-
-        let mut builder =
-            Session::builder().map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
-        builder = builder
-            .with_optimization_level(GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow!("Failed to set optimization level: {:?}", e))?;
-        builder = builder
-            .with_intra_threads(1)
-            .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
-        builder = builder
-            .with_execution_providers([DirectML::default().build()])
-            .map_err(|e| anyhow!("Failed to set DirectML provider: {:?}", e))?;
-
-        match builder.commit_from_file(path) {
-            Ok(s) => {
-                println!("SUCCESS: DirectML hardware backend is active.");
-                return Ok(s);
-            }
-            Err(e) => {
-                println!("DirectML failed: {}. Falling back to CPU.", e);
-            }
-        }
-    }
-
-    // --- 3. LINUX TRACK ---
-    #[cfg(target_os = "linux")]
-    {
-        use ort::ep::OpenVINO;
-
-        let mut ov_builder =
-            Session::builder().map_err(|e| anyhow!("Failed to create session builder: {}", e))?;
-        ov_builder = ov_builder
-            .with_optimization_level(GraphOptimizationLevel::Level1)
-            .map_err(|e| anyhow!("Failed to set OpenVINO optimization level: {:?}", e))?;
-        ov_builder = ov_builder
-            .with_intra_threads(1)
-            .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
-        ov_builder = ov_builder
-            .with_execution_providers([OpenVINO::default().with_device_type("GPU").build()])
-            .map_err(|e| anyhow!("Failed to set OpenVINO provider: {:?}", e))?;
-
-        match ov_builder.commit_from_file(path) {
-            Ok(s) => {
-                println!("SUCCESS: Linux Intel OpenVINO iGPU hardware backend is active.");
-                return Ok(s);
-            }
-            Err(e) => {
-                println!(
-                    "OpenVINO hardware init failed: {}. Falling back to standard Linux CPU...",
-                    e
-                );
-            }
-        }
-    }
-
-    // --- 4. UNIVERSAL RAW CPU SAFETY FALLBACK ---
-    let mut cpu_builder =
-        Session::builder().map_err(|e| anyhow!("Failed to create CPU fallback builder: {}", e))?;
-    cpu_builder = cpu_builder
-        .with_optimization_level(GraphOptimizationLevel::Level1)
-        .map_err(|e| anyhow!("Failed to set CPU optimization level: {:?}", e))?;
-    cpu_builder = cpu_builder
-        .with_intra_threads(1)
-        .map_err(|e| anyhow!("Failed to set intra threads: {:?}", e))?;
-    cpu_builder = cpu_builder
-        .with_execution_providers([ort::ep::CPU::default().build()])
-        .map_err(|e| anyhow!("Failed to set CPU provider: {:?}", e))?;
-
-    let session = cpu_builder
+    builder
         .commit_from_file(path)
-        .map_err(|e| anyhow!("Critical: CPU fallback compilation crashed: {}", e))?;
+        .map_err(|e| anyhow!("Failed to commit session: {}", e))
+}
 
-    println!("SUCCESS: Standard CPU processing backend is active.");
-    Ok(session)
+/// Convenience wrapper for video models using the default video config.
+pub fn init_session(path: &str) -> Result<Session> {
+    let config = SessionConfig::video_default();
+    build_session(path, config)
 }

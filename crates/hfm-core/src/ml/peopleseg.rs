@@ -37,7 +37,7 @@ pub struct PeopleSegFilter {
 
 impl PeopleSegFilter {
     pub fn new(path: &str) -> Result<Self> {
-        let session = super::init_session(path)?;
+        let session = crate::ml::init_session(path)?;
 
         let input_name = session.inputs()[0].name().to_string();
         let output_name = session.outputs()[0].name().to_string();
