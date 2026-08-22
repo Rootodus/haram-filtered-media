@@ -275,8 +275,11 @@ impl ApplicationHandler for App {
             rx: video_rx,
             generation: self.generation.clone(),
         };
-        let model =
-            PeopleSegFilter::new("models/pphumanseg.onnx").expect("failed to load PPHumanSeg");
+        let model_path = format!(
+            "{}/../hfm-core/models/pphumanseg.onnx",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let model = PeopleSegFilter::new(&model_path).expect("failed to load PPHumanSeg");
         let mut pipeline = PipelineController::new(Box::new(video_source), model);
         pipeline.start();
         self.pipeline = Some(pipeline);
