@@ -5,19 +5,30 @@ edition = "2024"
 publish = false
 
 [dependencies]
+# Core library
+hfm-core = { path = "../hfm-core" }
 # Workspace dependencies (shared with hfm-core and hfm-web)
 anyhow = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
 crossbeam-channel = { workspace = true }
 parking_lot = { workspace = true }
 pollster = { workspace = true }
-wgpu = { workspace = true }
-winit = { workspace = true }
 ringbuf = { workspace = true }
 cpal = { workspace = true }
-# Core library
-hfm-core = { path = "../hfm-core" }
 # Player-specific dependencies (not used by hfm-core)
 gstreamer = { workspace = true }
 gstreamer-app = { workspace = true }
 gstreamer-video = { workspace = true }
+
+# GPU & windowing (target-specific features)
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { workspace = true, features = ["dx12", "wgsl"] }
+winit = { workspace = true, features = ["rwh_06"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu = { workspace = true, features = ["metal", "wgsl"] }
+winit = { workspace = true, features = ["rwh_06"] }
+
+[target.'cfg(all(not(target_os = "windows"), not(target_vendor = "apple")))'.dependencies]
+wgpu = { workspace = true, features = ["vulkan", "wgsl"] }
+winit = { workspace = true, features = ["x11", "wayland", "rwh_06"] }

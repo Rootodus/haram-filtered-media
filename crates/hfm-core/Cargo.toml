@@ -5,42 +5,12 @@ edition = "2024"
 publish = false
 
 [dependencies]
+# Core utilities
 anyhow = { workspace = true }
-core_affinity = { workspace = true }
-cpal = { workspace = true }
 crossbeam = { workspace = true }
 crossbeam-channel = { workspace = true }
-fast_image_resize = { workspace = true, features = ["std"] }
-gstreamer = { workspace = true }
-gstreamer-app = { workspace = true }
-gstreamer-video = { workspace = true }
-image = { workspace = true, features = ["jpeg", "png"] }
-log = { workspace = true }
-minstant = { workspace = true }
-mp4 = { workspace = true }
 ndarray = { workspace = true }
-ort = { workspace = true, features = [
-    "download-binaries",
-    "copy-dylibs",
-    "tls-native",
-    "std",
-    "ndarray",
-    "directml"
-] }
 parking_lot = { workspace = true }
-rav1d = { workspace = true, features = ["bitdepth_8"] }
-rfd = { workspace = true }
-ringbuf = { workspace = true }
-rust_h264 = { workspace = true }
-shared_memory = { workspace = true }
-symphonia = { workspace = true, features = [
-    "isomp4",
-    "mp3",
-    "flac",
-    "vorbis",
-    "aac",
-    "exp-video-codecs"
-] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = [
@@ -49,20 +19,17 @@ tracing-subscriber = { workspace = true, features = [
     "registry",
     "sharded-slab"
 ] }
-yscv-video = { workspace = true }
-thread-priority = { workspace = true }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-wgpu = { workspace = true, features = ["dx12", "wgsl"] }
-winit = { workspace = true, features = ["rwh_06"] }
-
-[target.'cfg(target_vendor = "apple")'.dependencies]
-wgpu = { workspace = true, features = ["metal", "wgsl"] }
-winit = { workspace = true, features = ["rwh_06"] }
-
-[target.'cfg(all(not(target_os = "windows"), not(target_vendor = "apple")))'.dependencies]
-wgpu = { workspace = true, features = ["vulkan", "wgsl"] }
-winit = { workspace = true, features = ["x11", "wayland", "rwh_06"] }
+# ML / ONNX
+ort = { workspace = true, features = [
+    "download-binaries",
+    "copy-dylibs",
+    "tls-native",
+    "std",
+    "ndarray",
+    "directml"
+] }
+# Image processing (used by PPHumanSeg preprocessing)
+fast_image_resize = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 bytemuck = { workspace = true, features = ["derive"] }
