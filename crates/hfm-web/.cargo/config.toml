@@ -1,6 +1,0 @@
-[build]
-rustc-wrapper = "sccache"
-rustc-workspace-wrapper = ""
-
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "linker=lld-link"]
