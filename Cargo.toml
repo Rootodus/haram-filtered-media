@@ -7,15 +7,15 @@ members = ["crates/hfm-core", "crates/hfm-player", "crates/hfm-web"]
 anyhow = "1.0.104"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 image = { version = "0.25.10", default-features = false }
-log = "0.4.33"
+log = "0.4.34"
 ndarray = "0.17.2"
 ort = { version = "=2.0.0-rc.12", default-features = false }
 pollster = "1.0.1"
-wgpu = { version = "30.0.0", default-features = false }
+wgpu = { version = "30.0.1", default-features = false }
 winit = { version = "0.30.13", default-features = false }
 # --- Unique Core Dependencies (Used only by hfm-core) ---
 core_affinity = "0.8.3"
-cpal = "0.18.1"
+cpal = "0.18.2"
 crossbeam = "0.8.4"
 crossbeam-channel = "0.5.16"
 fast_image_resize = { version = "6.1.0", default-features = false }
@@ -30,7 +30,7 @@ rfd = "0.17.2"
 ringbuf = "0.5.1"
 rust_h264 = "0.4.0"
 shared_memory = "0.12.4"
-symphonia = { version = "0.6.0", default-features = false }
+symphonia = { version = "0.6.1", default-features = false }
 thiserror = "2.0.20"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false }
@@ -38,10 +38,10 @@ yscv-video = "0.1.11"
 thread-priority = "3.1.1"
 # --- Unique Web Dependencies (Used only by hfm-web) ---
 chromiumoxide = { version = "0.9.1", default-features = false }
-encase = "0.12.0"
+encase = "0.12.1"
 env_logger = "0.11.11"
 futures = "0.3.34"
-glam = { version = "0.33.3", default-features = false }
+glam = { version = "0.33.5", default-features = false }
 libloading = "0.9.0"
 raw-window-handle = "0.6.2"
 remove_dir_all = "1.0.0"
@@ -54,10 +54,10 @@ tokenizers = { version = "0.23.1", default-features = false }
 # --- Dev and Build Tooling ---
 criterion = "0.8.2"
 dhat = "0.3.3"
-flamegraph = "0.6.13"
+flamegraph = "0.6.14"
 hdrhistogram = "7.6.0"
 loom = "0.7.2"
-naga = { version = "30.0.0", default-features = false }
+naga = { version = "30.0.1", default-features = false }
 proptest = "1.11.0"
 static_assertions = "1.1.0"
 
