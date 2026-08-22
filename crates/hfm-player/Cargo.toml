@@ -8,6 +8,7 @@ publish = false
 # Core library
 hfm-core = { path = "../hfm-core" }
 # Workspace dependencies (shared with hfm-core and hfm-web)
+mimalloc = { workspace = true }
 anyhow = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
 crossbeam-channel = { workspace = true }

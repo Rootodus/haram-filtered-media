@@ -12,6 +12,7 @@ use hfm_core::ml::{DemucsConfig, PeopleSegFilter, spawn_demucs_worker};
 use hfm_core::pipeline::{
     FrameSource, PipelineCommand, PipelineController, PullOutcome, SeekDelta,
 };
+use mimalloc::MiMalloc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -22,6 +23,9 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowId},
 };
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 const SAMPLE_RATE: u32 = 44100;
 const CHANNELS: u16 = 2;
