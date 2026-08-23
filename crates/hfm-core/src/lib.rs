@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod audio;
 pub mod coordination;
 pub mod filter;
