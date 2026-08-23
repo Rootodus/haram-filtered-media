@@ -28,14 +28,10 @@ pub struct GstSource {
 }
 
 impl GstSource {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(video_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         gst::init()?;
 
         let pipeline = gst::Pipeline::new();
-        let video_path = format!(
-            "{}/../hfm-core/assets/video_with_music.mp4",
-            env!("CARGO_MANIFEST_DIR")
-        );
         let src = gst::ElementFactory::make("filesrc")
             .property("location", video_path)
             .build()?;

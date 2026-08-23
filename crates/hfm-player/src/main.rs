@@ -33,6 +33,11 @@ const SEEK_DELTA_NS: i64 = 10_000_000_000;
 const WINDOW_SAMPLES: usize = 343_980;
 const SEEK_DEBOUNCE_MS: u64 = 200; // 200 ms between seeks
 
+struct CliArgs {
+    video_file: Option<String>,
+    audio_config: Option<DemucsConfig>,
+}
+
 /// Adapter that turns `Receiver<RawVideoFrame>` into `hfm_core::FrameSource`.
 struct ChannelVideoSource {
     rx: Receiver<RawVideoFrame>,
@@ -72,8 +77,9 @@ impl FrameSource for ChannelVideoSource {
     }
 }
 
-fn parse_audio_args() -> Option<DemucsConfig> {
+fn parse_args() -> CliArgs {
     let args: Vec<String> = std::env::args().collect();
+    let mut video_file = None;
     let mut model_path = None;
     let mut backend = "cpu".to_string();
     let mut window_size = WINDOW_SAMPLES;
@@ -81,6 +87,10 @@ fn parse_audio_args() -> Option<DemucsConfig> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "--video-file" => {
+                video_file = Some(args[i + 1].clone());
+                i += 2;
+            }
             "--audio-model" => {
                 model_path = Some(args[i + 1].clone());
                 i += 2;
@@ -99,11 +109,16 @@ fn parse_audio_args() -> Option<DemucsConfig> {
         }
     }
 
-    model_path.map(|path| DemucsConfig {
+    let audio_config = model_path.map(|path| DemucsConfig {
         model_path: path,
         backend,
         window_size,
-    })
+    });
+
+    CliArgs {
+        video_file,
+        audio_config,
+    }
 }
 
 fn spawn_video_pump(
@@ -260,17 +275,27 @@ impl ApplicationHandler for App {
         let renderer = pollster::block_on(Renderer::new(window));
         self.renderer = Some(renderer);
 
-        let audio_config = parse_audio_args();
+        let args = parse_args();
+
+        // Determine video file path: use CLI argument or fallback to default.
+        let video_path = match args.video_file {
+            Some(path) => path,
+            None => format!(
+                "{}/../hfm-core/assets/video_with_music.mp4",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+        };
+        let gst_source = Arc::new(Mutex::new(
+            GstSource::new(&video_path).expect("failed to create GStreamer source"),
+        ));
+        self.gst_source = Some(gst_source.clone());
+
+        let audio_config = args.audio_config;
         self.has_audio = audio_config.is_some();
 
         if !self.has_audio {
             self.buffering.set(false);
         }
-
-        let gst_source = Arc::new(Mutex::new(
-            GstSource::new().expect("failed to create GStreamer source"),
-        ));
-        self.gst_source = Some(gst_source.clone());
 
         let (video_tx, video_rx) = bounded::<RawVideoFrame>(4);
 
