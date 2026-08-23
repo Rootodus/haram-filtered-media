@@ -145,23 +145,29 @@ impl PipelineController {
         let ml_model = model;
         let ml_buffer = buffer.clone();
         let ml_running = running.clone();
-        let ml_handle = thread::spawn(move || {
-            Self::ml_thread(ml_rx, ml_slot_pool, ml_model, ml_buffer, ml_running);
-        });
+        let ml_handle = std::thread::Builder::new()
+            .name("ml-worker".to_string())
+            .spawn(move || {
+                Self::ml_thread(ml_rx, ml_slot_pool, ml_model, ml_buffer, ml_running);
+            })
+            .expect("Failed to spawn ML thread");
 
         let controller_slot_pool = slot_pool.clone();
         let controller_ml_tx = ml_tx.clone();
 
-        let controller_handle = thread::spawn(move || {
-            Self::run_loop(
-                source,
-                buffer,
-                controller_slot_pool,
-                controller_ml_tx,
-                cmd_rx,
-                running,
-            );
-        });
+        let controller_handle = std::thread::Builder::new()
+            .name("controller".to_string())
+            .spawn(move || {
+                Self::run_loop(
+                    source,
+                    buffer,
+                    controller_slot_pool,
+                    controller_ml_tx,
+                    cmd_rx,
+                    running,
+                );
+            })
+            .expect("Failed to spawn controller thread");
 
         self._ml_handle = Some(ml_handle);
         self._controller_handle = Some(controller_handle);

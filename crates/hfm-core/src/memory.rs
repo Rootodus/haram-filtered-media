@@ -276,30 +276,35 @@ mod tests {
 
         for t in 0..NUM_THREADS {
             let pool = Arc::clone(&pool);
-            handles.push(thread::spawn(move || {
-                let mut claimed = 0;
-                for _ in 0..ITERATIONS {
-                    if let Some(packed) = pool.try_claim() {
-                        // Write thread id and verify.
-                        pool.with_payload_mut(packed, |payload| {
-                            payload[0] = t as u8;
-                            assert_eq!(payload[0], t as u8);
-                        });
-                        // Simulate processing: set state to CONSUMED.
-                        {
-                            let (idx, _) = SlotPool::<SIZE>::unpack_index(packed);
-                            let mut state = pool.state.lock();
-                            let slot = &mut state.slots[idx];
-                            slot.state = STATE_CONSUMED;
+            handles.push(
+                std::thread::Builder::new()
+                    .name(format!("stress-test-{}", t))
+                    .spawn(move || {
+                        let mut claimed = 0;
+                        for _ in 0..ITERATIONS {
+                            if let Some(packed) = pool.try_claim() {
+                                // Write thread id and verify.
+                                pool.with_payload_mut(packed, |payload| {
+                                    payload[0] = t as u8;
+                                    assert_eq!(payload[0], t as u8);
+                                });
+                                // Simulate processing: set state to CONSUMED.
+                                {
+                                    let (idx, _) = SlotPool::<SIZE>::unpack_index(packed);
+                                    let mut state = pool.state.lock();
+                                    let slot = &mut state.slots[idx];
+                                    slot.state = STATE_CONSUMED;
+                                }
+                                pool.release_audio(packed);
+                                claimed += 1;
+                            } else {
+                                thread::yield_now();
+                            }
                         }
-                        pool.release_audio(packed);
-                        claimed += 1;
-                    } else {
-                        thread::yield_now();
-                    }
-                }
-                claimed
-            }));
+                        claimed
+                    })
+                    .unwrap(),
+            );
         }
 
         let total: usize = handles.into_iter().map(|h| h.join().unwrap()).sum();

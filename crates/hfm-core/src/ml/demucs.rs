@@ -87,102 +87,107 @@ pub fn spawn_demucs_worker(
     tx: Sender<ProcessedAudioChunk>,
     generation: Arc<SeekGeneration>,
 ) -> JoinHandle<()> {
-    thread::spawn(move || {
-        let session_config = config.to_session_config();
-        let mut session = match build_session(&config.model_path, session_config) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Demucs session build failed: {e}");
-                return;
-            }
-        };
+    std::thread::Builder::new()
+        .name("demucs-worker".to_string())
+        .spawn(move || {
+            let session_config = config.to_session_config();
+            let mut session = match build_session(&config.model_path, session_config) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Demucs session build failed: {e}");
+                    return;
+                }
+            };
 
-        let input_name = session.inputs()[0].name().to_string();
-        let output_name = session.outputs()[0].name().to_string();
+            let input_name = session.inputs()[0].name().to_string();
+            let output_name = session.outputs()[0].name().to_string();
 
-        let window_samples = config.window_size;
-        let hop_samples = ((window_samples as f32) * (1.0 - OVERLAP_RATIO)) as usize;
+            let window_samples = config.window_size;
+            let hop_samples = ((window_samples as f32) * (1.0 - OVERLAP_RATIO)) as usize;
 
-        let hann: Vec<f32> = (0..window_samples)
-            .map(|i| {
-                0.5 * (1.0
-                    - (2.0 * std::f32::consts::PI * i as f32 / (window_samples - 1) as f32).cos())
-            })
-            .collect();
+            let hann: Vec<f32> = (0..window_samples)
+                .map(|i| {
+                    0.5 * (1.0
+                        - (2.0 * std::f32::consts::PI * i as f32 / (window_samples - 1) as f32)
+                            .cos())
+                })
+                .collect();
 
-        let mut input_buffer: Vec<f32> = Vec::new();
-        let mut overlap_out: Vec<f32> = vec![0.0; window_samples * 2];
-        let mut next_output_pts_ns: Option<u64> = None;
+            let mut input_buffer: Vec<f32> = Vec::new();
+            let mut overlap_out: Vec<f32> = vec![0.0; window_samples * 2];
+            let mut next_output_pts_ns: Option<u64> = None;
 
-        loop {
-            match rx.recv() {
-                Ok(chunk) => {
-                    // If this chunk is stale, clear all internal state and wait
-                    // for data from the new generation.
-                    if chunk.generation != generation.current() {
-                        input_buffer.clear();
-                        overlap_out.fill(0.0);
-                        next_output_pts_ns = None;
-                        continue;
-                    }
+            loop {
+                match rx.recv() {
+                    Ok(chunk) => {
+                        // If this chunk is stale, clear all internal state and wait
+                        // for data from the new generation.
+                        if chunk.generation != generation.current() {
+                            input_buffer.clear();
+                            overlap_out.fill(0.0);
+                            next_output_pts_ns = None;
+                            continue;
+                        }
 
-                    if next_output_pts_ns.is_none() {
-                        next_output_pts_ns = Some(chunk.pts_ns);
-                    }
+                        if next_output_pts_ns.is_none() {
+                            next_output_pts_ns = Some(chunk.pts_ns);
+                        }
 
-                    input_buffer.extend_from_slice(&chunk.samples);
+                        input_buffer.extend_from_slice(&chunk.samples);
 
-                    while input_buffer.len() >= window_samples * 2 {
-                        let mut windowed = input_buffer[..window_samples * 2].to_vec();
-                        apply_window(&mut windowed, &hann);
+                        while input_buffer.len() >= window_samples * 2 {
+                            let mut windowed = input_buffer[..window_samples * 2].to_vec();
+                            apply_window(&mut windowed, &hann);
 
-                        let processed = match run_inference(
-                            &mut session,
-                            &input_name,
-                            &output_name,
-                            &windowed,
-                            window_samples,
-                        ) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                eprintln!("Demucs inference error: {e}");
+                            let processed = match run_inference(
+                                &mut session,
+                                &input_name,
+                                &output_name,
+                                &windowed,
+                                window_samples,
+                            ) {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    eprintln!("Demucs inference error: {e}");
+                                    return;
+                                }
+                            };
+
+                            for i in 0..(window_samples * 2) {
+                                let idx = i / 2;
+                                overlap_out[i] += processed[i] * hann[idx];
+                            }
+
+                            let output_hop = overlap_out[..hop_samples * 2].to_vec();
+
+                            overlap_out.drain(0..(hop_samples * 2));
+                            overlap_out.extend_from_slice(&vec![0.0; hop_samples * 2]);
+                            input_buffer.drain(0..(hop_samples * 2));
+
+                            let current_pts = next_output_pts_ns.unwrap_or(0);
+                            next_output_pts_ns = Some(
+                                current_pts
+                                    + (hop_samples as u64 * 1_000_000_000 / SAMPLE_RATE as u64),
+                            );
+
+                            let msg = ProcessedAudioChunk {
+                                samples: output_hop,
+                                pts_ns: current_pts,
+                                generation: chunk.generation,
+                            };
+
+                            if tx.send(msg).is_err() {
                                 return;
                             }
-                        };
-
-                        for i in 0..(window_samples * 2) {
-                            let idx = i / 2;
-                            overlap_out[i] += processed[i] * hann[idx];
-                        }
-
-                        let output_hop = overlap_out[..hop_samples * 2].to_vec();
-
-                        overlap_out.drain(0..(hop_samples * 2));
-                        overlap_out.extend_from_slice(&vec![0.0; hop_samples * 2]);
-                        input_buffer.drain(0..(hop_samples * 2));
-
-                        let current_pts = next_output_pts_ns.unwrap_or(0);
-                        next_output_pts_ns = Some(
-                            current_pts + (hop_samples as u64 * 1_000_000_000 / SAMPLE_RATE as u64),
-                        );
-
-                        let msg = ProcessedAudioChunk {
-                            samples: output_hop,
-                            pts_ns: current_pts,
-                            generation: chunk.generation,
-                        };
-
-                        if tx.send(msg).is_err() {
-                            return;
                         }
                     }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
-        }
 
-        println!("Demucs worker thread finished");
-    })
+            println!("Demucs worker thread finished");
+        })
+        .expect("Failed to spawn Demucs worker thread")
 }
 
 // Helper functions

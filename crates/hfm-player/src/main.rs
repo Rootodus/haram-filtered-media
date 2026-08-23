@@ -111,41 +111,44 @@ fn spawn_video_pump(
     video_tx: Sender<RawVideoFrame>,
     generation: Arc<SeekGeneration>,
 ) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        loop {
-            let (maybe_frame, current_gen) = {
-                let source = gst_source.lock().unwrap();
-                let frame = source.try_pull_video_frame(Duration::from_millis(5));
-                let current_generation = generation.current();
-                (frame, current_generation)
-            };
-
-            match maybe_frame {
-                Some((data, pts_ns)) => {
-                    let msg = RawVideoFrame {
-                        data,
-                        pts_ns,
-                        generation: current_gen,
-                    };
-                    if video_tx.send(msg).is_err() {
-                        break;
-                    }
-                }
-                None => {
+    std::thread::Builder::new()
+        .name("video-pump".to_string())
+        .spawn(move || {
+            loop {
+                let (maybe_frame, current_gen) = {
                     let source = gst_source.lock().unwrap();
-                    let eos = source.is_video_eos();
-                    drop(source);
+                    let frame = source.try_pull_video_frame(Duration::from_millis(5));
+                    let current_generation = generation.current();
+                    (frame, current_generation)
+                };
 
-                    if eos {
-                        println!("[PUMP] video EOS");
-                        break;
+                match maybe_frame {
+                    Some((data, pts_ns)) => {
+                        let msg = RawVideoFrame {
+                            data,
+                            pts_ns,
+                            generation: current_gen,
+                        };
+                        if video_tx.send(msg).is_err() {
+                            break;
+                        }
                     }
+                    None => {
+                        let source = gst_source.lock().unwrap();
+                        let eos = source.is_video_eos();
+                        drop(source);
 
-                    thread::sleep(Duration::from_millis(1));
+                        if eos {
+                            println!("[PUMP] video EOS");
+                            break;
+                        }
+
+                        thread::sleep(Duration::from_millis(1));
+                    }
                 }
             }
-        }
-    })
+        })
+        .expect("Failed to spawn video pump")
 }
 
 fn spawn_audio_pump(
@@ -153,41 +156,44 @@ fn spawn_audio_pump(
     audio_tx: Sender<RawAudioChunk>,
     generation: Arc<SeekGeneration>,
 ) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        loop {
-            let (maybe_chunk, current_gen) = {
-                let source = gst_source.lock().unwrap();
-                let chunk = source.try_pull_audio_frame(Duration::from_millis(5));
-                let current_generation = generation.current();
-                (chunk, current_generation)
-            };
-
-            match maybe_chunk {
-                Some((samples, pts_ns)) => {
-                    let msg = RawAudioChunk {
-                        samples,
-                        pts_ns,
-                        generation: current_gen,
-                    };
-                    if audio_tx.send(msg).is_err() {
-                        break;
-                    }
-                }
-                None => {
+    std::thread::Builder::new()
+        .name("audio-pump".to_string())
+        .spawn(move || {
+            loop {
+                let (maybe_chunk, current_gen) = {
                     let source = gst_source.lock().unwrap();
-                    let eos = source.is_audio_eos();
-                    drop(source);
+                    let chunk = source.try_pull_audio_frame(Duration::from_millis(5));
+                    let current_generation = generation.current();
+                    (chunk, current_generation)
+                };
 
-                    if eos {
-                        println!("[PUMP] audio EOS");
-                        break;
+                match maybe_chunk {
+                    Some((samples, pts_ns)) => {
+                        let msg = RawAudioChunk {
+                            samples,
+                            pts_ns,
+                            generation: current_gen,
+                        };
+                        if audio_tx.send(msg).is_err() {
+                            break;
+                        }
                     }
+                    None => {
+                        let source = gst_source.lock().unwrap();
+                        let eos = source.is_audio_eos();
+                        drop(source);
 
-                    thread::sleep(Duration::from_millis(1));
+                        if eos {
+                            println!("[PUMP] audio EOS");
+                            break;
+                        }
+
+                        thread::sleep(Duration::from_millis(1));
+                    }
                 }
             }
-        }
-    })
+        })
+        .expect("Failed to spawn audio pump")
 }
 
 struct App {
