@@ -1,5 +1,6 @@
 mod audio_output;
 mod gst_source;
+mod gui;
 mod renderer;
 
 use crate::audio_output::spawn_audio_output;
