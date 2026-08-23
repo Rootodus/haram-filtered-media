@@ -17,6 +17,7 @@ pollster = { workspace = true }
 ringbuf = { workspace = true }
 cpal = { workspace = true }
 # Player-specific dependencies (not used by hfm-core)
+rfd = { workspace = true }
 gstreamer = { workspace = true }
 gstreamer-app = { workspace = true }
 gstreamer-video = { workspace = true }
