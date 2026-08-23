@@ -311,7 +311,8 @@ impl ApplicationHandler for App {
             env!("CARGO_MANIFEST_DIR")
         );
         let model = PeopleSegFilter::new(&model_path).expect("failed to load PPHumanSeg");
-        let mut pipeline = PipelineController::new(Box::new(video_source), model);
+        let mut pipeline =
+            PipelineController::new(Box::new(video_source), model, self.generation.clone());
         pipeline.start();
         self.pipeline = Some(pipeline);
 
@@ -420,11 +421,9 @@ impl ApplicationHandler for App {
                     }
                     self.last_seek_time = now;
 
-                    let generation_val;
                     {
                         let mut source = self.gst_source.as_ref().unwrap().lock().unwrap();
 
-                        generation_val = self.generation.increment();
                         self.audio_clock.reset();
 
                         if self.has_audio {
@@ -436,10 +435,7 @@ impl ApplicationHandler for App {
                     }
 
                     if let Some(pipeline) = self.pipeline.as_ref() {
-                        let _ = pipeline.send_command(PipelineCommand::Seek {
-                            delta,
-                            generation: generation_val,
-                        });
+                        let _ = pipeline.send_command(PipelineCommand::Seek(delta));
                     }
                 }
             }

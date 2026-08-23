@@ -80,7 +80,7 @@ impl SeekGeneration {
     }
 
     /// Increment the generation. Called on each seek.
-    pub fn increment(&self) -> u64 {
+    pub(crate) fn increment(&self) -> u64 {
         self.generation.fetch_add(1, Ordering::AcqRel) + 1
     }
 }

@@ -2,6 +2,7 @@
 //! This module is source‑agnostic; it works with any implementor of `FrameSource`.
 
 use crate::buffer::{MediaBuffer, Pts, VideoFrame};
+use crate::coordination::SeekGeneration;
 use crate::filter::VideoFilter;
 use crate::memory::{PackedIndex, SlotPool};
 use crate::ml::PeopleSegFilter;
@@ -62,7 +63,7 @@ pub enum PipelineState {
 /// Commands sent to the pipeline controller.
 #[derive(Debug)]
 pub enum PipelineCommand {
-    Seek { delta: SeekDelta, generation: u64 },
+    Seek(SeekDelta),
     Stop,
 }
 
@@ -80,10 +81,15 @@ pub struct PipelineController {
     _ml_handle: Option<thread::JoinHandle<()>>,
     _controller_handle: Option<thread::JoinHandle<()>>,
     running: Arc<AtomicBool>,
+    generation: Arc<SeekGeneration>,
 }
 
 impl PipelineController {
-    pub fn new(source: Box<dyn FrameSource>, model: PeopleSegFilter) -> Self {
+    pub fn new(
+        source: Box<dyn FrameSource>,
+        model: PeopleSegFilter,
+        generation: Arc<SeekGeneration>,
+    ) -> Self {
         let pool = Arc::new(SlotPool::<VIDEO_SLOT_SIZE>::new(N_V));
         let buffer = Arc::new(MediaBuffer::new(5.0, 30.0, 44100, 2048));
         let (ml_tx, ml_rx) = bounded::<PackedIndex>(N_V);
@@ -98,6 +104,7 @@ impl PipelineController {
             slot_pool: Some(pool),
             ml_tx: Some(ml_tx),
             ml_rx: Some(ml_rx),
+            generation,
             cmd_rx,
             cmd_tx,
             _ml_handle: None,
@@ -154,6 +161,7 @@ impl PipelineController {
 
         let controller_slot_pool = slot_pool.clone();
         let controller_ml_tx = ml_tx.clone();
+        let controller_generation = self.generation.clone();
 
         let controller_handle = std::thread::Builder::new()
             .name("controller".to_string())
@@ -161,6 +169,7 @@ impl PipelineController {
                 Self::run_loop(
                     source,
                     buffer,
+                    controller_generation,
                     controller_slot_pool,
                     controller_ml_tx,
                     cmd_rx,
@@ -254,6 +263,7 @@ impl PipelineController {
     fn run_loop(
         mut source: Box<dyn FrameSource>,
         buffer: Arc<MediaBuffer>,
+        generation: Arc<SeekGeneration>,
         slot_pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         ml_tx: Sender<PackedIndex>,
         cmd_rx: Receiver<PipelineCommand>,
@@ -264,9 +274,10 @@ impl PipelineController {
         while running.load(Ordering::Acquire) {
             match cmd_rx.try_recv() {
                 Ok(cmd) => match cmd {
-                    PipelineCommand::Seek { delta, generation } => {
-                        // Flush with the exact generation from the app.
-                        let discarded = buffer.flush_to(generation);
+                    PipelineCommand::Seek(delta) => {
+                        // Increment the seek generation inside the controller
+                        let new_gen = generation.increment();
+                        let discarded = buffer.flush_to(new_gen);
 
                         // Release slots for frames that were sitting in the buffer.
                         for frame in discarded {
