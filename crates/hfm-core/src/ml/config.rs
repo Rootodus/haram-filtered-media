@@ -54,11 +54,13 @@ impl SessionConfig {
     }
 
     /// Default configuration for the audio model (HT-Demucs).
-    /// Uses CPU with half of the available logical cores.
+    /// Uses CPU with half of the available logical cores, capped at 4.
     pub fn audio_default() -> Self {
-        let intra = std::thread::available_parallelism()
-            .map(|n| (n.get() / 2).max(1))
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
             .unwrap_or(4);
+        // Use half the cores, at least 1, at most 4.
+        let intra = (cores / 2).max(1).min(4);
         Self {
             provider: ExecutionProvider::Cpu,
             intra_threads: intra,
