@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/hfm-core", "crates/hfm-player", "crates/hfm-web"]
 
 [workspace.dependencies]
-# --- Shared Dependencies (Used by both hfm-core and hfm-web) ---
+# --- Shared Dependencies ---
 mimalloc = "0.1.52"
 anyhow = "1.0.104"
 bytemuck = { version = "1.25.2", features = ["derive"] }
