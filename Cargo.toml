@@ -12,8 +12,12 @@ log = "0.4.34"
 ndarray = "0.17.2"
 ort = { version = "=2.0.0-rc.12", default-features = false }
 pollster = "1.0.1"
+rfd = "0.17.2"
 wgpu = { version = "30.0.1", default-features = false }
 winit = { version = "0.30.13", default-features = false }
+egui = "0.36.1"
+egui-wgpu = "0.36.1"
+egui-winit = "0.36.1"
 # --- Unique Core Dependencies (Used only by hfm-core) ---
 core_affinity = "0.8.3"
 cpal = "0.18.2"
@@ -27,7 +31,6 @@ minstant = "0.1.7"
 mp4 = "0.14.0"
 parking_lot = "0.12.5"
 rav1d = { version = "1.1.0" }
-rfd = "0.17.2"
 ringbuf = "0.5.1"
 rust_h264 = "0.4.0"
 shared_memory = "0.12.4"

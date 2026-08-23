@@ -20,6 +20,9 @@ cpal = { workspace = true }
 gstreamer = { workspace = true }
 gstreamer-app = { workspace = true }
 gstreamer-video = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }
 
 # GPU & windowing (target-specific features)
 [target.'cfg(target_os = "windows")'.dependencies]
