@@ -41,7 +41,6 @@ use crossbeam_channel::{Receiver, Sender};
 use ort::session::Session;
 use ort::value::Value;
 use std::sync::Arc;
-use std::thread;
 use std::thread::JoinHandle;
 
 const SAMPLE_RATE: u32 = 44100;
