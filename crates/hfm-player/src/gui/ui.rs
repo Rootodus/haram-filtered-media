@@ -1,9 +1,9 @@
 //! Egui UI layout.
 
 use super::{AppMode, AppState, Backend, Bridge};
+use egui::{Color32, Margin};
 use hfm_core::pipeline::SeekDelta;
 
-/// Main UI entry point – called from renderer with a `&mut Ui`.
 pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
     match state.mode {
         AppMode::Setup => {
@@ -12,16 +12,13 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             });
         }
         AppMode::Playback => {
-            // Transparent central panel so video shows through; bottom bar on top.
-            egui::CentralPanel::default()
-                .frame(egui::Frame::NONE)
-                .show(ui, |_ui| {
-                    // Nothing in the central panel – it's transparent.
-                });
-            // Bottom bar overlay
-            egui::Panel::bottom("playback_controls")
-                .resizable(false)
-                .min_size(60.0)
+            // Transparent central panel so video shows through.
+            egui::CentralPanel::no_frame().show(ui, |_ui| {});
+            // Bottom bar overlay with semi‑transparent background.
+            egui::Frame::new()
+                .fill(Color32::from_black_alpha(200))
+                .corner_radius(10.0) // f32
+                .inner_margin(Margin::symmetric(10, 5)) // i8
                 .show(ui, |ui| {
                     playback_ui(ui, state, bridge);
                 });
@@ -32,82 +29,102 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
 fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
     ui.centered_and_justified(|ui| {
         ui.vertical_centered(|ui| {
-            ui.heading("🎬 hfm‑player Setup");
-            ui.add_space(20.0);
+            // A card‑like frame
+            egui::Frame::new()
+                .fill(ui.visuals().panel_fill)
+                .corner_radius(10.0)
+                .inner_margin(Margin::same(20))
+                .show(ui, |ui| {
+                    ui.heading("🎬 hfm-player Setup");
+                    ui.add_space(20.0);
 
-            // Video file
-            ui.horizontal(|ui| {
-                if ui.button("📂 Open Video").clicked() {
-                    bridge.open_video_file();
-                }
-                ui.label(match &state.video_path {
-                    Some(p) => p.file_name().unwrap_or_default().to_string_lossy(),
-                    None => "No video selected".into(),
-                });
-            });
-
-            // Audio model
-            ui.horizontal(|ui| {
-                if ui.button("🧠 Load Audio Model").clicked() {
-                    bridge.open_audio_model();
-                }
-                ui.label(match &state.audio_model_path {
-                    Some(p) => p.file_name().unwrap_or_default().to_string_lossy(),
-                    None => "No model selected (optional)".into(),
-                });
-            });
-
-            ui.add_space(10.0);
-
-            // Backend dropdowns
-            ui.horizontal(|ui| {
-                ui.label("Video Backend:");
-                egui::ComboBox::from_id_salt("video_backend")
-                    .selected_text(format!("{:?}", state.video_backend))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut state.video_backend, Backend::Cpu, "CPU");
-                        ui.selectable_value(
-                            &mut state.video_backend,
-                            Backend::DirectML,
-                            "DirectML",
-                        );
-                        ui.selectable_value(
-                            &mut state.video_backend,
-                            Backend::OpenVINO,
-                            "OpenVINO",
-                        );
-                        ui.selectable_value(&mut state.video_backend, Backend::CoreML, "CoreML");
+                    // Video file
+                    ui.horizontal(|ui| {
+                        if ui.button("📂 Open Video").clicked() {
+                            bridge.open_video_file();
+                        }
+                        ui.label(match &state.video_path {
+                            Some(p) => p.file_name().unwrap_or_default().to_string_lossy(),
+                            None => "No video selected (default will be used)".into(),
+                        });
                     });
-            });
 
-            ui.horizontal(|ui| {
-                ui.label("Audio Backend:");
-                egui::ComboBox::from_id_salt("audio_backend")
-                    .selected_text(format!("{:?}", state.audio_backend))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut state.audio_backend, Backend::Cpu, "CPU");
-                        ui.selectable_value(
-                            &mut state.audio_backend,
-                            Backend::DirectML,
-                            "DirectML",
-                        );
-                        ui.selectable_value(
-                            &mut state.audio_backend,
-                            Backend::OpenVINO,
-                            "OpenVINO",
-                        );
-                        ui.selectable_value(&mut state.audio_backend, Backend::CoreML, "CoreML");
+                    // Audio model
+                    ui.horizontal(|ui| {
+                        if ui.button("🧠 Load Audio Model").clicked() {
+                            bridge.open_audio_model();
+                        }
+                        ui.label(match &state.audio_model_path {
+                            Some(p) => p.file_name().unwrap_or_default().to_string_lossy(),
+                            None => "No model selected (optional)".into(),
+                        });
                     });
-            });
 
-            ui.add_space(20.0);
+                    ui.add_space(10.0);
 
-            // Confirm button – enabled only if video is selected
-            ui.add_enabled_ui(state.video_path.is_some(), |ui| {
-                if ui.button("▶ Confirm & Play").clicked() {
-                    bridge.send(super::GuiCommand::ConfirmSetup);
-                }
-            });
+                    // Backend dropdowns
+                    ui.horizontal(|ui| {
+                        ui.label("Video Backend:");
+                        egui::ComboBox::from_id_salt("video_backend")
+                            .selected_text(format!("{:?}", state.video_backend))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut state.video_backend, Backend::Cpu, "CPU");
+                                ui.selectable_value(
+                                    &mut state.video_backend,
+                                    Backend::DirectML,
+                                    "DirectML",
+                                );
+                                ui.selectable_value(
+                                    &mut state.video_backend,
+                                    Backend::OpenVINO,
+                                    "OpenVINO",
+                                );
+                                ui.selectable_value(
+                                    &mut state.video_backend,
+                                    Backend::CoreML,
+                                    "CoreML",
+                                );
+                            });
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Audio Backend:");
+                        egui::ComboBox::from_id_salt("audio_backend")
+                            .selected_text(format!("{:?}", state.audio_backend))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut state.audio_backend, Backend::Cpu, "CPU");
+                                ui.selectable_value(
+                                    &mut state.audio_backend,
+                                    Backend::DirectML,
+                                    "DirectML",
+                                );
+                                ui.selectable_value(
+                                    &mut state.audio_backend,
+                                    Backend::OpenVINO,
+                                    "OpenVINO",
+                                );
+                                ui.selectable_value(
+                                    &mut state.audio_backend,
+                                    Backend::CoreML,
+                                    "CoreML",
+                                );
+                            });
+                    });
+
+                    ui.add_space(20.0);
+
+                    // Confirm button – always enabled (uses defaults if no files selected)
+                    if ui.button("▶ Confirm & Play").clicked() {
+                        bridge.send(super::GuiCommand::ConfirmSetup);
+                    }
+                    ui.label("If no file is selected, a default video will be used.");
+
+                    // Display last error from log, if any
+                    ui.add_space(10.0);
+                    if let Some(last) = state.log_lines.last() {
+                        ui.colored_label(egui::Color32::RED, last);
+                    }
+                });
         });
     });
 }

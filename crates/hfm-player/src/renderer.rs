@@ -119,6 +119,34 @@ impl Renderer {
 
         // --- egui setup ---
         let egui_ctx = Context::default();
+
+        // Apply a modern dark theme with custom spacing and font sizes
+        let mut style = egui::Style::default();
+        style.visuals = egui::Visuals::dark();
+        style.spacing.item_spacing = egui::Vec2::new(8.0, 8.0);
+        style.spacing.window_margin = egui::Margin::symmetric(12, 8);
+        style.spacing.button_padding = egui::Vec2::new(12.0, 6.0);
+        style.text_styles = [
+            (
+                egui::TextStyle::Heading,
+                egui::FontId::new(24.0, egui::FontFamily::Proportional),
+            ),
+            (
+                egui::TextStyle::Body,
+                egui::FontId::new(16.0, egui::FontFamily::Proportional),
+            ),
+            (
+                egui::TextStyle::Monospace,
+                egui::FontId::new(14.0, egui::FontFamily::Monospace),
+            ),
+            (
+                egui::TextStyle::Button,
+                egui::FontId::new(16.0, egui::FontFamily::Proportional),
+            ),
+        ]
+        .into();
+        egui_ctx.set_style_of(egui::Theme::Dark, style); // correct method
+
         let viewport_id = ViewportId::from_hash_of(window.id());
         let scale_factor = window.scale_factor() as f32;
 
