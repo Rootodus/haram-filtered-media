@@ -344,15 +344,21 @@ impl Renderer {
         });
 
         // --- 2.5 Apply texture deltas ---
-        for (id, deltas) in &full_output.textures_delta.set {
+        let mut textures_delta = full_output.textures_delta;
+
+        for (id, deltas) in &textures_delta.set {
             for delta in deltas {
                 self.egui_renderer
                     .update_texture(&self.device, &self.queue, *id, delta);
             }
         }
-        for id in &full_output.textures_delta.free {
+        for id in &textures_delta.free {
             self.egui_renderer.free_texture(id);
         }
+
+        // Clear the deltas to prevent the panic on drop
+        textures_delta.set.clear();
+        textures_delta.free.clear();
 
         // --- 3. Tessellate and update egui buffers ---
         let clipped_primitives = self
