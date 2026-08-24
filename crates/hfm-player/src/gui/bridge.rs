@@ -8,15 +8,14 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub enum GuiCommand {
     LoadVideo(PathBuf),
-    LoadAudioModel(PathBuf),
+    ToggleVideoFilter,
+    ToggleAudioProcessing,
     ChangeVideoBackend(super::Backend),
     ChangeAudioBackend(super::Backend),
     TogglePlayPause,
     Seek(SeekDelta),
-    VolumeUp(u8),   // step size
-    VolumeDown(u8), // step size
-    ToggleLogs,
-    RestartPipeline,
+    VolumeUp(u8),
+    VolumeDown(u8),
     ConfirmSetup,
     BackToSetup,
 }
@@ -28,7 +27,6 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    /// Create a new bridge from a channel sender.
     pub fn new(sender: Sender<GuiCommand>) -> Self {
         Self { sender }
     }
@@ -42,19 +40,6 @@ impl Bridge {
                 .pick_file()
             {
                 let _ = sender.send(GuiCommand::LoadVideo(path));
-            }
-        });
-    }
-
-    /// Open a file dialog for audio model selection (spawns a thread).
-    pub fn open_audio_model(&self) {
-        let sender = self.sender.clone();
-        std::thread::spawn(move || {
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("ONNX models", &["onnx"])
-                .pick_file()
-            {
-                let _ = sender.send(GuiCommand::LoadAudioModel(path));
             }
         });
     }

@@ -17,8 +17,8 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             // Bottom bar overlay with semi‑transparent background.
             egui::Frame::new()
                 .fill(Color32::from_black_alpha(200))
-                .corner_radius(10.0) // f32
-                .inner_margin(Margin::symmetric(10, 5)) // i8
+                .corner_radius(10.0)
+                .inner_margin(Margin::symmetric(10, 5))
                 .show(ui, |ui| {
                     playback_ui(ui, state, bridge);
                 });
@@ -49,15 +49,20 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                         });
                     });
 
-                    // Audio model
+                    ui.add_space(10.0);
+
+                    // Feature toggles
                     ui.horizontal(|ui| {
-                        if ui.button("🧠 Load Audio Model").clicked() {
-                            bridge.open_audio_model();
-                        }
-                        ui.label(match &state.audio_model_path {
-                            Some(p) => p.file_name().unwrap_or_default().to_string_lossy(),
-                            None => "No model selected (optional)".into(),
-                        });
+                        ui.checkbox(
+                            &mut state.video_filter_enabled,
+                            "🎨 Enable Video Filter (PPHumanSeg)",
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.checkbox(
+                            &mut state.audio_processing_enabled,
+                            "🎵 Enable Audio Processing (HT-Demucs)",
+                        );
                     });
 
                     ui.add_space(10.0);
@@ -113,16 +118,16 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
 
                     ui.add_space(20.0);
 
-                    // Confirm button – always enabled (uses defaults if no files selected)
+                    // Confirm button
                     if ui.button("▶ Confirm & Play").clicked() {
                         bridge.send(super::GuiCommand::ConfirmSetup);
                     }
-                    ui.label("If no file is selected, a default video will be used.");
+                    ui.label("If no video is selected, a default video will be used.");
 
                     // Display last error from log, if any
                     ui.add_space(10.0);
                     if let Some(last) = state.log_lines.last() {
-                        ui.colored_label(egui::Color32::RED, last);
+                        ui.colored_label(Color32::RED, last);
                     }
                 });
         });
