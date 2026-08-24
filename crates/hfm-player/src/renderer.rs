@@ -343,6 +343,17 @@ impl Renderer {
             gui::ui(ctx, &mut *state_guard, bridge);
         });
 
+        // --- 2.5 Apply texture deltas ---
+        for (id, deltas) in &full_output.textures_delta.set {
+            for delta in deltas {
+                self.egui_renderer
+                    .update_texture(&self.device, &self.queue, *id, delta);
+            }
+        }
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+
         // --- 3. Tessellate and update egui buffers ---
         let clipped_primitives = self
             .egui_state
