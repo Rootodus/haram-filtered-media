@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -66,6 +66,7 @@ pub fn spawn_audio_output(
     clear_audio: Arc<AtomicBool>,
     source_rate: u32,
     _channels: u16,
+    volume: Arc<AtomicU8>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("audio-output".to_string())
@@ -169,6 +170,11 @@ pub fn spawn_audio_output(
                             while out_cons.try_pop().is_some() {}
                             clear_audio_cb.store(false, Ordering::Release);
                             return;
+                        }
+
+                        let vol = volume.load(Ordering::Relaxed) as f32 / 100.0;
+                        for sample in data.iter_mut() {
+                            *sample *= vol;
                         }
 
                         let occupied = out_cons.occupied_len();

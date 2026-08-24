@@ -214,4 +214,24 @@ impl GstSource {
             .seek_simple(SeekFlags::FLUSH, new_pos)
             .map_err(|e| format!("Seek failed: {:?}", e))
     }
+
+    pub fn pause(&self) -> Result<(), String> {
+        self.pipeline
+            .set_state(gst::State::Paused)
+            .map_err(|e| format!("Failed to pause: {:?}", e))
+            .map(|_| ())
+    }
+
+    pub fn resume(&self) -> Result<(), String> {
+        self.pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|e| format!("Failed to resume: {:?}", e))
+            .map(|_| ())
+    }
+
+    pub fn duration_ns(&self) -> Option<u64> {
+        self.pipeline
+            .query_duration::<gst::ClockTime>()
+            .map(|c| c.nseconds())
+    }
 }
