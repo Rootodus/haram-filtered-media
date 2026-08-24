@@ -74,7 +74,6 @@ impl Renderer {
             display: None,
         });
 
-        // Pass a clone so the surface owns its own Arc, giving a 'static lifetime.
         let surface = instance.create_surface(window.clone()).unwrap();
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -121,14 +120,15 @@ impl Renderer {
         // --- egui setup ---
         let egui_ctx = Context::default();
         let viewport_id = ViewportId::from_hash_of(window.id());
-        // EguiState::new takes display handle, not window handle.
+        let scale_factor = window.scale_factor() as f32;
+
         let egui_state = EguiState::new(
             egui_ctx,
             viewport_id,
-            &window, // display handle
-            None,    // native pixels per point
-            None,    // theme
-            None,    // max texture side
+            &window,
+            Some(scale_factor),
+            None,
+            None,
         );
         let egui_renderer = EguiRenderer::new(
             &device,
@@ -345,7 +345,6 @@ impl Renderer {
 
         // --- 2.5 Apply texture deltas ---
         let mut textures_delta = full_output.textures_delta;
-
         for (id, deltas) in &textures_delta.set {
             for delta in deltas {
                 self.egui_renderer
@@ -355,8 +354,7 @@ impl Renderer {
         for id in &textures_delta.free {
             self.egui_renderer.free_texture(id);
         }
-
-        // Clear the deltas to prevent the panic on drop
+        // Clear to prevent panic on drop
         textures_delta.set.clear();
         textures_delta.free.clear();
 
@@ -429,7 +427,7 @@ impl Renderer {
                     // Draw egui overlay
                     self.egui_renderer
                         .render(&mut pass, &clipped_primitives, &screen_descriptor);
-                } // pass is dropped here
+                }
 
                 self.queue.submit(Some(encoder.finish()));
                 self.queue.present(frame);

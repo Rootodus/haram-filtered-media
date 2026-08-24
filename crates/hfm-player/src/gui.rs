@@ -6,5 +6,5 @@ mod state;
 mod ui;
 
 pub use bridge::{Bridge, GuiCommand};
-pub use state::{AppState, Backend, PlaybackState};
+pub use state::{AppMode, AppState, Backend, PlaybackState};
 pub use ui::ui;

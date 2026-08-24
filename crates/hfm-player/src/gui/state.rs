@@ -60,6 +60,18 @@ impl Default for Volume {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    Setup,
+    Playback,
+}
+
+impl Default for AppMode {
+    fn default() -> Self {
+        Self::Setup
+    }
+}
+
 /// The main application state shared between threads.
 /// This is read by the UI and written by the main thread (command processing).
 #[derive(Debug, Clone)]
@@ -85,6 +97,8 @@ pub struct AppState {
     // Log panel
     pub log_lines: Vec<String>,
     pub show_logs: bool,
+
+    pub mode: AppMode,
 }
 
 impl AppState {
@@ -122,6 +136,7 @@ impl Default for AppState {
             volume: Volume::default(),
             log_lines: vec!["🚀 Media player ready".to_string()],
             show_logs: false,
+            mode: AppMode::default(),
         }
     }
 }

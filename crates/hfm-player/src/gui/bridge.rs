@@ -17,6 +17,8 @@ pub enum GuiCommand {
     VolumeDown(u8), // step size
     ToggleLogs,
     RestartPipeline,
+    ConfirmSetup,
+    BackToSetup,
 }
 
 /// Bridge to send GUI commands to the main thread.

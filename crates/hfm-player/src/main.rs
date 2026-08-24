@@ -5,11 +5,11 @@ mod renderer;
 
 use crate::audio_output::spawn_audio_output;
 use crate::gst_source::GstSource;
-use crate::gui::{AppState, Backend, Bridge, GuiCommand, PlaybackState};
+use crate::gui::{AppMode, AppState, Backend, Bridge, GuiCommand, PlaybackState};
 use crate::renderer::Renderer;
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use hfm_core::coordination::{AudioClock, BufferingFlag, SeekGeneration};
-use hfm_core::media_messages::{ProcessedAudioChunk, RawAudioChunk, RawVideoFrame};
+use hfm_core::media_messages::{RawAudioChunk, RawVideoFrame};
 use hfm_core::ml::{DemucsConfig, PeopleSegFilter, spawn_demucs_worker};
 use hfm_core::pipeline::{
     FrameSource, PipelineCommand, PipelineController, PullOutcome, SeekDelta,
@@ -361,118 +361,163 @@ impl App {
             GuiCommand::RestartPipeline => {
                 self.restart_pipeline();
             }
+            GuiCommand::ConfirmSetup => {
+                // Ensure a video is selected
+                let has_video = { self.state.lock().video_path.is_some() };
+                if !has_video {
+                    eprintln!("Cannot start playback: no video selected");
+                    return;
+                }
+                // Set mode to Playback and build the pipeline
+                {
+                    let mut state = self.state.lock();
+                    state.mode = AppMode::Playback;
+                }
+                self.restart_pipeline();
+            }
+            GuiCommand::BackToSetup => {
+                // Stop pipeline, reset mode to Setup, clear last frame
+                self.stop_pipeline();
+                {
+                    let mut state = self.state.lock();
+                    state.mode = AppMode::Setup;
+                    state.current_time_ns = 0;
+                    state.total_duration_ns = 0;
+                    state.playback_state = PlaybackState::Paused;
+                }
+                self.last_frame = None;
+            }
         }
     }
 
-    fn restart_pipeline(&mut self) {
-        // 1. Drop existing pipeline resources
+    fn stop_pipeline(&mut self) {
+        // Drop the pipeline controller first to stop the ML and controller threads.
         self.pipeline = None;
         self.gst_source = None;
+
+        // Join all pump and worker threads.
         if let Some(handle) = self.video_pump.take() {
-            handle.join().ok();
+            let _ = handle.join();
         }
         if let Some(handle) = self.audio_pump.take() {
-            handle.join().ok();
+            let _ = handle.join();
         }
         if let Some(handle) = self.audio_processor.take() {
-            handle.join().ok();
+            let _ = handle.join();
         }
         if let Some(handle) = self.audio_output.take() {
-            handle.join().ok();
+            let _ = handle.join();
         }
 
-        // Read state
-        let (video_path, audio_model_path, _video_backend, audio_backend) = {
+        self.has_audio = false;
+        self.buffering.set(true);
+        self.last_frame = None;
+
+        // Reset audio clock and clear any pending audio
+        self.audio_clock.reset();
+        self.audio_clear_requested.store(true, Ordering::SeqCst);
+    }
+
+    fn restart_pipeline(&mut self) {
+        // 1. Stop any existing pipeline
+        self.stop_pipeline();
+
+        // 2. Check mode and video path
+        let (video_path, audio_model_path, video_backend, audio_backend, mode) = {
             let state = self.state.lock();
             (
                 state.video_path.clone(),
-                state.audio_model_path.clone(), // clone to avoid move later
+                state.audio_model_path.clone(),
                 state.video_backend,
                 state.audio_backend,
+                state.mode,
             )
         };
 
-        if let Some(video_path) = video_path {
-            // Build GStreamer source
-            let gst_source = Arc::new(Mutex::new(
-                GstSource::new(&video_path.to_string_lossy())
-                    .expect("failed to create GStreamer source"),
-            ));
-            self.gst_source = Some(gst_source.clone());
-
-            // Query duration
-            let duration = gst_source.lock().duration_ns().unwrap_or(0);
-            self.state.lock().total_duration_ns = duration;
-
-            // Video pump
-            let (video_tx, video_rx) = bounded(4);
-            let video_pump =
-                spawn_video_pump(gst_source.clone(), video_tx, self.generation.clone());
-            self.video_pump = Some(video_pump);
-
-            let video_source = ChannelVideoSource {
-                rx: video_rx,
-                generation: self.generation.clone(),
-            };
-
-            // Build model – we need to build it with the selected video backend
-            // For now, use the audio_model_path for the model file (fallback to default)
-            let model_path = audio_model_path
-                .as_ref()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| {
-                    format!(
-                        "{}/../hfm-core/models/pphumanseg.onnx",
-                        env!("CARGO_MANIFEST_DIR")
-                    )
-                });
-            let model = PeopleSegFilter::new(&model_path).expect("failed to load PPHumanSeg");
-            let mut pipeline =
-                PipelineController::new(Box::new(video_source), model, self.generation.clone());
-            pipeline.start();
-            self.pipeline = Some(pipeline);
-
-            // Audio if model exists
-            // We still have `audio_model_path` (owned) here because we only borrowed above.
-            if let Some(audio_config) = self.build_audio_config(audio_model_path, audio_backend) {
-                let (raw_audio_tx, raw_audio_rx) = bounded(128);
-                let audio_pump =
-                    spawn_audio_pump(gst_source.clone(), raw_audio_tx, self.generation.clone());
-                self.audio_pump = Some(audio_pump);
-
-                let (processed_audio_tx, processed_audio_rx) = bounded(128);
-                let audio_processor = spawn_demucs_worker(
-                    audio_config,
-                    raw_audio_rx,
-                    processed_audio_tx,
-                    self.generation.clone(),
-                );
-                self.audio_processor = Some(audio_processor);
-
-                let audio_output = spawn_audio_output(
-                    processed_audio_rx,
-                    self.audio_clock.clone(),
-                    self.buffering.clone(),
-                    self.generation.clone(),
-                    self.audio_clear_requested.clone(),
-                    SAMPLE_RATE,
-                    CHANNELS,
-                    self.volume_atomic.clone(),
-                );
-                self.audio_output = Some(audio_output);
-                self.has_audio = true;
-            } else {
-                self.has_audio = false;
-                self.buffering.set(false);
+        // Only build if we are in Playback mode and have a video path
+        if mode != AppMode::Playback {
+            return;
+        }
+        let video_path = match video_path {
+            Some(p) => p,
+            None => {
+                eprintln!("Cannot start playback: no video path");
+                return;
             }
+        };
 
-            self.state.lock().playback_state = PlaybackState::Paused;
+        // 3. Build GStreamer source
+        let gst_source = Arc::new(Mutex::new(
+            GstSource::new(&video_path.to_string_lossy())
+                .expect("failed to create GStreamer source"),
+        ));
+        self.gst_source = Some(gst_source.clone());
+
+        // 4. Query duration and update state
+        let duration = gst_source.lock().duration_ns().unwrap_or(0);
+        self.state.lock().total_duration_ns = duration;
+
+        // 5. Spawn video pump and pipeline controller
+        let (video_tx, video_rx) = bounded(4);
+        let video_pump = spawn_video_pump(gst_source.clone(), video_tx, self.generation.clone());
+        self.video_pump = Some(video_pump);
+
+        let video_source = ChannelVideoSource {
+            rx: video_rx,
+            generation: self.generation.clone(),
+        };
+
+        // Build the model with the chosen video backend (still WIP – we use the audio model path for the model file)
+        let model_path = audio_model_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| {
+                format!(
+                    "{}/../hfm-core/models/pphumanseg.onnx",
+                    env!("CARGO_MANIFEST_DIR")
+                )
+            });
+        let model = PeopleSegFilter::new(&model_path).expect("failed to load PPHumanSeg");
+        let mut pipeline =
+            PipelineController::new(Box::new(video_source), model, self.generation.clone());
+        pipeline.start();
+        self.pipeline = Some(pipeline);
+
+        // 6. Spawn audio pipeline if an audio model is provided
+        if let Some(audio_config) = self.build_audio_config(audio_model_path, audio_backend) {
+            let (raw_audio_tx, raw_audio_rx) = bounded(128);
+            let audio_pump =
+                spawn_audio_pump(gst_source.clone(), raw_audio_tx, self.generation.clone());
+            self.audio_pump = Some(audio_pump);
+
+            let (processed_audio_tx, processed_audio_rx) = bounded(128);
+            let audio_processor = spawn_demucs_worker(
+                audio_config,
+                raw_audio_rx,
+                processed_audio_tx,
+                self.generation.clone(),
+            );
+            self.audio_processor = Some(audio_processor);
+
+            let audio_output = spawn_audio_output(
+                processed_audio_rx,
+                self.audio_clock.clone(),
+                self.buffering.clone(),
+                self.generation.clone(),
+                self.audio_clear_requested.clone(),
+                SAMPLE_RATE,
+                CHANNELS,
+                self.volume_atomic.clone(),
+            );
+            self.audio_output = Some(audio_output);
+            self.has_audio = true;
         } else {
             self.has_audio = false;
-            self.buffering.set(true);
-            self.state.lock().playback_state = PlaybackState::Paused;
-            self.state.lock().total_duration_ns = 0;
+            self.buffering.set(false);
         }
+
+        // 7. Set initial playback state to Paused
+        self.state.lock().playback_state = PlaybackState::Paused;
     }
 
     fn build_audio_config(
@@ -511,78 +556,12 @@ impl ApplicationHandler for App {
 
         let renderer = pollster::block_on(Renderer::new(window));
         self.renderer = Some(renderer);
-
-        let args = parse_args();
-
-        // Determine video file path: use CLI argument or fallback to default.
-        let video_path = match args.video_file {
-            Some(path) => path,
-            None => format!(
-                "{}/../hfm-core/assets/video_with_music.mp4",
-                env!("CARGO_MANIFEST_DIR")
-            ),
-        };
-        let gst_source = Arc::new(Mutex::new(
-            GstSource::new(&video_path).expect("failed to create GStreamer source"),
-        ));
-        self.gst_source = Some(gst_source.clone());
-
-        let audio_config = args.audio_config;
-        self.has_audio = audio_config.is_some();
-
-        if !self.has_audio {
-            self.buffering.set(false);
+        // Set initial state
+        {
+            let mut state = self.state.lock();
+            state.mode = AppMode::Setup;
+            // Optionally, load CLI args into state (video_path, etc.)
         }
-
-        let (video_tx, video_rx) = bounded::<RawVideoFrame>(4);
-
-        let video_pump = spawn_video_pump(gst_source.clone(), video_tx, self.generation.clone());
-        self.video_pump = Some(video_pump);
-
-        let video_source = ChannelVideoSource {
-            rx: video_rx,
-            generation: self.generation.clone(),
-        };
-        let model_path = format!(
-            "{}/../hfm-core/models/pphumanseg.onnx",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let model = PeopleSegFilter::new(&model_path).expect("failed to load PPHumanSeg");
-        let mut pipeline =
-            PipelineController::new(Box::new(video_source), model, self.generation.clone());
-        pipeline.start();
-        self.pipeline = Some(pipeline);
-
-        if let Some(config) = audio_config {
-            let (raw_audio_tx, raw_audio_rx) = bounded::<RawAudioChunk>(128);
-
-            let audio_pump =
-                spawn_audio_pump(gst_source.clone(), raw_audio_tx, self.generation.clone());
-            self.audio_pump = Some(audio_pump);
-
-            let (processed_audio_tx, processed_audio_rx) = bounded::<ProcessedAudioChunk>(128);
-
-            let audio_processor = spawn_demucs_worker(
-                config,
-                raw_audio_rx,
-                processed_audio_tx,
-                self.generation.clone(),
-            );
-            self.audio_processor = Some(audio_processor);
-
-            let audio_output = spawn_audio_output(
-                processed_audio_rx,
-                self.audio_clock.clone(),
-                self.buffering.clone(),
-                self.generation.clone(),
-                self.audio_clear_requested.clone(),
-                SAMPLE_RATE,
-                CHANNELS,
-                self.volume_atomic.clone(),
-            );
-            self.audio_output = Some(audio_output);
-        }
-
         self.window.as_ref().unwrap().request_redraw();
     }
 
