@@ -1,3 +1,5 @@
+#![allow(unused)] // this is temporary, and perhaps lib.rs is also temporary
+
 pub mod browser;
 pub mod debug_config;
 pub mod inference;
