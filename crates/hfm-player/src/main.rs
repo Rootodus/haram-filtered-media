@@ -52,7 +52,7 @@ const CHANNELS: u16 = 2;
 const SEEK_DELTA_NS: i64 = 10_000_000_000;
 const WINDOW_SAMPLES: usize = 343_980;
 const SEEK_DEBOUNCE_MS: u64 = 200;
-const SYNC_TOLERANCE_NS: i64 = 10_000_000; // 10 ms tolerance to avoid jitter
+const SYNC_TOLERANCE_NS: i64 = 50_000_000; // 10 ms tolerance to avoid jitter
 
 /// Adapter that turns `Receiver<RawVideoFrame>` into `hfm_core::FrameSource`.
 struct ChannelVideoSource {

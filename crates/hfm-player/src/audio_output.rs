@@ -105,6 +105,10 @@ pub fn spawn_audio_output(
             let mut base_pts_initialized = false;
             let mut current_generation = generation.current();
 
+            // Ensure clear flag is reset before prebuffering.
+            clear_audio.store(false, Ordering::Release);
+            buffering.set(true); // start in buffering state
+
             // Helper to drain all samples from the consumer side.
             fn drain_consumer<C: Consumer<Item = f32>>(out_cons: &mut C) {
                 while out_cons.try_pop().is_some() {}
@@ -173,17 +177,29 @@ pub fn spawn_audio_output(
                         }
 
                         let vol = volume.load(Ordering::Relaxed) as f32 / 100.0;
-                        for sample in data.iter_mut() {
-                            *sample *= vol;
-                        }
-
                         let occupied = out_cons.occupied_len();
 
-                        // Not enough audio for this callback. Pause both streams before muting.
+                        // If currently buffering, check if we have enough to exit.
+                        if buffering_cb.is_buffering() {
+                            if occupied >= high_watermark {
+                                buffering_cb.set(false);
+                            } else {
+                                // Still buffering – output silence.
+                                data.fill(0.0);
+                                return;
+                            }
+                        }
+
+                        // Not buffering, but insufficient data – enter buffering.
                         if occupied < data.len() {
                             buffering_cb.set(true);
                             data.fill(0.0);
                             return;
+                        }
+
+                        // Apply volume only when we have real data.
+                        for sample in data.iter_mut() {
+                            *sample *= vol;
                         }
 
                         // Enough data. Update watermark state normally.
