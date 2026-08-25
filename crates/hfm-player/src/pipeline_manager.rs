@@ -54,16 +54,16 @@ impl FrameSource for ChannelVideoSource {
     }
 }
 
-/// Spawns the video pump thread.
 pub fn spawn_video_pump(
     gst_source: Arc<Mutex<GstSource>>,
     video_tx: Sender<RawVideoFrame>,
     generation: Arc<SeekGeneration>,
+    running: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("video-pump".to_string())
         .spawn(move || {
-            loop {
+            while running.load(Ordering::Acquire) {
                 let (maybe_frame, current_gen) = {
                     let source = gst_source.lock();
                     let frame = source.try_pull_video_frame(Duration::from_millis(5));
@@ -97,16 +97,16 @@ pub fn spawn_video_pump(
         .expect("Failed to spawn video pump")
 }
 
-/// Spawns the audio pump thread.
 pub fn spawn_audio_pump(
     gst_source: Arc<Mutex<GstSource>>,
     audio_tx: Sender<RawAudioChunk>,
     generation: Arc<SeekGeneration>,
+    running: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("audio-pump".to_string())
         .spawn(move || {
-            loop {
+            while running.load(Ordering::Acquire) {
                 let (maybe_chunk, current_gen) = {
                     let source = gst_source.lock();
                     let chunk = source.try_pull_audio_frame(Duration::from_millis(5));
@@ -181,6 +181,7 @@ pub struct PipelineManager {
     buffering: Arc<BufferingFlag>,
     audio_clear_requested: Arc<AtomicBool>,
     volume_atomic: Arc<AtomicU8>,
+    pump_running: Arc<AtomicBool>,
 }
 
 impl PipelineManager {
@@ -204,13 +205,24 @@ impl PipelineManager {
             buffering,
             audio_clear_requested,
             volume_atomic,
+            pump_running: Arc::new(AtomicBool::new(true)),
         }
     }
 
-    /// Stop the pipeline and join all threads.
+    /// Stops all running pipeline threads, joins handles, and resets audio clocks.
     pub fn stop(&mut self) {
-        self.pipeline = None;
+        // 1. Signal pump threads to stop spinning on try_pull / empty sleep loops
+        self.pump_running.store(false, Ordering::Release);
+
+        // 2. Shutdown the pipeline controller first
+        if let Some(mut controller) = self.pipeline.take() {
+            controller.shutdown();
+        }
+
+        // 3. Drop GStreamer source handle
         self.gst_source = None;
+
+        // 4. Safely join all pump, processing, and output worker threads
         if let Some(handle) = self.video_pump.take() {
             let _ = handle.join();
         }
@@ -223,6 +235,7 @@ impl PipelineManager {
         if let Some(handle) = self.audio_output.take() {
             let _ = handle.join();
         }
+
         self.has_audio = false;
         self.buffering.set(true);
         self.audio_clock.reset();
@@ -242,6 +255,9 @@ impl PipelineManager {
     ) -> Result<u64, String> {
         self.stop();
 
+        // Re-enable pump running flag for the new pipeline run
+        self.pump_running.store(true, Ordering::Release);
+
         // Build GStreamer source
         let gst_source = Arc::new(Mutex::new(
             GstSource::new(&video_path.to_string_lossy())
@@ -251,7 +267,12 @@ impl PipelineManager {
 
         // Video pump
         let (video_tx, video_rx) = bounded(4);
-        let video_pump = spawn_video_pump(gst_source.clone(), video_tx, self.generation.clone());
+        let video_pump = spawn_video_pump(
+            gst_source.clone(),
+            video_tx,
+            self.generation.clone(),
+            self.pump_running.clone(),
+        );
         self.video_pump = Some(video_pump);
 
         let video_source = ChannelVideoSource {
@@ -304,8 +325,12 @@ impl PipelineManager {
         if audio_enabled {
             if let Some(audio_config) = build_audio_config(audio_backend) {
                 let (raw_audio_tx, raw_audio_rx) = bounded(128);
-                let audio_pump =
-                    spawn_audio_pump(gst_source.clone(), raw_audio_tx, self.generation.clone());
+                let audio_pump = spawn_audio_pump(
+                    gst_source.clone(),
+                    raw_audio_tx,
+                    self.generation.clone(),
+                    self.pump_running.clone(),
+                );
                 self.audio_pump = Some(audio_pump);
 
                 let (processed_audio_tx, processed_audio_rx) = bounded(128);
@@ -333,8 +358,12 @@ impl PipelineManager {
         } else {
             // Passthrough
             let (raw_audio_tx, raw_audio_rx) = bounded(128);
-            let audio_pump =
-                spawn_audio_pump(gst_source.clone(), raw_audio_tx, self.generation.clone());
+            let audio_pump = spawn_audio_pump(
+                gst_source.clone(),
+                raw_audio_tx,
+                self.generation.clone(),
+                self.pump_running.clone(),
+            );
             self.audio_pump = Some(audio_pump);
 
             let (processed_audio_tx, processed_audio_rx) = bounded(128);

@@ -225,6 +225,12 @@ impl PipelineController {
 
                     let mut frame = frame;
                     loop {
+                        // Break immediately if pipeline is shutting down
+                        if !running.load(Ordering::Acquire) {
+                            slot_pool.discard_slot(frame.slot);
+                            break;
+                        }
+
                         // If the frame is from an old generation, discard it.
                         if frame.seek_gen != buffer.current_seek_epoch() {
                             slot_pool.discard_slot(frame.slot);
@@ -256,8 +262,12 @@ impl PipelineController {
         seek_gen: u64,
         slot_pool: &Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         ml_tx: &Sender<PackedIndex>,
+        running: &Arc<AtomicBool>,
     ) {
         let packed = loop {
+            if !running.load(Ordering::Acquire) {
+                return;
+            }
             if let Some(packed) = slot_pool.try_claim() {
                 break packed;
             }
@@ -310,7 +320,7 @@ impl PipelineController {
                     match source.try_pull_frame(Duration::from_millis(15)) {
                         PullOutcome::Frame(rgba, pts_ns) => {
                             let epoch = buffer.current_seek_epoch();
-                            Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
+                            Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx, &running);
                         }
                         PullOutcome::Eos => break,
                         PullOutcome::Empty => {
@@ -323,5 +333,32 @@ impl PipelineController {
         }
 
         println!("[CONTROLLER] Run loop exiting");
+    }
+
+    /// Shut down the pipeline, signal threads to exit, and join in producer-first order.
+    pub fn shutdown(&mut self) {
+        // 1. Signal running flag to false
+        self.running.store(false, Ordering::Release);
+
+        // 2. Wake controller thread if waiting on commands
+        let _ = self.cmd_tx.send(PipelineCommand::Stop);
+
+        // 3. Join upstream controller thread FIRST.
+        // Terminating this thread drops its internal `ml_tx` sender.
+        if let Some(handle) = self._controller_handle.take() {
+            let _ = handle.join();
+        }
+
+        // 4. Join downstream ML thread SECOND.
+        // `ml_rx.recv()` receives Err immediately because all senders are disconnected.
+        if let Some(handle) = self._ml_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for PipelineController {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
