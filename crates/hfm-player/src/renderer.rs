@@ -1,13 +1,15 @@
 //! Renderer with egui overlay.
+//!
+//! This module orchestrates video rendering and egui UI overlay.
+//! It delegates video texture/quad handling to `video` and egui
+//! state/renderer to `egui_overlay`.
 
-use crate::gui::{self, AppState, Bridge};
-use egui::{Context, ViewportId};
-use egui_wgpu::Renderer as EguiRenderer;
-use egui_winit::State as EguiState;
-use hfm_core::pipeline::{HEIGHT, WIDTH};
+mod egui_overlay;
+mod video;
+
+use crate::gui::{AppState, Bridge};
 use parking_lot::Mutex;
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 use wgpu::{
     BackendOptions, Backends, Device, DeviceDescriptor, ExperimentalFeatures, Features, Instance,
     InstanceDescriptor, InstanceFlags, Limits, MemoryBudgetThresholds, MemoryHints,
@@ -16,55 +18,22 @@ use wgpu::{
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vertex {
-    pub position: [f32; 2],
-    pub uv: [f32; 2],
-}
+pub use video::QUAD_VERTICES;
+pub use video::Vertex;
 
-pub const QUAD_VERTICES: [Vertex; 6] = [
-    Vertex {
-        position: [-1.0, -1.0],
-        uv: [0.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, -1.0],
-        uv: [1.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, 1.0],
-        uv: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, -1.0],
-        uv: [0.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, 1.0],
-        uv: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, 1.0],
-        uv: [0.0, 0.0],
-    },
-];
-
+/// Main renderer that combines video and egui overlay.
 pub struct Renderer {
-    pub surface: Surface<'static>,
-    pub device: Device,
-    pub queue: Queue,
-    pub config: SurfaceConfiguration,
-    pub render_pipeline: wgpu::RenderPipeline,
-    pub vertex_buffer: wgpu::Buffer,
-    pub texture: wgpu::Texture,
-    pub bind_group: wgpu::BindGroup,
-    egui_state: EguiState,
-    egui_renderer: EguiRenderer,
+    surface: Surface<'static>,
+    device: Device,
+    queue: Queue,
+    config: SurfaceConfiguration,
+    video: video::VideoRenderer,
+    egui: egui_overlay::EguiOverlay,
     window: Arc<Window>,
 }
 
 impl Renderer {
+    /// Create a new renderer instance.
     pub async fn new(window: Arc<Window>) -> Self {
         let instance = Instance::new(InstanceDescriptor {
             backends: Backends::PRIMARY,
@@ -107,8 +76,8 @@ impl Renderer {
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            width: WIDTH,
-            height: HEIGHT,
+            width: hfm_core::pipeline::WIDTH,
+            height: hfm_core::pipeline::HEIGHT,
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
@@ -117,196 +86,26 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        // --- egui setup ---
-        let egui_ctx = Context::default();
-
-        // Apply a modern dark theme with custom spacing and font sizes
-        let mut style = egui::Style::default();
-        style.visuals = egui::Visuals::dark();
-        style.spacing.item_spacing = egui::Vec2::new(8.0, 8.0);
-        style.spacing.window_margin = egui::Margin::symmetric(12, 8);
-        style.spacing.button_padding = egui::Vec2::new(12.0, 6.0);
-        style.text_styles = [
-            (
-                egui::TextStyle::Heading,
-                egui::FontId::new(24.0, egui::FontFamily::Proportional),
-            ),
-            (
-                egui::TextStyle::Body,
-                egui::FontId::new(16.0, egui::FontFamily::Proportional),
-            ),
-            (
-                egui::TextStyle::Monospace,
-                egui::FontId::new(14.0, egui::FontFamily::Monospace),
-            ),
-            (
-                egui::TextStyle::Button,
-                egui::FontId::new(16.0, egui::FontFamily::Proportional),
-            ),
-        ]
-        .into();
-        egui_ctx.set_style_of(egui::Theme::Dark, style); // correct method
-
-        let viewport_id = ViewportId::from_hash_of(window.id());
-        let scale_factor = window.scale_factor() as f32;
-
-        let egui_state = EguiState::new(
-            egui_ctx,
-            viewport_id,
-            &window,
-            Some(scale_factor),
-            None,
-            None,
-        );
-        let egui_renderer = EguiRenderer::new(
-            &device,
-            config.format,
-            egui_wgpu::RendererOptions::default(),
-        );
-
-        // --- video texture setup ---
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Video Texture"),
-            size: wgpu::Extent3d {
-                width: WIDTH,
-                height: HEIGHT,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Video Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Quad Vertex Buffer"),
-            contents: bytemuck::cast_slice(&QUAD_VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Video Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Video Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
-
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Texture Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/texture_quad.wgsl").into()),
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0,
-        });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
-                            shader_location: 1,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                    ],
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let video = video::VideoRenderer::new(&device, format);
+        let egui = egui_overlay::EguiOverlay::new(window.clone(), &device, format);
 
         Self {
             surface,
             device,
             queue,
             config,
-            render_pipeline,
-            vertex_buffer,
-            texture,
-            bind_group,
-            egui_state,
-            egui_renderer,
+            video,
+            egui,
             window,
         }
     }
 
+    /// Forward window events to egui.
     pub fn handle_window_event(&mut self, event: &WindowEvent) {
-        let _ = self.egui_state.on_window_event(&self.window, event);
+        self.egui.handle_window_event(event);
     }
 
+    /// Resize the surface.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.config.width = width;
@@ -319,92 +118,40 @@ impl Renderer {
         }
     }
 
+    /// Render a frame: upload video data (if any), run egui, and present.
     pub fn render(
         &mut self,
         frame_data: Option<Vec<u8>>,
         state: Arc<Mutex<AppState>>,
         bridge: &Bridge,
     ) {
-        // --- 1. Copy video data to texture (if any) ---
         let has_frame = frame_data.is_some();
+
+        // --- 1. Upload video frame (if any) ---
         if let Some(data) = frame_data {
-            let staging = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Frame Staging"),
-                    contents: &data,
-                    usage: wgpu::BufferUsages::COPY_SRC,
-                });
-            let mut copy_encoder =
-                self.device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Copy Encoder"),
-                    });
-            copy_encoder.copy_buffer_to_texture(
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &staging,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(4 * WIDTH),
-                        rows_per_image: Some(HEIGHT),
-                    },
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: WIDTH,
-                    height: HEIGHT,
-                    depth_or_array_layers: 1,
-                },
-            );
-            self.queue.submit(Some(copy_encoder.finish()));
+            self.video.upload_frame(&data, &self.device, &self.queue);
         }
 
         // --- 2. Run egui frame ---
-        let input = self.egui_state.take_egui_input(&self.window);
-        let full_output = self.egui_state.egui_ctx().run_ui(input, |ctx| {
-            let mut state_guard = state.lock();
-            gui::ui(ctx, &mut *state_guard, bridge);
-        });
+        let full_output = self.egui.begin_frame(state.clone(), bridge);
 
-        // --- 2.5 Apply texture deltas ---
-        let mut textures_delta = full_output.textures_delta;
-        for (id, deltas) in &textures_delta.set {
-            for delta in deltas {
-                self.egui_renderer
-                    .update_texture(&self.device, &self.queue, *id, delta);
-            }
-        }
-        for id in &textures_delta.free {
-            self.egui_renderer.free_texture(id);
-        }
-        // Clear to prevent panic on drop
-        textures_delta.set.clear();
-        textures_delta.free.clear();
+        // --- 3. Apply texture deltas ---
+        self.egui
+            .update_textures(&self.device, &self.queue, &full_output.textures_delta);
 
-        // --- 3. Tessellate and update egui buffers ---
-        let clipped_primitives = self
-            .egui_state
-            .egui_ctx()
+        // --- 4. Tessellate ---
+        let (clipped_primitives, screen_descriptor) = self
+            .egui
             .tessellate(full_output.shapes, full_output.pixels_per_point);
 
-        let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [self.config.width, self.config.height],
-            pixels_per_point: self.egui_state.egui_ctx().pixels_per_point(),
-        };
-
-        // --- 4. Create encoder, update egui buffers, and render ---
+        // --- 5. Create encoder and update egui buffers ---
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
 
-        self.egui_renderer.update_buffers(
+        self.egui.update_buffers(
             &self.device,
             &self.queue,
             &mut encoder,
@@ -412,7 +159,7 @@ impl Renderer {
             &screen_descriptor,
         );
 
-        // --- 5. Render pass ---
+        // --- 6. Render pass ---
         match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => {
                 let view = frame
@@ -445,15 +192,13 @@ impl Renderer {
                     // Extend lifetime to 'static for egui-wgpu
                     let mut pass = pass.forget_lifetime();
 
+                    // Draw video quad if we have frame data
                     if has_frame {
-                        pass.set_pipeline(&self.render_pipeline);
-                        pass.set_bind_group(0, &self.bind_group, &[]);
-                        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                        pass.draw(0..6, 0..1);
+                        self.video.draw(&mut pass);
                     }
 
                     // Draw egui overlay
-                    self.egui_renderer
+                    self.egui
                         .render(&mut pass, &clipped_primitives, &screen_descriptor);
                 }
 
