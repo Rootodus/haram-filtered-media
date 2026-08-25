@@ -12,22 +12,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-fn debug_rgba(label: &str, data: &[u8]) {
-    let nonzero = data.iter().filter(|&&x| x != 0).count();
-    let first32 = if data.len() >= 32 {
-        format!("{:02x?}", &data[..32])
-    } else {
-        format!("<len={}>", data.len())
-    };
-    eprintln!(
-        "[RGBA] {} len={} nonzero={} first32={}",
-        label,
-        data.len(),
-        nonzero,
-        first32
-    );
-}
-
 /// Constants for the video resolution (must match the model's expected input size).
 pub const WIDTH: u32 = 960;
 pub const HEIGHT: u32 = 540;
@@ -99,7 +83,6 @@ pub struct PipelineController {
     running: Arc<AtomicBool>,
     generation: Arc<SeekGeneration>,
     filter_enabled: bool,
-    throttle_ms: u64,
 }
 
 impl PipelineController {
@@ -107,7 +90,6 @@ impl PipelineController {
         source: Box<dyn FrameSource>,
         model: PeopleSegFilter,
         generation: Arc<SeekGeneration>,
-        throttle_ms: u64,
         filter_enabled: bool,
     ) -> Self {
         let pool = Arc::new(SlotPool::<VIDEO_SLOT_SIZE>::new(N_V));
@@ -130,7 +112,6 @@ impl PipelineController {
             _ml_handle: None,
             _controller_handle: None,
             running,
-            throttle_ms,
             filter_enabled,
         }
     }
@@ -175,7 +156,6 @@ impl PipelineController {
         let ml_buffer = buffer.clone();
         let ml_running = running.clone();
         let filter_enabled = self.filter_enabled;
-        let throttle_ms = self.throttle_ms;
         let ml_handle = std::thread::Builder::new()
             .name("ml-worker".to_string())
             .spawn(move || {
@@ -200,7 +180,6 @@ impl PipelineController {
                 Self::run_loop(
                     source,
                     buffer,
-                    throttle_ms,
                     controller_generation,
                     controller_slot_pool,
                     controller_ml_tx,
@@ -223,43 +202,19 @@ impl PipelineController {
         filter_enabled: bool,
         running: Arc<AtomicBool>,
     ) {
-        // Toggle this to test the renderer path with a synthetic red frame
-        const TEST_RED_FRAME: bool = false;
-
         while running.load(Ordering::Acquire) {
             match ml_rx.recv() {
                 Ok(packed) => {
                     let _ = slot_pool.with_payload_mut(packed, |payload| {
-                        debug_rgba("ML ENTER", payload);
-
                         if filter_enabled {
                             if let Err(e) = model.filter_frame(payload, WIDTH, HEIGHT) {
                                 eprintln!("[ML] filter_frame failed: {e}");
                             }
-                            debug_rgba("ML AFTER FILTER", payload);
-                        } else {
-                            debug_rgba("ML PASSTHROUGH", payload);
-                        }
-
-                        if TEST_RED_FRAME {
-                            for y in 0..HEIGHT as usize {
-                                for x in 0..WIDTH as usize {
-                                    let i = (y * WIDTH as usize + x) * 4;
-                                    payload[i] = 255;
-                                    payload[i + 1] = 0;
-                                    payload[i + 2] = 0;
-                                    payload[i + 3] = 255;
-                                }
-                            }
-                            debug_rgba("ML RED FRAME", payload);
                         }
                     });
                     let pts_ns = slot_pool.get_pts_ns(packed);
                     let pts = Pts(pts_ns);
-                    let data = slot_pool.with_payload_mut(packed, |p| {
-                        debug_rgba("ML TO VIDEOFRAME", p);
-                        p.to_vec()
-                    });
+                    let data = slot_pool.with_payload_mut(packed, |p| p.to_vec());
                     let seek_gen = slot_pool.get_seek_gen(packed);
                     let frame = VideoFrame {
                         pts,
@@ -324,7 +279,6 @@ impl PipelineController {
     fn run_loop(
         mut source: Box<dyn FrameSource>,
         buffer: Arc<MediaBuffer>,
-        throttle_ms: u64,
         generation: Arc<SeekGeneration>,
         slot_pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         ml_tx: Sender<PackedIndex>,
@@ -356,10 +310,6 @@ impl PipelineController {
                     match source.try_pull_frame(Duration::from_millis(15)) {
                         PullOutcome::Frame(rgba, pts_ns) => {
                             let epoch = buffer.current_seek_epoch();
-                            // Throttle to avoid overrunning the audio clock
-                            if throttle_ms > 0 {
-                                thread::sleep(Duration::from_millis(throttle_ms));
-                            }
                             Self::enqueue_frame(rgba, pts_ns, epoch, &slot_pool, &ml_tx);
                         }
                         PullOutcome::Eos => break,
