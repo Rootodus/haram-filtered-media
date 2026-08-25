@@ -72,12 +72,12 @@ impl Renderer {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(caps.formats[0]);
-
+        let size = window.inner_size();
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
-            width: hfm_core::pipeline::WIDTH,
-            height: hfm_core::pipeline::HEIGHT,
+            width: size.width,
+            height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
@@ -143,9 +143,7 @@ impl Renderer {
         textures_delta.free.clear();
 
         // --- 4. Tessellate ---
-        let (clipped_primitives, screen_descriptor) = self
-            .egui
-            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        let (clipped_primitives, screen_descriptor) = self.egui.tessellate(full_output.shapes);
 
         // --- 5. Create encoder and update egui buffers ---
         let mut encoder = self

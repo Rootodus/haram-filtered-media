@@ -74,6 +74,7 @@ impl EguiOverlay {
 
     /// Forward window events to egui.
     pub fn handle_window_event(&mut self, event: &WindowEvent) {
+        // on_window_event handles scale factor changes internally.
         let _ = self.egui_state.on_window_event(&self.window, event);
     }
 
@@ -108,19 +109,19 @@ impl EguiOverlay {
     }
 
     /// Tessellate the shapes and return the clipped primitives and screen descriptor.
+    /// Uses the current window size and scale factor to compute the screen descriptor.
     pub fn tessellate(
         &mut self,
         shapes: Vec<egui::epaint::ClippedShape>,
-        pixels_per_point: f32,
     ) -> (Vec<ClippedPrimitive>, ScreenDescriptor) {
-        let clipped_primitives = self
-            .egui_state
-            .egui_ctx()
-            .tessellate(shapes, pixels_per_point);
+        let size = self.window.inner_size();
+        let scale_factor = self.window.scale_factor() as f32;
+
+        let clipped_primitives = self.egui_state.egui_ctx().tessellate(shapes, scale_factor);
 
         let screen_descriptor = ScreenDescriptor {
-            size_in_pixels: self.window.inner_size().into(),
-            pixels_per_point: self.egui_state.egui_ctx().pixels_per_point(),
+            size_in_pixels: [size.width, size.height],
+            pixels_per_point: scale_factor,
         };
 
         (clipped_primitives, screen_descriptor)
