@@ -28,22 +28,6 @@ use winit::{
     window::{Window, WindowId},
 };
 
-fn debug_rgba(label: &str, data: &[u8]) {
-    let nonzero = data.iter().filter(|&&x| x != 0).count();
-    let first32 = if data.len() >= 32 {
-        format!("{:02x?}", &data[..32])
-    } else {
-        format!("<len={}>", data.len())
-    };
-    eprintln!(
-        "[RGBA] {} len={} nonzero={} first32={}",
-        label,
-        data.len(),
-        nonzero,
-        first32
-    );
-}
-
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
@@ -321,7 +305,6 @@ impl App {
                 state.mode,
             )
         };
-        let throttle_ms = if filter_enabled { 0 } else { 33 };
 
         if mode != AppMode::Playback {
             return;
@@ -379,7 +362,6 @@ impl App {
             Box::new(video_source),
             model,
             self.generation.clone(),
-            throttle_ms,
             filter_enabled,
         );
         pipeline.start();
