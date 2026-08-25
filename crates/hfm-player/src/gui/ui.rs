@@ -12,13 +12,13 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             });
         }
         AppMode::Playback => {
-            // 1. Bottom panel first so it claims space from the bottom.
+            // 1. Bottom panel first – now fully opaque.
             egui::Panel::bottom("playback_controls")
                 .resizable(false)
                 .min_size(60.0)
                 .frame(
                     egui::Frame::new()
-                        .fill(Color32::from_black_alpha(200))
+                        .fill(Color32::BLACK)
                         .corner_radius(10.0)
                         .inner_margin(Margin::symmetric(10, 5)),
                 )
