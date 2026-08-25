@@ -136,8 +136,11 @@ impl Renderer {
         let full_output = self.egui.begin_frame(state.clone(), bridge);
 
         // --- 3. Apply texture deltas ---
+        let mut textures_delta = full_output.textures_delta;
         self.egui
-            .update_textures(&self.device, &self.queue, &full_output.textures_delta);
+            .update_textures(&self.device, &self.queue, &textures_delta);
+        textures_delta.set.clear();
+        textures_delta.free.clear();
 
         // --- 4. Tessellate ---
         let (clipped_primitives, screen_descriptor) = self
