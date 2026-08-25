@@ -11,5 +11,5 @@ pub(crate) mod buffer;
 pub(crate) mod detection;
 pub(crate) mod memory;
 
-pub use crate::buffer::VideoFrame;
+pub use buffer::VideoFrame;
 pub use filter::{AudioFilter, VideoFilter};
