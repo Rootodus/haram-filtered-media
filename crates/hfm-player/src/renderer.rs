@@ -135,6 +135,12 @@ impl Renderer {
         // --- 2. Run egui frame ---
         let full_output = self.egui.begin_frame(state.clone(), bridge);
 
+        // --- Extract panel height from the state (already updated by ui() ) ---
+        let panel_height_pts = state.lock().bottom_panel_height;
+        let scale_factor = self.window.scale_factor() as f32;
+        let panel_height_px = (panel_height_pts * scale_factor).round() as u32;
+        let visible_height = self.config.height.saturating_sub(panel_height_px);
+
         // --- 3. Apply texture deltas ---
         let mut textures_delta = full_output.textures_delta;
         self.egui
@@ -193,12 +199,36 @@ impl Renderer {
                     // Extend lifetime to 'static for egui-wgpu
                     let mut pass = pass.forget_lifetime();
 
-                    // Draw video quad if we have frame data
+                    // ---- Set viewport and scissor for video ----
+                    if visible_height > 0 {
+                        pass.set_viewport(
+                            0.0,
+                            0.0,
+                            self.config.width as f32,
+                            visible_height as f32,
+                            0.0,
+                            1.0,
+                        );
+                        pass.set_scissor_rect(0, 0, self.config.width, visible_height);
+                    }
+
+                    // Draw video quad
                     if has_frame {
                         self.video.draw(&mut pass);
                     }
 
-                    // Draw egui overlay
+                    // ---- Reset for egui (full window) ----
+                    pass.set_viewport(
+                        0.0,
+                        0.0,
+                        self.config.width as f32,
+                        self.config.height as f32,
+                        0.0,
+                        1.0,
+                    );
+                    pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
+
+                    // Draw egui overlay (bottom panel will be on top)
                     self.egui
                         .render(&mut pass, &clipped_primitives, &screen_descriptor);
                 }

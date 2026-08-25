@@ -86,6 +86,9 @@ pub struct AppState {
 
     // UI mode
     pub mode: AppMode,
+
+    // Bottom panel
+    pub bottom_panel_height: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,6 +130,7 @@ impl Default for AppState {
             log_lines: vec!["🚀 Media player ready".to_string()],
             show_logs: false,
             mode: AppMode::default(),
+            bottom_panel_height: 0.0,
         }
     }
 }

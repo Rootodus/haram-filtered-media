@@ -12,8 +12,8 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             });
         }
         AppMode::Playback => {
-            // 1. Bottom panel first – now fully opaque.
-            egui::Panel::bottom("playback_controls")
+            // 1. Bottom panel – capture its response
+            let res = egui::Panel::bottom("playback_controls")
                 .resizable(false)
                 .min_size(60.0)
                 .frame(
@@ -26,7 +26,10 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                     playback_ui(ui, state, bridge);
                 });
 
-            // 2. Transparent central panel for the video.
+            // Store the exact height in logical points
+            state.bottom_panel_height = res.response.rect.height();
+
+            // 2. Central panel
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ui, |_ui| {});
