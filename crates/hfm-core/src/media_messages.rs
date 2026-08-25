@@ -5,8 +5,6 @@
 //! - `pts_ns`: presentation timestamp in nanoseconds
 //! - `generation`: seek generation used to discard stale data
 
-#![allow(dead_code)]
-
 /// Raw audio chunk pulled from GStreamer.
 pub struct RawAudioChunk {
     /// Interleaved PCM samples.
