@@ -200,7 +200,8 @@ pub fn spawn_audio_output(
 
                         let frames_played = n / output_channels;
                         if frames_played > 0 {
-                            audio_clock_cb.advance_by_frames(frames_played);
+                            // Pass the actual output device rate (e.g., 48 kHz)
+                            audio_clock_cb.advance_by_frames(frames_played, output_rate);
                         }
                     },
                     |err| eprintln!("Audio error: {err}"),

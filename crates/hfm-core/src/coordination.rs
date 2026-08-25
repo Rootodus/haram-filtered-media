@@ -13,15 +13,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 /// Shared audio-driven media clock.
 pub struct AudioClock {
     current_ns: AtomicU64,
-    sample_rate: u32,
     initialized: AtomicBool,
 }
 
 impl AudioClock {
-    pub fn new(sample_rate: u32) -> Self {
+    pub fn new() -> Self {
         Self {
             current_ns: AtomicU64::new(0),
-            sample_rate,
             initialized: AtomicBool::new(false),
         }
     }
@@ -36,12 +34,12 @@ impl AudioClock {
     ///
     /// Does nothing while the clock is uninitialized. This prevents
     /// pre-seek audio from advancing a reset media clock.
-    pub fn advance_by_frames(&self, frames: usize) {
+    pub fn advance_by_frames(&self, frames: usize, rate: u32) {
         if !self.initialized.load(Ordering::Acquire) {
             return;
         }
 
-        let delta_ns = (frames as u64 * 1_000_000_000) / self.sample_rate as u64;
+        let delta_ns = (frames as u64 * 1_000_000_000) / rate as u64;
         self.current_ns.fetch_add(delta_ns, Ordering::AcqRel);
     }
 

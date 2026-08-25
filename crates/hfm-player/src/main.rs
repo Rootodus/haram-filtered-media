@@ -52,6 +52,7 @@ const CHANNELS: u16 = 2;
 const SEEK_DELTA_NS: i64 = 10_000_000_000;
 const WINDOW_SAMPLES: usize = 343_980;
 const SEEK_DEBOUNCE_MS: u64 = 200;
+const SYNC_TOLERANCE_NS: i64 = 10_000_000; // 10 ms tolerance to avoid jitter
 
 /// Adapter that turns `Receiver<RawVideoFrame>` into `hfm_core::FrameSource`.
 struct ChannelVideoSource {
@@ -226,6 +227,8 @@ struct App {
     state: Arc<Mutex<AppState>>,
     bridge: Bridge,
     cmd_rx: Receiver<GuiCommand>,
+    video_pts_offset: Option<i64>,
+    synced: bool,
     volume_atomic: Arc<AtomicU8>,
 }
 
@@ -246,7 +249,7 @@ impl App {
             audio_processor: None,
             audio_output: None,
             generation: Arc::new(SeekGeneration::new()),
-            audio_clock: Arc::new(AudioClock::new(SAMPLE_RATE)),
+            audio_clock: Arc::new(AudioClock::new()),
             buffering: Arc::new(BufferingFlag::new(true)),
             audio_clear_requested: Arc::new(AtomicBool::new(false)),
             has_audio: false,
@@ -257,6 +260,8 @@ impl App {
             state,
             bridge,
             cmd_rx,
+            video_pts_offset: None,
+            synced: false,
             volume_atomic,
         }
     }
@@ -465,6 +470,7 @@ impl App {
                     eprintln!("Cannot toggle play/pause: no video loaded");
                     return;
                 }
+                self.video_pts_offset = None;
                 if let Some(gst_source) = self.gst_source.as_ref() {
                     let source = gst_source.lock();
                     let current_state = self.state.lock().playback_state;
@@ -509,6 +515,7 @@ impl App {
                 let has_video = { self.state.lock().video_path.is_some() };
                 // Even if no video, we'll use default – we still proceed.
                 self.state.lock().mode = AppMode::Playback;
+                self.video_pts_offset = None;
                 self.restart_pipeline();
             }
             GuiCommand::BackToSetup => {
@@ -518,6 +525,7 @@ impl App {
                 state.current_time_ns = 0;
                 state.total_duration_ns = 0;
                 state.playback_state = PlaybackState::Paused;
+                self.video_pts_offset = None;
                 self.last_frame = None;
             }
         }
@@ -563,22 +571,37 @@ impl ApplicationHandler for App {
                 } else if let Some(pipeline) = self.pipeline.as_ref() {
                     if let Some(front_pts) = pipeline.peek_video_pts() {
                         let now = self.audio_clock.now_ns();
+                        // Compute offset once when both audio and video are initialized
+                        if self.video_pts_offset.is_none() && self.audio_clock.is_initialized() {
+                            let offset = front_pts as i64 - now as i64;
+                            self.video_pts_offset = Some(offset);
+                            eprintln!("[SYNC] Initial offset set: {} ms", offset / 1_000_000);
+                        }
+
+                        // Apply offset if available
+                        let adjusted_pts = if let Some(offset) = self.video_pts_offset {
+                            front_pts as i64 - offset
+                        } else {
+                            front_pts as i64
+                        };
+
+                        let now_i64 = now as i64;
+                        let delta = adjusted_pts - now_i64;
                         eprintln!(
-                            "[SYNC] front_pts={} now={} delta={} buffering={}",
+                            "[SYNC] front_pts={} now={} delta={}ms (tolerance={}ms)",
                             front_pts,
                             now,
-                            front_pts as i128 - now as i128,
-                            self.buffering.is_buffering()
+                            delta / 1_000_000,
+                            SYNC_TOLERANCE_NS / 1_000_000
                         );
                         if self.audio_clock.is_initialized() {
-                            if front_pts > now {
+                            if delta > SYNC_TOLERANCE_NS {
                                 self.window.as_ref().unwrap().request_redraw();
                                 return;
                             }
                         }
 
                         if let Some(frame) = pipeline.pop_processed_frame() {
-                            debug_rgba("RENDERER INPUT", &frame.data);
                             let data = frame.data;
                             renderer.render(Some(data.clone()), state, bridge);
                             self.last_frame = Some(data);
@@ -630,6 +653,10 @@ impl ApplicationHandler for App {
                         return;
                     }
                     self.last_seek_time = now;
+                    // Reset offset on seek, because the timing relationship may change.
+                    // The offset will be recomputed on the next frame.
+                    self.video_pts_offset = None;
+                    self.synced = false;
 
                     {
                         let mut source = self.gst_source.as_ref().unwrap().lock();
@@ -653,6 +680,11 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         while let Ok(cmd) = self.cmd_rx.try_recv() {
+            // For seek commands, reset offset so it's recomputed after seek.
+            if let GuiCommand::Seek(_) = cmd {
+                self.video_pts_offset = None;
+                self.synced = false;
+            }
             self.handle_gui_command(cmd);
         }
         if let Some(window) = self.window.as_ref() {
