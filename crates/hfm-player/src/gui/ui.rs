@@ -12,16 +12,24 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             });
         }
         AppMode::Playback => {
-            // Transparent central panel so video shows through.
-            egui::CentralPanel::no_frame().show(ui, |_ui| {});
-            // Bottom bar overlay with semi‑transparent background.
-            egui::Frame::new()
-                .fill(Color32::from_black_alpha(200))
-                .corner_radius(10.0)
-                .inner_margin(Margin::symmetric(10, 5))
+            // 1. Bottom panel first so it claims space from the bottom.
+            egui::Panel::bottom("playback_controls")
+                .resizable(false)
+                .min_size(60.0)
+                .frame(
+                    egui::Frame::new()
+                        .fill(Color32::from_black_alpha(200))
+                        .corner_radius(10.0)
+                        .inner_margin(Margin::symmetric(10, 5)),
+                )
                 .show(ui, |ui| {
                     playback_ui(ui, state, bridge);
                 });
+
+            // 2. Transparent central panel for the video.
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ui, |_ui| {});
         }
     }
 }
@@ -29,7 +37,6 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
 fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
     ui.centered_and_justified(|ui| {
         ui.vertical_centered(|ui| {
-            // A card‑like frame
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill)
                 .corner_radius(10.0)
@@ -38,7 +45,6 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                     ui.heading("🎬 hfm-player Setup");
                     ui.add_space(20.0);
 
-                    // Video file
                     ui.horizontal(|ui| {
                         if ui.button("📂 Open Video").clicked() {
                             bridge.open_video_file();
@@ -51,7 +57,6 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
 
                     ui.add_space(10.0);
 
-                    // Feature toggles
                     ui.horizontal(|ui| {
                         ui.checkbox(
                             &mut state.video_filter_enabled,
@@ -67,7 +72,6 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
 
                     ui.add_space(10.0);
 
-                    // Backend dropdowns
                     ui.horizontal(|ui| {
                         ui.label("Video Backend:");
                         egui::ComboBox::from_id_salt("video_backend")
@@ -118,13 +122,11 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
 
                     ui.add_space(20.0);
 
-                    // Confirm button
                     if ui.button("▶ Confirm & Play").clicked() {
                         bridge.send(super::GuiCommand::ConfirmSetup);
                     }
                     ui.label("If no video is selected, a default video will be used.");
 
-                    // Display last error from log, if any
                     ui.add_space(10.0);
                     if let Some(last) = state.log_lines.last() {
                         ui.colored_label(Color32::RED, last);
@@ -136,13 +138,11 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
 
 fn playback_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
     ui.horizontal_centered(|ui| {
-        // Play/Pause
         let label = if state.is_playing() { "⏸" } else { "▶" };
         if ui.button(label).clicked() {
             bridge.send(super::GuiCommand::TogglePlayPause);
         }
 
-        // Seek buttons
         if ui.button("⏪").clicked() {
             bridge.send(super::GuiCommand::Seek(SeekDelta::Backward(10_000_000_000)));
         }
@@ -150,7 +150,6 @@ fn playback_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             bridge.send(super::GuiCommand::Seek(SeekDelta::Forward(10_000_000_000)));
         }
 
-        // Time display
         let current_secs = state.current_time_ns / 1_000_000_000;
         let total_secs = state.total_duration_ns / 1_000_000_000;
         ui.label(format!(
@@ -161,7 +160,6 @@ fn playback_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             total_secs % 60
         ));
 
-        // Volume
         ui.label("🔊");
         if ui.button("−").clicked() {
             bridge.send(super::GuiCommand::VolumeDown(5));
@@ -171,7 +169,6 @@ fn playback_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             bridge.send(super::GuiCommand::VolumeUp(5));
         }
 
-        // Back to setup
         if ui.button("⚙️ Setup").clicked() {
             bridge.send(super::GuiCommand::BackToSetup);
         }
