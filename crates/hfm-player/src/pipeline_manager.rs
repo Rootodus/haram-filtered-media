@@ -4,7 +4,7 @@ use crate::audio_output::spawn_audio_output;
 use crate::config::*;
 use crate::gst_source::GstSource;
 use crossbeam_channel::{Receiver, Sender, bounded};
-use hfm_core::coordination::{AudioClock, BufferingFlag, SeekGeneration};
+use hfm_core::coordination::{AudioClock, BufferingFlag, PlaybackState, SeekGeneration};
 use hfm_core::media_messages::{ProcessedAudioChunk, RawAudioChunk, RawVideoFrame};
 use hfm_core::ml::{DemucsConfig, PeopleSegFilter, spawn_demucs_worker};
 use hfm_core::ml::{ExecutionProvider, SessionConfig};
@@ -183,7 +183,7 @@ pub struct PipelineManager {
     audio_clear_requested: Arc<AtomicBool>,
     volume_atomic: Arc<AtomicU8>,
     pump_running: Arc<AtomicBool>,
-    is_playing: Arc<AtomicBool>,
+    state: Arc<AtomicU8>,
 }
 
 impl PipelineManager {
@@ -193,7 +193,7 @@ impl PipelineManager {
         buffering: Arc<BufferingFlag>,
         audio_clear_requested: Arc<AtomicBool>,
         volume_atomic: Arc<AtomicU8>,
-        is_playing: Arc<AtomicBool>,
+        state: Arc<AtomicU8>,
     ) -> Self {
         Self {
             gst_source: None,
@@ -209,8 +209,13 @@ impl PipelineManager {
             audio_clear_requested,
             volume_atomic,
             pump_running: Arc::new(AtomicBool::new(true)),
-            is_playing,
+            state,
         }
+    }
+
+    /// Return a clone of the state atomic for sharing with other components.
+    pub fn state(&self) -> Arc<AtomicU8> {
+        self.state.clone()
     }
 
     /// Build a SessionConfig for the video model (PPHumanSeg) based on the selected backend.
@@ -320,6 +325,9 @@ impl PipelineManager {
             controller.shutdown();
         }
 
+        self.state
+            .store(PlaybackState::Stopped.into(), Ordering::Release);
+
         // 3. Drop GStreamer source handle
         self.gst_source = None;
 
@@ -354,6 +362,9 @@ impl PipelineManager {
         audio_enabled: bool,
     ) -> Result<u64, String> {
         self.stop();
+
+        self.state
+            .store(PlaybackState::Paused.into(), Ordering::Release);
 
         // Re-enable pump running flag for the new pipeline run
         self.pump_running.store(true, Ordering::Release);
@@ -394,13 +405,10 @@ impl PipelineManager {
             model,
             self.generation.clone(),
             filter_enabled,
+            self.state.clone(),
         );
         pipeline.start();
         self.pipeline = Some(pipeline);
-
-        // Pipeline starts in Paused state, so set is_playing to false.
-        // The user must click Play to resume.
-        self.is_playing.store(false, Ordering::Release);
 
         // Audio handling
         if audio_enabled {
@@ -433,7 +441,7 @@ impl PipelineManager {
                 SAMPLE_RATE,
                 CHANNELS,
                 self.volume_atomic.clone(),
-                self.is_playing.clone(),
+                self.state.clone(),
             );
             self.audio_output = Some(audio_output);
             self.has_audio = true;
@@ -471,7 +479,8 @@ impl PipelineManager {
 
     /// Pause playback.
     pub fn pause_playback(&mut self) -> Result<(), String> {
-        self.is_playing.store(false, Ordering::Release);
+        self.state
+            .store(PlaybackState::Paused.into(), Ordering::Release);
         if let Some(source) = &self.gst_source {
             let source = source.lock();
             source.pause().map_err(|e| format!("Pause failed: {}", e))
@@ -482,7 +491,8 @@ impl PipelineManager {
 
     /// Resume playback.
     pub fn resume_playback(&mut self) -> Result<(), String> {
-        self.is_playing.store(true, Ordering::Release);
+        self.state
+            .store(PlaybackState::Playing.into(), Ordering::Release);
         if let Some(source) = &self.gst_source {
             let source = source.lock();
             source.resume().map_err(|e| format!("Resume failed: {}", e))

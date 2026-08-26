@@ -1,12 +1,12 @@
 //! The main application state and event loop.
 
 use crate::config::*;
-use crate::gui::{AppMode, AppState, Bridge, GuiCommand, PlaybackState};
+use crate::gui::{AppMode, AppState, Bridge, GuiCommand};
 use crate::pipeline_manager::PipelineManager;
 use crate::pts_offset::SyncState;
 use crate::renderer::Renderer;
 use crossbeam_channel::{Receiver, unbounded};
-use hfm_core::coordination::{AudioClock, BufferingFlag, SeekGeneration};
+use hfm_core::coordination::{AudioClock, BufferingFlag, PlaybackState, SeekGeneration};
 use hfm_core::pipeline::SeekDelta;
 use parking_lot::Mutex;
 use std::path::PathBuf;
@@ -39,7 +39,6 @@ pub struct App {
     cmd_rx: Receiver<GuiCommand>,
     sync_state: SyncState,
     volume_atomic: Arc<AtomicU8>,
-    is_playing: Arc<AtomicBool>,
 }
 
 impl App {
@@ -52,14 +51,17 @@ impl App {
         let audio_clock = Arc::new(AudioClock::new());
         let buffering = Arc::new(BufferingFlag::new(true));
         let audio_clear_requested = Arc::new(AtomicBool::new(false));
-        let is_playing = Arc::new(AtomicBool::new(false));
+
+        // Create the state atomic (Stopped initially)
+        let state_atomic = Arc::new(AtomicU8::new(PlaybackState::Stopped.into()));
+
         let pipeline_manager = PipelineManager::new(
             generation.clone(),
             audio_clock.clone(),
             buffering.clone(),
             audio_clear_requested.clone(),
             volume_atomic.clone(),
-            is_playing.clone(),
+            state_atomic.clone(),
         );
 
         Self {
@@ -80,7 +82,6 @@ impl App {
             cmd_rx,
             sync_state: SyncState::new(),
             volume_atomic,
-            is_playing,
         }
     }
 
@@ -128,6 +129,7 @@ impl App {
                             self.state.lock().playback_state = PlaybackState::Playing;
                         }
                     }
+                    _ => {} // Stopped – ignore
                 }
             }
             GuiCommand::Seek(delta) => {

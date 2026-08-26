@@ -13,6 +13,9 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use hfm_core::coordination::{AudioClock, BufferingFlag, SeekGeneration};
 use hfm_core::media_messages::ProcessedAudioChunk;
 
+// Import PlaybackState from gui module
+use hfm_core::coordination::PlaybackState;
+
 const SPSC_CAPACITY: usize = 1_048_576; // ~12 s of stereo float
 
 /// Very simple linear resampler for interleaved audio.
@@ -67,7 +70,7 @@ pub fn spawn_audio_output(
     source_rate: u32,
     _channels: u16,
     volume: Arc<AtomicU8>,
-    is_playing: Arc<AtomicBool>,
+    state: Arc<AtomicU8>, // changed from is_playing
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("audio-output".to_string())
@@ -100,9 +103,8 @@ pub fn spawn_audio_output(
             let out_rb = HeapRb::<f32>::new(SPSC_CAPACITY);
             let (mut out_prod, mut out_cons) = out_rb.split();
 
-            // Reduce watermarks from 5s to real-time thresholds
-            let low_watermark = (output_rate as usize * output_channels) / 10; // ~100ms
-            let high_watermark = (output_rate as usize * output_channels * 3) / 10; // ~300ms
+            let low_watermark = output_rate as usize * output_channels * 3 / 2; // 1.5 s
+            let high_watermark = output_rate as usize * output_channels * 5; // 5 s
 
             let mut base_pts_initialized = false;
             let mut current_generation = generation.current();
@@ -116,7 +118,7 @@ pub fn spawn_audio_output(
                 while out_cons.try_pop().is_some() {}
             }
 
-            // Prebuffer: wait until we have at least low_watermark samples before starting CPAL playback.
+            // Prebuffer: wait until we have at least low_watermark samples before starting.
             while out_prod.occupied_len() < low_watermark {
                 match rx.recv_timeout(Duration::from_millis(20)) {
                     Ok(chunk) => {
@@ -147,12 +149,10 @@ pub fn spawn_audio_output(
                             chunk.samples
                         };
 
-                        // Push samples; if paused, we may not be able to push all, but we continue.
                         out_prod.push_slice(&samples);
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                         // If we have some data, break to allow CPAL stream to start.
-                        // This avoids blocking forever when paused.
                         if out_prod.occupied_len() > 0 {
                             break;
                         }
@@ -161,13 +161,13 @@ pub fn spawn_audio_output(
                     Err(_) => return,
                 }
             }
-            buffering.set(false);
 
             buffering.set(false);
 
             let audio_clock_cb = audio_clock.clone();
             let buffering_cb = buffering.clone();
             let clear_audio_cb = clear_audio.clone();
+            let state_cb = state.clone();
 
             let stream = device
                 .build_output_stream(
@@ -180,8 +180,9 @@ pub fn spawn_audio_output(
                             return;
                         }
 
-                        // If paused, output silence and do not advance clock or pop samples.
-                        if !is_playing.load(Ordering::Acquire) {
+                        // Read the playback state
+                        let state_val = state_cb.load(Ordering::Acquire);
+                        if state_val != PlaybackState::Playing as u8 {
                             data.fill(0.0);
                             return;
                         }
@@ -277,6 +278,12 @@ pub fn spawn_audio_output(
                         while written < samples.len() {
                             // Stop pushing if generation changes mid-push.
                             if chunk.generation != generation.current() {
+                                break;
+                            }
+
+                            // If paused, stop pushing to avoid filling ring buffer unnecessarily.
+                            let state_val = state.load(Ordering::Acquire);
+                            if state_val != PlaybackState::Playing as u8 {
                                 break;
                             }
 

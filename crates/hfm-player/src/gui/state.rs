@@ -1,5 +1,6 @@
 //! Shared state between UI and pipeline.
 
+use hfm_core::coordination::PlaybackState;
 use std::path::PathBuf;
 
 /// Available execution backends for ONNX models.
@@ -10,19 +11,6 @@ pub enum Backend {
     DirectML,
     OpenVINO,
     CoreML,
-}
-
-/// Playback state (playing or paused).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlaybackState {
-    Playing,
-    Paused,
-}
-
-impl Default for PlaybackState {
-    fn default() -> Self {
-        Self::Paused
-    }
 }
 
 /// Volume value clamped to 0..100.
@@ -123,7 +111,7 @@ impl Default for AppState {
             audio_backend: Backend::default(),
             video_filter_enabled: false,
             audio_processing_enabled: false,
-            playback_state: PlaybackState::default(),
+            playback_state: PlaybackState::Paused,
             current_time_ns: 0,
             total_duration_ns: 0,
             volume: Volume::default(),

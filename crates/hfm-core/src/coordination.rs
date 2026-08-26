@@ -103,3 +103,30 @@ impl BufferingFlag {
         self.buffering.load(Ordering::Acquire)
     }
 }
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaybackState {
+    Stopped = 0,
+    Paused = 1,
+    Playing = 2,
+}
+
+impl From<PlaybackState> for u8 {
+    fn from(s: PlaybackState) -> u8 {
+        s as u8
+    }
+}
+
+impl TryFrom<u8> for PlaybackState {
+    type Error = ();
+
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(PlaybackState::Stopped),
+            1 => Ok(PlaybackState::Paused),
+            2 => Ok(PlaybackState::Playing),
+            _ => Err(()),
+        }
+    }
+}

@@ -2,13 +2,13 @@
 //! This module is source‑agnostic; it works with any implementor of `FrameSource`.
 
 use crate::buffer::{MediaBuffer, Pts, VideoFrame};
-use crate::coordination::SeekGeneration;
+use crate::coordination::{PlaybackState, SeekGeneration};
 use crate::filter::VideoFilter;
 use crate::memory::{PackedIndex, SlotPool};
 use crate::ml::PeopleSegFilter;
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -69,7 +69,7 @@ pub enum PipelineCommand {
 
 /// The pipeline controller. Owns the state, source, buffer, and ML queue.
 pub struct PipelineController {
-    state: PipelineState,
+    pipeline_state: PipelineState,
     source: Option<Box<dyn FrameSource>>,
     model: Option<Arc<PeopleSegFilter>>,
     buffer: Arc<MediaBuffer>,
@@ -83,6 +83,7 @@ pub struct PipelineController {
     running: Arc<AtomicBool>,
     generation: Arc<SeekGeneration>,
     filter_enabled: bool,
+    playback_state: Arc<AtomicU8>,
 }
 
 impl PipelineController {
@@ -91,6 +92,7 @@ impl PipelineController {
         model: PeopleSegFilter,
         generation: Arc<SeekGeneration>,
         filter_enabled: bool,
+        playback_state: Arc<AtomicU8>,
     ) -> Self {
         let pool = Arc::new(SlotPool::<VIDEO_SLOT_SIZE>::new(N_V));
         let buffer = Arc::new(MediaBuffer::new(5.0, 30.0, 44100, 2048));
@@ -99,7 +101,7 @@ impl PipelineController {
         let (cmd_tx, cmd_rx) = bounded(32);
 
         PipelineController {
-            state: PipelineState::Idle,
+            pipeline_state: PipelineState::Idle,
             source: Some(source),
             model: Some(Arc::new(model)),
             buffer: buffer.clone(),
@@ -113,6 +115,7 @@ impl PipelineController {
             _controller_handle: None,
             running,
             filter_enabled,
+            playback_state,
         }
     }
 
@@ -148,7 +151,7 @@ impl PipelineController {
         let cmd_rx = self.cmd_rx.clone();
         let running = self.running.clone();
 
-        self.state = PipelineState::Stopped;
+        self.pipeline_state = PipelineState::Stopped;
 
         // Spawn ML thread
         let ml_slot_pool = slot_pool.clone();
@@ -173,6 +176,7 @@ impl PipelineController {
         let controller_slot_pool = slot_pool.clone();
         let controller_ml_tx = ml_tx.clone();
         let controller_generation = self.generation.clone();
+        let controller_playback_state = self.playback_state.clone();
 
         let controller_handle = std::thread::Builder::new()
             .name("controller".to_string())
@@ -181,6 +185,7 @@ impl PipelineController {
                     source,
                     buffer,
                     controller_generation,
+                    controller_playback_state,
                     controller_slot_pool,
                     controller_ml_tx,
                     cmd_rx,
@@ -290,6 +295,7 @@ impl PipelineController {
         mut source: Box<dyn FrameSource>,
         buffer: Arc<MediaBuffer>,
         generation: Arc<SeekGeneration>,
+        playback_state: Arc<AtomicU8>,
         slot_pool: Arc<SlotPool<VIDEO_SLOT_SIZE>>,
         ml_tx: Sender<PackedIndex>,
         cmd_rx: Receiver<PipelineCommand>,
@@ -298,6 +304,11 @@ impl PipelineController {
         println!("[CONTROLLER] Run loop started");
 
         while running.load(Ordering::Acquire) {
+            let state_val = playback_state.load(Ordering::Acquire);
+            if state_val != PlaybackState::Playing as u8 {
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            }
             match cmd_rx.try_recv() {
                 Ok(cmd) => match cmd {
                     PipelineCommand::Seek(delta) => {
