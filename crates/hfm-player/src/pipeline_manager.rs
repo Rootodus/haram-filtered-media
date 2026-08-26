@@ -213,11 +213,6 @@ impl PipelineManager {
         }
     }
 
-    /// Return a clone of the state atomic for sharing with other components.
-    pub fn state(&self) -> Arc<AtomicU8> {
-        self.state.clone()
-    }
-
     /// Build a SessionConfig for the video model (PPHumanSeg) based on the selected backend.
     fn build_video_config(&self, backend: crate::gui::Backend) -> SessionConfig {
         let mut config = SessionConfig::video_default();
@@ -450,7 +445,7 @@ impl PipelineManager {
                 self.buffering.set(false);
             }
         } else {
-            // Audio disabled: consume audio sink to prevent GStreamer stalling, but discard data.
+            // Audio disabled: passthrough raw audio to output.
             let (raw_audio_tx, raw_audio_rx) = bounded(128);
             let audio_pump = spawn_audio_pump(
                 gst_source.clone(),
@@ -460,16 +455,24 @@ impl PipelineManager {
             );
             self.audio_pump = Some(audio_pump);
 
-            // Spawn a thread to receive and discard audio chunks.
-            let discard_handle = std::thread::spawn(move || {
-                while let Ok(_chunk) = raw_audio_rx.recv() {
-                    // Discard
-                }
-            });
-            self.audio_processor = Some(discard_handle);
+            let (processed_audio_tx, processed_audio_rx) = bounded(128);
+            let passthrough =
+                spawn_audio_passthrough(raw_audio_rx, processed_audio_tx, self.generation.clone());
+            self.audio_processor = Some(passthrough);
 
-            self.has_audio = false;
-            self.buffering.set(false);
+            let audio_output = spawn_audio_output(
+                processed_audio_rx,
+                self.audio_clock.clone(),
+                self.buffering.clone(),
+                self.generation.clone(),
+                self.audio_clear_requested.clone(),
+                SAMPLE_RATE,
+                CHANNELS,
+                self.volume_atomic.clone(),
+                self.state.clone(),
+            );
+            self.audio_output = Some(audio_output);
+            self.has_audio = true; // we have audio, but unprocessed
         }
 
         // Query duration
