@@ -217,16 +217,25 @@ impl GstSource {
 
     pub fn pause(&self) -> Result<(), String> {
         self.pipeline
-            .set_state(gst::State::Paused)
-            .map_err(|e| format!("Failed to pause: {:?}", e))
-            .map(|_| ())
+            .set_state(gstreamer::State::Paused)
+            .map_err(|e| e.to_string())?;
+
+        // Wait up to 100ms for pipeline to complete transition to PAUSED
+        let _ = self
+            .pipeline
+            .state(Some(gstreamer::ClockTime::from_mseconds(100)));
+        Ok(())
     }
 
     pub fn resume(&self) -> Result<(), String> {
         self.pipeline
-            .set_state(gst::State::Playing)
-            .map_err(|e| format!("Failed to resume: {:?}", e))
-            .map(|_| ())
+            .set_state(gstreamer::State::Playing)
+            .map_err(|e| e.to_string())?;
+
+        let _ = self
+            .pipeline
+            .state(Some(gstreamer::ClockTime::from_mseconds(100)));
+        Ok(())
     }
 
     pub fn duration_ns(&self) -> Option<u64> {

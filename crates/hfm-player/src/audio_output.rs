@@ -67,6 +67,7 @@ pub fn spawn_audio_output(
     source_rate: u32,
     _channels: u16,
     volume: Arc<AtomicU8>,
+    is_playing: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("audio-output".to_string())
@@ -172,6 +173,12 @@ pub fn spawn_audio_output(
                             data.fill(0.0);
                             while out_cons.try_pop().is_some() {}
                             clear_audio_cb.store(false, Ordering::Release);
+                            return;
+                        }
+
+                        // If paused, output silence and do not advance clock or pop samples.
+                        if !is_playing.load(Ordering::Acquire) {
+                            data.fill(0.0);
                             return;
                         }
 

@@ -18,9 +18,6 @@ use wgpu::{
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-pub use video::QUAD_VERTICES;
-pub use video::Vertex;
-
 /// Main renderer that combines video and egui overlay.
 pub struct Renderer {
     surface: Surface<'static>,

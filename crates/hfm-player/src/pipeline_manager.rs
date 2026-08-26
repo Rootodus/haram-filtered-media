@@ -183,6 +183,7 @@ pub struct PipelineManager {
     audio_clear_requested: Arc<AtomicBool>,
     volume_atomic: Arc<AtomicU8>,
     pump_running: Arc<AtomicBool>,
+    is_playing: Arc<AtomicBool>,
 }
 
 impl PipelineManager {
@@ -192,6 +193,7 @@ impl PipelineManager {
         buffering: Arc<BufferingFlag>,
         audio_clear_requested: Arc<AtomicBool>,
         volume_atomic: Arc<AtomicU8>,
+        is_playing: Arc<AtomicBool>,
     ) -> Self {
         Self {
             gst_source: None,
@@ -207,6 +209,7 @@ impl PipelineManager {
             audio_clear_requested,
             volume_atomic,
             pump_running: Arc::new(AtomicBool::new(true)),
+            is_playing,
         }
     }
 
@@ -345,7 +348,6 @@ impl PipelineManager {
     pub fn restart(
         &mut self,
         video_path: PathBuf,
-        audio_model_path: Option<PathBuf>,
         video_backend: crate::gui::Backend,
         audio_backend: crate::gui::Backend,
         filter_enabled: bool,
@@ -396,6 +398,10 @@ impl PipelineManager {
         pipeline.start();
         self.pipeline = Some(pipeline);
 
+        // Pipeline starts in Paused state, so set is_playing to false.
+        // The user must click Play to resume.
+        self.is_playing.store(false, Ordering::Release);
+
         // Audio handling
         if audio_enabled {
             let audio_config = self.build_audio_config(audio_backend);
@@ -427,6 +433,7 @@ impl PipelineManager {
                 SAMPLE_RATE,
                 CHANNELS,
                 self.volume_atomic.clone(),
+                self.is_playing.clone(),
             );
             self.audio_output = Some(audio_output);
             self.has_audio = true;
@@ -455,6 +462,7 @@ impl PipelineManager {
                 SAMPLE_RATE,
                 CHANNELS,
                 self.volume_atomic.clone(),
+                self.is_playing.clone(),
             );
             self.audio_output = Some(audio_output);
             self.has_audio = true;

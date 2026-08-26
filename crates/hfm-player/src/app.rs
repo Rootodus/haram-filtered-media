@@ -39,6 +39,7 @@ pub struct App {
     cmd_rx: Receiver<GuiCommand>,
     sync_state: SyncState,
     volume_atomic: Arc<AtomicU8>,
+    is_playing: Arc<AtomicBool>,
 }
 
 impl App {
@@ -51,13 +52,14 @@ impl App {
         let audio_clock = Arc::new(AudioClock::new());
         let buffering = Arc::new(BufferingFlag::new(true));
         let audio_clear_requested = Arc::new(AtomicBool::new(false));
-
+        let is_playing = Arc::new(AtomicBool::new(false));
         let pipeline_manager = PipelineManager::new(
             generation.clone(),
             audio_clock.clone(),
             buffering.clone(),
             audio_clear_requested.clone(),
             volume_atomic.clone(),
+            is_playing.clone(),
         );
 
         Self {
@@ -78,6 +80,7 @@ impl App {
             cmd_rx,
             sync_state: SyncState::new(),
             volume_atomic,
+            is_playing,
         }
     }
 
@@ -149,14 +152,7 @@ impl App {
                 self.state.lock().mode = AppMode::Playback;
                 self.sync_state.reset();
 
-                let (
-                    video_path,
-                    audio_model_path,
-                    video_backend,
-                    audio_backend,
-                    filter_enabled,
-                    audio_enabled,
-                ) = {
+                let (video_path, video_backend, audio_backend, filter_enabled, audio_enabled) = {
                     let state = self.state.lock();
                     (
                         state.video_path.clone().unwrap_or_else(|| {
@@ -166,7 +162,6 @@ impl App {
                             );
                             PathBuf::from(default_path)
                         }),
-                        None, // audio model path is hardcoded in pipeline_manager
                         state.video_backend,
                         state.audio_backend,
                         state.video_filter_enabled,
@@ -176,7 +171,6 @@ impl App {
 
                 match self.pipeline_manager.restart(
                     video_path,
-                    audio_model_path,
                     video_backend,
                     audio_backend,
                     filter_enabled,
