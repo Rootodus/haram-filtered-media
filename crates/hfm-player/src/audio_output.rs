@@ -168,7 +168,6 @@ pub fn spawn_audio_output(
                 .build_output_stream(
                     default_config.config(),
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        // If a seek occurred, clear all old audio before playing.
                         if clear_audio_cb.load(Ordering::Acquire) {
                             data.fill(0.0);
                             while out_cons.try_pop().is_some() {}
@@ -176,47 +175,44 @@ pub fn spawn_audio_output(
                             return;
                         }
 
-                        let vol = volume.load(Ordering::Relaxed) as f32 / 100.0;
                         let occupied = out_cons.occupied_len();
 
-                        // If currently buffering, check if we have enough to exit.
                         if buffering_cb.is_buffering() {
                             if occupied >= high_watermark {
                                 buffering_cb.set(false);
                             } else {
-                                // Still buffering – output silence.
                                 data.fill(0.0);
                                 return;
                             }
                         }
 
-                        // Not buffering, but insufficient data – enter buffering.
                         if occupied < data.len() {
                             buffering_cb.set(true);
                             data.fill(0.0);
                             return;
                         }
 
-                        // Apply volume only when we have real data.
-                        for sample in data.iter_mut() {
+                        // 1. Pop audio samples into `data` FIRST
+                        let n = out_cons.pop_slice(data);
+                        if n < data.len() {
+                            data[n..].fill(0.0);
+                        }
+
+                        // 2. Read volume and scale the written samples
+                        let vol = volume.load(Ordering::Relaxed) as f32 / 100.0;
+                        for sample in &mut data[..n] {
                             *sample *= vol;
                         }
 
-                        // Enough data. Update watermark state normally.
+                        // Update watermarks
                         if occupied < low_watermark {
                             buffering_cb.set(true);
                         } else if occupied > high_watermark {
                             buffering_cb.set(false);
                         }
 
-                        let n = out_cons.pop_slice(data);
-                        if n < data.len() {
-                            data[n..].fill(0.0);
-                        }
-
                         let frames_played = n / output_channels;
                         if frames_played > 0 {
-                            // Pass the actual output device rate (e.g., 48 kHz)
                             audio_clock_cb.advance_by_frames(frames_played, output_rate);
                         }
                     },
