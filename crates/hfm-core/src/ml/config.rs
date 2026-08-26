@@ -49,7 +49,7 @@ impl SessionConfig {
             intra_threads: 1,
             inter_threads: 1,
             optimization_level: GraphOptimizationLevel::Level1,
-            disable_cpu_fallback: true,
+            disable_cpu_fallback: false,
         }
     }
 

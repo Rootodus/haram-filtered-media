@@ -9,6 +9,7 @@
 // ============================================================================
 
 use crate::filter::VideoFilter;
+use crate::ml::{SessionConfig, build_session};
 use anyhow::{Result, anyhow};
 use ort::{
     session::Session,
@@ -28,16 +29,20 @@ pub struct PeopleSegFilter {
     mask_threshold: f32,
     dilation_kernel_size: u32,
     dilation_iterations: u32,
-    // Reusable buffers (no allocations per frame)
     mask_low: Mutex<Vec<u8>>,
-    // Precomputed nearest‑neighbour maps (lazy, built once)
+    input_buf: Mutex<Vec<f32>>,
     src_y_map: Mutex<Option<Vec<usize>>>,
     src_x_map: Mutex<Option<Vec<usize>>>,
 }
 
 impl PeopleSegFilter {
-    pub fn new(path: &str) -> Result<Self> {
-        let session = crate::ml::init_session(path)?;
+    /// Create a new PPHumanSeg filter.
+    /// If `config` is `None`, uses the platform default.
+    pub fn new(path: &str, config: Option<SessionConfig>) -> Result<Self> {
+        let session = match config {
+            Some(cfg) => build_session(path, cfg)?,
+            None => crate::ml::init_session(path)?,
+        };
 
         let input_name = session.inputs()[0].name().to_string();
         let output_name = session.outputs()[0].name().to_string();
@@ -100,6 +105,7 @@ impl PeopleSegFilter {
             dilation_kernel_size: 3,
             dilation_iterations: 0, // disabled by default – enable if needed
             mask_low: Mutex::new(Vec::with_capacity(plane_stride)),
+            input_buf: Mutex::new(vec![0.0f32; 3 * plane_stride]),
             src_y_map: Mutex::new(None),
             src_x_map: Mutex::new(None),
         })

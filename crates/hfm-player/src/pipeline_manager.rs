@@ -7,6 +7,7 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use hfm_core::coordination::{AudioClock, BufferingFlag, SeekGeneration};
 use hfm_core::media_messages::{ProcessedAudioChunk, RawAudioChunk, RawVideoFrame};
 use hfm_core::ml::{DemucsConfig, PeopleSegFilter, spawn_demucs_worker};
+use hfm_core::ml::{ExecutionProvider, SessionConfig};
 use hfm_core::pipeline::{
     FrameSource, PipelineCommand, PipelineController, PullOutcome, SeekDelta,
 };
@@ -209,6 +210,103 @@ impl PipelineManager {
         }
     }
 
+    /// Build a SessionConfig for the video model (PPHumanSeg) based on the selected backend.
+    fn build_video_config(&self, backend: crate::gui::Backend) -> SessionConfig {
+        let mut config = SessionConfig::video_default();
+        config.provider = match backend {
+            crate::gui::Backend::Cpu => ExecutionProvider::Cpu,
+            crate::gui::Backend::DirectML => {
+                #[cfg(target_os = "windows")]
+                {
+                    ExecutionProvider::DirectML
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    eprintln!("DirectML is not supported on this platform. Falling back to CPU.");
+                    ExecutionProvider::Cpu
+                }
+            }
+            crate::gui::Backend::OpenVINO => {
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                {
+                    ExecutionProvider::OpenVINO {
+                        device: "GPU".to_string(),
+                    }
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+                {
+                    eprintln!(
+                        "OpenVINO is only supported on Linux and Windows. Falling back to CPU."
+                    );
+                    ExecutionProvider::Cpu
+                }
+            }
+            crate::gui::Backend::CoreML => {
+                #[cfg(target_vendor = "apple")]
+                {
+                    ExecutionProvider::CoreML
+                }
+                #[cfg(not(target_vendor = "apple"))]
+                {
+                    eprintln!("CoreML is only supported on Apple platforms. Falling back to CPU.");
+                    ExecutionProvider::Cpu
+                }
+            }
+        };
+        config
+    }
+
+    /// Build a DemucsConfig for the audio model (HT-Demucs) based on the selected backend.
+    fn build_audio_config(&self, backend: crate::gui::Backend) -> DemucsConfig {
+        let model_path = format!(
+            "{}/../hfm-core/models/htdemucs_ft_vocals_fp16weights.onnx",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let provider = match backend {
+            crate::gui::Backend::Cpu => ExecutionProvider::Cpu,
+            crate::gui::Backend::DirectML => {
+                #[cfg(target_os = "windows")]
+                {
+                    ExecutionProvider::DirectML
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    eprintln!("DirectML not supported; falling back to CPU.");
+                    ExecutionProvider::Cpu
+                }
+            }
+            crate::gui::Backend::OpenVINO => {
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
+                {
+                    ExecutionProvider::OpenVINO {
+                        device: "GPU".to_string(),
+                    }
+                }
+                #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+                {
+                    eprintln!("OpenVINO not supported; falling back to CPU.");
+                    ExecutionProvider::Cpu
+                }
+            }
+            crate::gui::Backend::CoreML => {
+                #[cfg(target_vendor = "apple")]
+                {
+                    ExecutionProvider::CoreML
+                }
+                #[cfg(not(target_vendor = "apple"))]
+                {
+                    eprintln!("CoreML not supported; falling back to CPU.");
+                    ExecutionProvider::Cpu
+                }
+            }
+        };
+        DemucsConfig {
+            model_path,
+            provider,
+            window_size: WINDOW_SAMPLES,
+        }
+    }
+
     /// Stops all running pipeline threads, joins handles, and resets audio clocks.
     pub fn stop(&mut self) {
         // 1. Signal pump threads to stop spinning on try_pull / empty sleep loops
@@ -281,16 +379,12 @@ impl PipelineManager {
         };
 
         // Load video model (hardcoded path)
-        let model_path = audio_model_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| {
-                format!(
-                    "{}/../hfm-core/models/pphumanseg.onnx",
-                    env!("CARGO_MANIFEST_DIR")
-                )
-            });
-        let model = PeopleSegFilter::new(&model_path)
+        let model_path = format!(
+            "{}/../hfm-core/models/pphumanseg.onnx",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let video_config = self.build_video_config(video_backend);
+        let model = PeopleSegFilter::new(&model_path, Some(video_config))
             .map_err(|e| format!("Failed to load video model: {}", e))?;
 
         let mut pipeline = PipelineController::new(
@@ -302,59 +396,40 @@ impl PipelineManager {
         pipeline.start();
         self.pipeline = Some(pipeline);
 
-        // Build audio config helper
-        let build_audio_config = |backend: crate::gui::Backend| {
-            let model_path = format!(
-                "{}/../hfm-core/models/htdemucs_ft_vocals_fp16weights.onnx",
-                env!("CARGO_MANIFEST_DIR")
-            );
-            let backend_str = match backend {
-                crate::gui::Backend::Cpu => "cpu".to_string(),
-                crate::gui::Backend::DirectML => "dml".to_string(),
-                crate::gui::Backend::OpenVINO => "openvino".to_string(),
-                crate::gui::Backend::CoreML => "coreml".to_string(),
-            };
-            Some(DemucsConfig {
-                model_path,
-                backend: backend_str,
-                window_size: WINDOW_SAMPLES,
-            })
-        };
-
         // Audio handling
         if audio_enabled {
-            if let Some(audio_config) = build_audio_config(audio_backend) {
-                let (raw_audio_tx, raw_audio_rx) = bounded(128);
-                let audio_pump = spawn_audio_pump(
-                    gst_source.clone(),
-                    raw_audio_tx,
-                    self.generation.clone(),
-                    self.pump_running.clone(),
-                );
-                self.audio_pump = Some(audio_pump);
+            let audio_config = self.build_audio_config(audio_backend);
 
-                let (processed_audio_tx, processed_audio_rx) = bounded(128);
-                let audio_processor = spawn_demucs_worker(
-                    audio_config,
-                    raw_audio_rx,
-                    processed_audio_tx,
-                    self.generation.clone(),
-                );
-                self.audio_processor = Some(audio_processor);
+            let (raw_audio_tx, raw_audio_rx) = bounded(128);
+            let audio_pump = spawn_audio_pump(
+                gst_source.clone(),
+                raw_audio_tx,
+                self.generation.clone(),
+                self.pump_running.clone(),
+            );
+            self.audio_pump = Some(audio_pump);
 
-                let audio_output = spawn_audio_output(
-                    processed_audio_rx,
-                    self.audio_clock.clone(),
-                    self.buffering.clone(),
-                    self.generation.clone(),
-                    self.audio_clear_requested.clone(),
-                    SAMPLE_RATE,
-                    CHANNELS,
-                    self.volume_atomic.clone(),
-                );
-                self.audio_output = Some(audio_output);
-                self.has_audio = true;
-            }
+            let (processed_audio_tx, processed_audio_rx) = bounded(128);
+            let audio_processor = spawn_demucs_worker(
+                audio_config,
+                raw_audio_rx,
+                processed_audio_tx,
+                self.generation.clone(),
+            );
+            self.audio_processor = Some(audio_processor);
+
+            let audio_output = spawn_audio_output(
+                processed_audio_rx,
+                self.audio_clock.clone(),
+                self.buffering.clone(),
+                self.generation.clone(),
+                self.audio_clear_requested.clone(),
+                SAMPLE_RATE,
+                CHANNELS,
+                self.volume_atomic.clone(),
+            );
+            self.audio_output = Some(audio_output);
+            self.has_audio = true;
         } else {
             // Passthrough
             let (raw_audio_tx, raw_audio_rx) = bounded(128);

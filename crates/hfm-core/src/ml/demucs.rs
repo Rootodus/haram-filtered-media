@@ -35,7 +35,7 @@
 
 use crate::coordination::SeekGeneration;
 use crate::media_messages::{ProcessedAudioChunk, RawAudioChunk};
-use crate::ml::{SessionConfig, build_session};
+use crate::ml::{ExecutionProvider, SessionConfig, build_session};
 use anyhow::{Result, anyhow};
 use crossbeam_channel::{Receiver, Sender};
 use ort::session::Session;
@@ -50,27 +50,15 @@ const OVERLAP_RATIO: f32 = 0.25;
 #[derive(Debug, Clone)]
 pub struct DemucsConfig {
     pub model_path: String,
-    pub backend: String, // "cpu" or "dml" – will be converted to SessionConfig
+    pub provider: ExecutionProvider,
     pub window_size: usize,
 }
 
 impl DemucsConfig {
-    /// Convert the string backend to a `SessionConfig`.
     pub fn to_session_config(&self) -> SessionConfig {
-        match self.backend.as_str() {
-            "dml" => {
-                // Use DirectML for audio, but keep CPU fallback enabled.
-                let mut cfg = SessionConfig::video_default(); // reuse video defaults for DML
-                cfg.provider = crate::ml::ExecutionProvider::DirectML;
-                cfg.intra_threads = 1;
-                cfg.disable_cpu_fallback = false;
-                cfg
-            }
-            _ => {
-                // CPU backend
-                SessionConfig::audio_default()
-            }
-        }
+        let mut cfg = SessionConfig::audio_default();
+        cfg.provider = self.provider.clone();
+        cfg
     }
 }
 
