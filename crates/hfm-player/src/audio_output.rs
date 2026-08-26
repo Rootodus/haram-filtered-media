@@ -117,8 +117,8 @@ pub fn spawn_audio_output(
 
             // Prebuffer: wait until we have at least high_watermark samples before
             // starting CPAL playback.
-            while out_prod.occupied_len() < high_watermark {
-                match rx.recv() {
+            while out_prod.occupied_len() < high_watermark && is_playing.load(Ordering::Acquire) {
+                match rx.recv_timeout(Duration::from_millis(50)) {
                     Ok(chunk) => {
                         if chunk.generation != generation.current() {
                             continue; // stale chunk
@@ -154,6 +154,13 @@ pub fn spawn_audio_output(
                                 thread::sleep(Duration::from_millis(1));
                             }
                         }
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                        // If paused and we have some data, break to avoid blocking forever.
+                        if !is_playing.load(Ordering::Acquire) && out_prod.occupied_len() > 0 {
+                            break;
+                        }
+                        // Otherwise continue waiting.
                     }
                     Err(_) => return,
                 }

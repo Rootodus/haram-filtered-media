@@ -228,14 +228,12 @@ impl GstSource {
     }
 
     pub fn resume(&self) -> Result<(), String> {
-        self.pipeline
-            .set_state(gstreamer::State::Playing)
-            .map_err(|e| e.to_string())?;
-
-        let _ = self
-            .pipeline
-            .state(Some(gstreamer::ClockTime::from_mseconds(100)));
-        Ok(())
+        match self.pipeline.set_state(gst::State::Playing) {
+            Ok(gst::StateChangeSuccess::Success)
+            | Ok(gst::StateChangeSuccess::Async)
+            | Ok(gst::StateChangeSuccess::NoPreroll) => Ok(()),
+            Err(e) => Err(format!("GStreamer state change to Playing failed: {e}")),
+        }
     }
 
     pub fn duration_ns(&self) -> Option<u64> {

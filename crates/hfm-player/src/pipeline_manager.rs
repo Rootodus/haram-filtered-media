@@ -475,7 +475,8 @@ impl PipelineManager {
 
     /// Pause playback.
     pub fn pause_playback(&mut self) -> Result<(), String> {
-        if let Some(source) = self.gst_source.as_ref() {
+        self.is_playing.store(false, Ordering::Release);
+        if let Some(source) = &self.gst_source {
             let source = source.lock();
             source.pause().map_err(|e| format!("Pause failed: {}", e))
         } else {
@@ -485,7 +486,8 @@ impl PipelineManager {
 
     /// Resume playback.
     pub fn resume_playback(&mut self) -> Result<(), String> {
-        if let Some(source) = self.gst_source.as_ref() {
+        self.is_playing.store(true, Ordering::Release);
+        if let Some(source) = &self.gst_source {
             let source = source.lock();
             source.resume().map_err(|e| format!("Resume failed: {}", e))
         } else {
