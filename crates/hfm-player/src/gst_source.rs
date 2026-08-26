@@ -235,3 +235,25 @@ impl GstSource {
             .map(|c| c.nseconds())
     }
 }
+
+impl Drop for GstSource {
+    fn drop(&mut self) {
+        eprintln!("[GSTREAMER] Shutting down pipeline...");
+
+        // Send EOS to flush internal buffers
+        let _ = self.pipeline.send_event(gstreamer::event::Eos::new());
+
+        // Set pipeline state to NULL
+        let _ = self.pipeline.set_state(gst::State::Null);
+
+        // Wait up to 3 seconds for state change to complete
+        let _ = self.pipeline.state(Some(gst::ClockTime::from_seconds(3)));
+
+        // Flush the bus to remove any pending messages
+        if let Some(bus) = self.pipeline.bus() {
+            bus.set_flushing(true);
+        }
+
+        eprintln!("[GSTREAMER] Pipeline set to NULL.");
+    }
+}
