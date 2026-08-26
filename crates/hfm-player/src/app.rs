@@ -153,15 +153,19 @@ impl App {
                 self.sync_state.reset();
 
                 let (video_path, video_backend, audio_backend, filter_enabled, audio_enabled) = {
-                    let state = self.state.lock();
+                    let mut state = self.state.lock();
+                    // If video_path is None, use the default.
+                    let video_path = state.video_path.clone().unwrap_or_else(|| {
+                        let default_path = format!(
+                            "{}/../hfm-core/assets/video_with_music.mp4",
+                            env!("CARGO_MANIFEST_DIR")
+                        );
+                        PathBuf::from(default_path)
+                    });
+                    // Store it back so is_video_loaded() returns true later.
+                    state.video_path = Some(video_path.clone());
                     (
-                        state.video_path.clone().unwrap_or_else(|| {
-                            let default_path = format!(
-                                "{}/../hfm-core/assets/video_with_music.mp4",
-                                env!("CARGO_MANIFEST_DIR")
-                            );
-                            PathBuf::from(default_path)
-                        }),
+                        video_path,
                         state.video_backend,
                         state.audio_backend,
                         state.video_filter_enabled,
