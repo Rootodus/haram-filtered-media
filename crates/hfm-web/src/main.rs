@@ -1,10 +1,21 @@
-use hfm_web::browser::{BrowserSession, capture_screenshot, extract_dom_nodes};
-use hfm_web::debug_config::DebugConfig;
-use hfm_web::inference::run_inference;
-use hfm_web::render::{App, CustomAppEvent};
-use hfm_web::shared_state::SharedAppState;
-use hfm_web::tokenizer::tokenize;
-use hfm_web::types::{DomNode, FrameData, SEQ_LEN, VisualAction};
+#![allow(unused)] // this is temporary, and perhaps lib.rs is also temporary
+
+mod browser;
+mod debug_config;
+mod inference;
+mod logging;
+mod render;
+mod shared_state;
+mod tokenizer;
+mod types;
+
+use browser::{BrowserSession, capture_screenshot, extract_dom_nodes};
+use debug_config::DebugConfig;
+use inference::run_inference;
+use render::{App, CustomAppEvent};
+use shared_state::SharedAppState;
+use tokenizer::{init_tokenizer, tokenize};
+use types::{DomNode, FrameData, SEQ_LEN, VisualAction};
 
 use anyhow::Result;
 use ort::session::Session;
@@ -85,9 +96,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Load ONNX model (must be done before inference)
     let _ = ort::init().commit();
-    hfm_web::tokenizer::init_tokenizer("tokenizer.json")?;
+    tokenizer::init_tokenizer("crates/hfm-web/tokenizer.json")?;
 
-    let model_paths = vec!["model.onnx"];
+    let model_paths = vec!["crates/hfm-web/model.onnx"];
     let mut sessions = Vec::with_capacity(model_paths.len());
     for path in model_paths {
         let session = match Session::builder()?
@@ -187,7 +198,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     for _ in 0..5 {
         for session_arc in &sessions {
             let mut session_guard = session_arc.lock().unwrap();
-            let _ = hfm_web::inference::run_inference(
+            let _ = inference::run_inference(
                 &mut session_guard,
                 &input_ids_arc,
                 &attention_mask_arc,
@@ -306,7 +317,6 @@ async fn run_browser_frame_loop(
 #[tokio::test]
 async fn test_browser() {
     use futures::StreamExt;
-    use hfm_web::browser;
 
     let (browser, mut handler, _profile_dir) =
         browser::session::BrowserSession::launch().await.unwrap();
