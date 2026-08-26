@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// Adapter that turns `Receiver<RawVideoFrame>` into `hfm_core::FrameSource`.
@@ -60,7 +61,7 @@ pub fn spawn_video_pump(
     video_tx: Sender<RawVideoFrame>,
     generation: Arc<SeekGeneration>,
     running: Arc<AtomicBool>,
-) -> thread::JoinHandle<()> {
+) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("video-pump".to_string())
         .spawn(move || {
@@ -103,7 +104,7 @@ pub fn spawn_audio_pump(
     audio_tx: Sender<RawAudioChunk>,
     generation: Arc<SeekGeneration>,
     running: Arc<AtomicBool>,
-) -> thread::JoinHandle<()> {
+) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("audio-pump".to_string())
         .spawn(move || {
@@ -146,7 +147,7 @@ pub fn spawn_audio_passthrough(
     raw_rx: Receiver<RawAudioChunk>,
     processed_tx: Sender<ProcessedAudioChunk>,
     generation: Arc<SeekGeneration>,
-) -> thread::JoinHandle<()> {
+) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("audio-passthrough".to_string())
         .spawn(move || {

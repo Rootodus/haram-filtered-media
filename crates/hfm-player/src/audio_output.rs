@@ -118,7 +118,7 @@ pub fn spawn_audio_output(
                 while out_cons.try_pop().is_some() {}
             }
 
-            // Prebuffer: wait until we have at least low_watermark samples before starting.
+            // Prebuffer: wait until we have at least low_watermark samples before starting CPAL playback.
             while out_prod.occupied_len() < low_watermark {
                 match rx.recv_timeout(Duration::from_millis(20)) {
                     Ok(chunk) => {
@@ -152,16 +152,18 @@ pub fn spawn_audio_output(
                         out_prod.push_slice(&samples);
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        // If we have some data, break to allow CPAL stream to start.
-                        if out_prod.occupied_len() > 0 {
-                            break;
-                        }
-                        // Otherwise continue waiting.
+                        // Critical: DO NOT break on timeout. Continue waiting until we have enough data.
+                        // This prevents premature exit when GStreamer startup is slow.
+                        continue;
                     }
-                    Err(_) => return,
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        // Sender disconnected – exit.
+                        return;
+                    }
                 }
             }
 
+            // We have filled the buffer to low_watermark.
             buffering.set(false);
 
             let audio_clock_cb = audio_clock.clone();
