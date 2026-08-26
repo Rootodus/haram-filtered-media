@@ -135,7 +135,7 @@ impl VideoRenderer {
         // --- Shader ---
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Texture Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/texture_quad.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/texture_quad.wgsl").into()),
         });
 
         // --- Pipeline layout ---
