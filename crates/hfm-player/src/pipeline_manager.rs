@@ -437,6 +437,10 @@ impl PipelineManager {
             );
             self.audio_output = Some(audio_output);
             self.has_audio = true;
+
+            if !audio_enabled || !self.has_audio {
+                self.buffering.set(false);
+            }
         } else {
             // Passthrough
             let (raw_audio_tx, raw_audio_rx) = bounded(128);
@@ -466,6 +470,10 @@ impl PipelineManager {
             );
             self.audio_output = Some(audio_output);
             self.has_audio = true;
+
+            if !audio_enabled || !self.has_audio {
+                self.buffering.set(false);
+            }
         }
 
         // Query duration

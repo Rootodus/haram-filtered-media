@@ -100,8 +100,9 @@ pub fn spawn_audio_output(
             let out_rb = HeapRb::<f32>::new(SPSC_CAPACITY);
             let (mut out_prod, mut out_cons) = out_rb.split();
 
-            let low_watermark = output_rate as usize * output_channels * 3 / 2; // 1.5 s
-            let high_watermark = output_rate as usize * output_channels * 5; // 5 s
+            // Reduce watermarks from 5s to real-time thresholds
+            let low_watermark = (output_rate as usize * output_channels) / 10; // ~100ms
+            let high_watermark = (output_rate as usize * output_channels * 3) / 10; // ~300ms
 
             let mut base_pts_initialized = false;
             let mut current_generation = generation.current();
@@ -115,10 +116,9 @@ pub fn spawn_audio_output(
                 while out_cons.try_pop().is_some() {}
             }
 
-            // Prebuffer: wait until we have at least high_watermark samples before
-            // starting CPAL playback.
-            while out_prod.occupied_len() < high_watermark && is_playing.load(Ordering::Acquire) {
-                match rx.recv_timeout(Duration::from_millis(50)) {
+            // Prebuffer: wait until we have at least low_watermark samples before starting CPAL playback.
+            while out_prod.occupied_len() < low_watermark {
+                match rx.recv_timeout(Duration::from_millis(20)) {
                     Ok(chunk) => {
                         if chunk.generation != generation.current() {
                             continue; // stale chunk
@@ -147,17 +147,13 @@ pub fn spawn_audio_output(
                             chunk.samples
                         };
 
-                        let mut written = 0;
-                        while written < samples.len() {
-                            written += out_prod.push_slice(&samples[written..]);
-                            if written < samples.len() {
-                                thread::sleep(Duration::from_millis(1));
-                            }
-                        }
+                        // Push samples; if paused, we may not be able to push all, but we continue.
+                        out_prod.push_slice(&samples);
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        // If paused and we have some data, break to avoid blocking forever.
-                        if !is_playing.load(Ordering::Acquire) && out_prod.occupied_len() > 0 {
+                        // If we have some data, break to allow CPAL stream to start.
+                        // This avoids blocking forever when paused.
+                        if out_prod.occupied_len() > 0 {
                             break;
                         }
                         // Otherwise continue waiting.
@@ -165,6 +161,7 @@ pub fn spawn_audio_output(
                     Err(_) => return,
                 }
             }
+            buffering.set(false);
 
             buffering.set(false);
 

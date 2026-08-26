@@ -228,11 +228,17 @@ impl GstSource {
     }
 
     pub fn resume(&self) -> Result<(), String> {
-        match self.pipeline.set_state(gst::State::Playing) {
+        let res = self.pipeline.set_state(gst::State::Playing);
+        if res == Ok(gst::StateChangeSuccess::Async) {
+            // Wait up to 200ms for state change to complete.
+            let _ = self.pipeline.state(gst::ClockTime::from_mseconds(200));
+        }
+        // Handle other success cases.
+        match res {
             Ok(gst::StateChangeSuccess::Success)
             | Ok(gst::StateChangeSuccess::Async)
             | Ok(gst::StateChangeSuccess::NoPreroll) => Ok(()),
-            Err(e) => Err(format!("GStreamer state change to Playing failed: {e}")),
+            Err(e) => Err(format!("Resume failed: {}", e)),
         }
     }
 
