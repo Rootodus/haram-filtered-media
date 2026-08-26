@@ -187,7 +187,7 @@ impl App {
                     Ok(duration) => {
                         self.state.lock().total_duration_ns = duration;
                         self.has_audio = self.pipeline_manager.has_audio;
-                        self.state.lock().playback_state = PlaybackState::Paused;
+                        self.state.lock().playback_state = PlaybackState::Playing;
                         // Reset the fallback clock start time
                         self.start_instant = Instant::now();
                     }

@@ -405,6 +405,9 @@ impl PipelineManager {
         );
         pipeline.start();
         self.pipeline = Some(pipeline);
+        // Start in Playing state (immediate playback after Confirm)
+        self.state
+            .store(PlaybackState::Playing.into(), Ordering::Release);
 
         // Audio handling
         if audio_enabled {
