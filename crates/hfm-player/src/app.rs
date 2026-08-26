@@ -39,6 +39,7 @@ pub struct App {
     cmd_rx: Receiver<GuiCommand>,
     sync_state: SyncState,
     volume_atomic: Arc<AtomicU8>,
+    start_instant: Instant,
 }
 
 impl App {
@@ -82,6 +83,7 @@ impl App {
             cmd_rx,
             sync_state: SyncState::new(),
             volume_atomic,
+            start_instant: Instant::now(),
         }
     }
 
@@ -186,6 +188,8 @@ impl App {
                         self.state.lock().total_duration_ns = duration;
                         self.has_audio = self.pipeline_manager.has_audio;
                         self.state.lock().playback_state = PlaybackState::Paused;
+                        // Reset the fallback clock start time
+                        self.start_instant = Instant::now();
                     }
                     Err(e) => {
                         eprintln!("Restart failed: {}", e);
@@ -201,6 +205,8 @@ impl App {
                 state.mode = AppMode::Setup;
                 state.current_time_ns = 0;
                 state.total_duration_ns = 0;
+                // Reset fallback clock when going back to setup
+                self.start_instant = Instant::now();
                 state.playback_state = PlaybackState::Paused;
                 self.sync_state.reset();
                 self.last_frame = None;
@@ -252,7 +258,13 @@ impl ApplicationHandler for App {
                 if self.pipeline_manager.is_buffering() {
                     renderer.render(self.last_frame.clone(), state, bridge);
                 } else if let Some(front_pts) = self.pipeline_manager.peek_video_pts() {
-                    let now = self.audio_clock.now_ns();
+                    let now = if self.audio_clock.is_initialized() {
+                        self.audio_clock.now_ns()
+                    } else {
+                        // Fallback to system monotonic time since playback start
+                        self.start_instant.elapsed().as_nanos() as u64
+                    };
+                    // Use the same now for offset calculation and sync
                     let adjusted_pts = self.sync_state.adjust_pts(front_pts, now);
                     let delta = adjusted_pts - now as i64;
 
