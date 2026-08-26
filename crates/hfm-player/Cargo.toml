@@ -24,6 +24,7 @@ gstreamer-video = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
+dhat = { workspace = true, optional = true }
 
 # GPU & windowing (target-specific features)
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -2432,6 +2432,7 @@ dependencies = [
  "bytemuck",
  "cpal",
  "crossbeam-channel",
+ "dhat",
  "egui",
  "egui-wgpu",
  "egui-winit",
