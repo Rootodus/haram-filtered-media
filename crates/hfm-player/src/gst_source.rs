@@ -25,6 +25,7 @@ pub struct GstSource {
     pipeline: gst::Pipeline,
     video_sink: gst_app::AppSink,
     audio_sink: gst_app::AppSink,
+    _bus_guard: gst::bus::BusWatchGuard,
 }
 
 impl GstSource {
@@ -50,6 +51,7 @@ impl GstSource {
             )
             .async_(true)
             .drop(false)
+            .max_buffers(2) // Prevents RAM exhaustion if frames queue up
             .build();
         let video_sink_element = video_sink.upcast_ref::<gst::Element>().clone();
 
@@ -67,6 +69,7 @@ impl GstSource {
             )
             .async_(true)
             .drop(false)
+            .max_buffers(8)
             .build();
         let audio_sink_element = audio_sink.upcast_ref::<gst::Element>().clone();
 
@@ -103,14 +106,12 @@ impl GstSource {
                     let src_pad = src_pad.clone();
                     if let Err(e) = src_pad.link(&sink_pad) {
                         eprintln!("Failed to link video pad to videoconvert: {}", e);
-                    } else {
-                        if let Err(e) = gst::Element::link_many(&[
-                            &video_convert_clone,
-                            &video_scale_clone,
-                            &video_sink_element_clone,
-                        ]) {
-                            eprintln!("Failed to link video branch: {}", e);
-                        }
+                    } else if let Err(e) = gst::Element::link_many(&[
+                        &video_convert_clone,
+                        &video_scale_clone,
+                        &video_sink_element_clone,
+                    ]) {
+                        eprintln!("Failed to link video branch: {}", e);
                     }
                 }
             } else if name.starts_with("audio/") {
@@ -121,14 +122,12 @@ impl GstSource {
                     let src_pad = src_pad.clone();
                     if let Err(e) = src_pad.link(&sink_pad) {
                         eprintln!("Failed to link audio pad to audioconvert: {}", e);
-                    } else {
-                        if let Err(e) = gst::Element::link_many(&[
-                            &audio_convert_clone,
-                            &audio_resample_clone,
-                            &audio_sink_element_clone,
-                        ]) {
-                            eprintln!("Failed to link audio branch: {}", e);
-                        }
+                    } else if let Err(e) = gst::Element::link_many(&[
+                        &audio_convert_clone,
+                        &audio_resample_clone,
+                        &audio_sink_element_clone,
+                    ]) {
+                        eprintln!("Failed to link audio branch: {}", e);
                     }
                 }
             }
@@ -137,7 +136,7 @@ impl GstSource {
         pipeline.set_state(gst::State::Playing)?;
 
         let bus = pipeline.bus().expect("No bus");
-        let _guard = bus.add_watch(move |_, msg| {
+        let bus_guard = bus.add_watch(move |_, msg| {
             use gst::MessageView;
             match msg.view() {
                 MessageView::Error(err) => {
@@ -159,6 +158,7 @@ impl GstSource {
             pipeline,
             video_sink,
             audio_sink,
+            _bus_guard: bus_guard,
         })
     }
 
