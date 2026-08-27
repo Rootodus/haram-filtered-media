@@ -1,0 +1,162 @@
+[env]
+GSTREAMER_VERSION = "1.26.1"
+OPENVINO_VERSION = "2025.4.1"
+CACHE_DIR = "target/cache"
+DIST_DIR = "dist"
+LIB_DIR = "${DIST_DIR}/lib"
+OS = { script = "echo $OS" }
+
+[tasks.clean]
+description = "Remove distribution and cache directories"
+script = ["rm -rf ${DIST_DIR}", "rm -rf ${CACHE_DIR}"]
+
+[tasks.prepare-cache]
+description = "Create cache directories"
+script = ["mkdir -p ${CACHE_DIR}/gstreamer", "mkdir -p ${CACHE_DIR}/openvino"]
+
+# ---------- GStreamer ----------
+[tasks.prepare-gstreamer]
+description = "Prepare GStreamer runtime (platform-specific)"
+dependencies = ["prepare-cache"]
+
+[tasks.prepare-gstreamer.pre_compile_conditions]
+windows = "prepare-gstreamer-windows"
+linux = "prepare-gstreamer-linux"
+macos = "prepare-gstreamer-macos"
+
+[tasks.prepare-gstreamer-windows]
+description = "Download and extract GStreamer runtime for Windows"
+script = [
+    # Download if not already cached
+    "if not exist ${CACHE_DIR}\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip (",
+    "  curl -L -o ${CACHE_DIR}\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip https://gstreamer.freedesktop.org/downloads/gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip",
+    ")",
+    # Extract if not already extracted
+    "if not exist ${CACHE_DIR}\\gstreamer\\extracted (",
+    "  unzip -q ${CACHE_DIR}\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip -d ${CACHE_DIR}\\gstreamer\\extracted",
+    "  echo 'extracted' > ${CACHE_DIR}\\gstreamer\\extracted\\_marker",
+    ")",
+    # Create lib directory
+    "mkdir -p ${LIB_DIR}",
+    # Copy all DLLs from bin/ to lib/
+    "cp ${CACHE_DIR}\\gstreamer\\extracted\\*\\bin\\*.dll ${LIB_DIR}/",
+    # Copy the entire plugin directory
+    "cp -r ${CACHE_DIR}\\gstreamer\\extracted\\*\\lib\\gstreamer-1.0 ${LIB_DIR}/",
+]
+
+[tasks.prepare-gstreamer-linux]
+description = "Prepare GStreamer runtime for Linux (assumes system installation)"
+script = [
+    "mkdir -p ${LIB_DIR}",
+    # Copy system GStreamer libraries (dynamically linked)
+    "ldd target/release/hfm-player | grep gstreamer | awk '{print $3}' | xargs -I {} cp {} ${LIB_DIR}/",
+    # Copy the plugin directory (system path may vary)
+    "cp -r /usr/lib/x86_64-linux-gnu/gstreamer-1.0 ${LIB_DIR}/",
+]
+
+[tasks.prepare-gstreamer-macos]
+description = "Prepare GStreamer runtime for macOS (assumes Homebrew installation)"
+script = [
+    "mkdir -p ${LIB_DIR}",
+    # Copy system libraries
+    "otool -L target/release/hfm-player | grep gstreamer | awk '{print $1}' | xargs -I {} cp {} ${LIB_DIR}/",
+    # Copy the plugin directory
+    "cp -r /usr/local/lib/gstreamer-1.0 ${LIB_DIR}/",
+]
+
+# ---------- OpenVINO ----------
+[tasks.prepare-openvino]
+description = "Prepare OpenVINO runtime (platform-specific)"
+dependencies = ["prepare-cache"]
+
+[tasks.prepare-openvino.pre_compile_conditions]
+windows = "prepare-openvino-windows"
+linux = "prepare-openvino-linux"
+macos = "prepare-openvino-macos"
+
+[tasks.prepare-openvino-windows]
+description = "Download and extract OpenVINO runtime for Windows"
+script = [
+    # Download if not already cached
+    "if not exist ${CACHE_DIR}\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip (",
+    "  curl -L -o ${CACHE_DIR}\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_windows_x86_64.zip",
+    ")",
+    # Extract if not already extracted
+    "if not exist ${CACHE_DIR}\\openvino\\extracted (",
+    "  unzip -q ${CACHE_DIR}\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip -d ${CACHE_DIR}\\openvino\\extracted",
+    "  echo 'extracted' > ${CACHE_DIR}\\openvino\\extracted\\_marker",
+    ")",
+    # Create lib directory
+    "mkdir -p ${LIB_DIR}",
+    # Copy all DLLs from runtime/bin/intel64/Release/
+    "cp ${CACHE_DIR}\\openvino\\extracted\\*\\runtime\\bin\\intel64\\Release\\*.dll ${LIB_DIR}/",
+]
+
+[tasks.prepare-openvino-linux]
+description = "Download and extract OpenVINO runtime for Linux"
+script = [
+    # Download if not already cached
+    "if [ ! -f ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz ]; then",
+    "  curl -L -o ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz",
+    "fi",
+    # Extract if not already extracted
+    "if [ ! -d ${CACHE_DIR}/openvino/extracted ]; then",
+    "  tar -xzf ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz -C ${CACHE_DIR}/openvino/extracted",
+    "  touch ${CACHE_DIR}/openvino/extracted/_marker",
+    "fi",
+    # Copy .so files
+    "mkdir -p ${LIB_DIR}",
+    "cp ${CACHE_DIR}/openvino/extracted/*/runtime/lib/intel64/*.so ${LIB_DIR}/",
+]
+
+[tasks.prepare-openvino-macos]
+description = "Download and extract OpenVINO runtime for macOS"
+script = [
+    # Download if not already cached
+    "if [ ! -f ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz ]; then",
+    "  curl -L -o ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz",
+    "fi",
+    # Extract if not already extracted
+    "if [ ! -d ${CACHE_DIR}/openvino/extracted ]; then",
+    "  tar -xzf ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz -C ${CACHE_DIR}/openvino/extracted",
+    "  touch ${CACHE_DIR}/openvino/extracted/_marker",
+    "fi",
+    # Copy .dylib files
+    "mkdir -p ${LIB_DIR}",
+    "cp ${CACHE_DIR}/openvino/extracted/*/runtime/lib/*.dylib ${LIB_DIR}/",
+]
+
+# ---------- Copy dependencies to dist ----------
+[tasks.copy-deps]
+description = "Copy all prepared dependencies to dist/"
+dependencies = ["prepare-gstreamer", "prepare-openvino"]
+
+# ---------- Build ----------
+[tasks.build-release]
+description = "Build the release binary with GUI feature"
+command = "cargo"
+args = ["build", "--release", "--features", "gui"]
+
+# ---------- Bundle ----------
+[tasks.bundle]
+description = "Bundle the application and runtime into dist/"
+dependencies = ["build-release", "copy-deps"]
+script = [
+    # Copy the binary
+    "cp target/release/hfm-player ${DIST_DIR}/",
+    "if [ ${OS} = 'Windows_NT' ]; then cp target/release/hfm-player.exe ${DIST_DIR}/; fi",
+    # On Linux/macOS, set rpath to find libraries relative to binary
+    "if [ ${OS} != 'Windows_NT' ]; then",
+    "  if [ $(uname -s) = 'Darwin' ]; then",
+    "    install_name_tool -add_rpath @executable_path/lib ${DIST_DIR}/hfm-player",
+    "  else",
+    "    patchelf --set-rpath '$ORIGIN/lib' ${DIST_DIR}/hfm-player",
+    "  fi",
+    "fi",
+]
+
+# ---------- Main package task ----------
+[tasks.package]
+description = "Full packaging pipeline: build, bundle, and prepare distribution"
+dependencies = ["bundle"]
+script = ["echo 'Package ready in ${DIST_DIR}/'", "ls -la ${DIST_DIR}/"]
