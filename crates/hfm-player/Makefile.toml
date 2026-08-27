@@ -5,6 +5,7 @@ CACHE_DIR = "target/cache"
 DIST_DIR = "dist"
 LIB_DIR = "${DIST_DIR}/lib"
 OS = { script = "echo $OS" }
+BINARY_PATH = "../../target/release/hfm-player"
 
 [tasks.clean]
 description = "Remove distribution and cache directories"
@@ -48,9 +49,7 @@ script = [
 description = "Prepare GStreamer runtime for Linux (assumes system installation)"
 script = [
     "mkdir -p ${LIB_DIR}",
-    # Copy system GStreamer libraries (dynamically linked)
-    "ldd target/release/hfm-player | grep gstreamer | awk '{print $3}' | xargs -I {} cp {} ${LIB_DIR}/",
-    # Copy the plugin directory (system path may vary)
+    "ldd ${BINARY_PATH} | grep gstreamer | awk '{print $3}' | xargs -I {} cp {} ${LIB_DIR}/",
     "cp -r /usr/lib/x86_64-linux-gnu/gstreamer-1.0 ${LIB_DIR}/",
 ]
 
@@ -58,9 +57,7 @@ script = [
 description = "Prepare GStreamer runtime for macOS (assumes Homebrew installation)"
 script = [
     "mkdir -p ${LIB_DIR}",
-    # Copy system libraries
-    "otool -L target/release/hfm-player | grep gstreamer | awk '{print $1}' | xargs -I {} cp {} ${LIB_DIR}/",
-    # Copy the plugin directory
+    "otool -L ${BINARY_PATH} | grep gstreamer | awk '{print $1}' | xargs -I {} cp {} ${LIB_DIR}/",
     "cp -r /usr/local/lib/gstreamer-1.0 ${LIB_DIR}/",
 ]
 
@@ -142,9 +139,12 @@ args = ["build", "--release", "--features", "gui"]
 description = "Bundle the application and runtime into dist/"
 dependencies = ["build-release", "copy-deps"]
 script = [
-    # Copy the binary
-    "cp target/release/hfm-player ${DIST_DIR}/",
-    "if [ ${OS} = 'Windows_NT' ]; then cp target/release/hfm-player.exe ${DIST_DIR}/; fi",
+    # Copy the binary (platform‑specific)
+    "if [ ${OS} = 'Windows_NT' ]; then",
+    "  cp ${BINARY_PATH}.exe ${DIST_DIR}/",
+    "else",
+    "  cp ${BINARY_PATH} ${DIST_DIR}/",
+    "fi",
     # On Linux/macOS, set rpath to find libraries relative to binary
     "if [ ${OS} != 'Windows_NT' ]; then",
     "  if [ $(uname -s) = 'Darwin' ]; then",
