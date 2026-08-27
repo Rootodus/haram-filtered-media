@@ -38,3 +38,8 @@ winit = { workspace = true, features = ["rwh_06"] }
 [target.'cfg(all(not(target_os = "windows"), not(target_vendor = "apple")))'.dependencies]
 wgpu = { workspace = true, features = ["vulkan", "wgsl"] }
 winit = { workspace = true, features = ["x11", "wayland", "rwh_06"] }
+
+[features]
+default = []
+gui = [] # enables GUI-only mode (no console on Windows)
+dhat = ["dep:dhat"]
