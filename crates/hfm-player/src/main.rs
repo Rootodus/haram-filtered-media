@@ -1,4 +1,5 @@
 #![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
+#![allow(unused)] // this is temporary 
 
 mod app;
 mod audio_output;
