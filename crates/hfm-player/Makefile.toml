@@ -147,4 +147,4 @@ script = ["echo 'Package ready in ${DIST_DIR}/'", "ls -la ${DIST_DIR}/"]
 
 # ---------- Default ----------
 [tasks.default]
-dependencies = ["package"]
+alias = "package"
