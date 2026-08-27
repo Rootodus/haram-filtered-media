@@ -255,40 +255,38 @@ impl ApplicationHandler for App {
                     state.current_time_ns = self.audio_clock.now_ns();
                 }
 
-                if self.pipeline_manager.is_buffering() {
-                    renderer.render(self.last_frame.clone(), state, bridge);
-                } else if let Some(front_pts) = self.pipeline_manager.peek_video_pts() {
-                    let now = if self.audio_clock.is_initialized() {
-                        self.audio_clock.now_ns()
-                    } else {
-                        // Fallback to system monotonic time since playback start
-                        self.start_instant.elapsed().as_nanos() as u64
-                    };
-                    // Use the same now for offset calculation and sync
-                    let adjusted_pts = self.sync_state.adjust_pts(front_pts, now);
-                    let delta = adjusted_pts - now as i64;
-
-                    if self.audio_clock.is_initialized() {
-                        if delta > SYNC_TOLERANCE_NS {
-                            self.window.as_ref().unwrap().request_redraw();
-                            return;
-                        }
-                    }
-
-                    if let Some(frame) = self.pipeline_manager.pop_processed_frame() {
-                        let data = frame.data;
-                        renderer.render(Some(data.clone()), state, bridge);
-                        self.last_frame = Some(data);
-                        self.frame_count += 1;
-                        if self.fps_timer.elapsed() >= Duration::from_secs(1) {
-                            println!("Video FPS: {}", self.frame_count);
-                            self.frame_count = 0;
-                            self.fps_timer = Instant::now();
-                        }
-                    }
+                let mut frame_to_render = self.last_frame.clone();
+                let now = if self.audio_clock.is_initialized() {
+                    self.audio_clock.now_ns()
                 } else {
-                    renderer.render(self.last_frame.clone(), state, bridge);
+                    // Fallback to system monotonic time since playback start
+                    self.start_instant.elapsed().as_nanos() as u64
+                };
+
+                if !self.pipeline_manager.is_buffering() {
+                    if let Some(front_pts) = self.pipeline_manager.peek_video_pts() {
+                        let adjusted_pts = self.sync_state.adjust_pts(front_pts, now);
+                        let delta = adjusted_pts - now as i64;
+
+                        // Only pop and update frame if we are in sync (or within tolerance)
+                        if !self.audio_clock.is_initialized() || delta <= SYNC_TOLERANCE_NS {
+                            if let Some(frame) = self.pipeline_manager.pop_processed_frame() {
+                                frame_to_render = Some(frame.data);
+                                self.last_frame = frame_to_render.clone();
+                                self.frame_count += 1;
+                                if self.fps_timer.elapsed() >= Duration::from_secs(1) {
+                                    println!("Video FPS: {}", self.frame_count);
+                                    self.frame_count = 0;
+                                    self.fps_timer = Instant::now();
+                                }
+                            }
+                        }
+                        // If not in sync, we keep the last frame (no update).
+                    }
                 }
+
+                // Always render the UI, even if no new video frame is available.
+                renderer.render(frame_to_render, state, bridge);
 
                 self.window.as_ref().unwrap().request_redraw();
             }
