@@ -160,3 +160,7 @@ script = [
 description = "Full packaging pipeline: build, bundle, and prepare distribution"
 dependencies = ["bundle"]
 script = ["echo 'Package ready in ${DIST_DIR}/'", "ls -la ${DIST_DIR}/"]
+
+# ---------- Default ----------
+[tasks.default]
+dependencies = ["package"]
