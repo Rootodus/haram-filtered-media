@@ -4,15 +4,42 @@ OPENVINO_VERSION = "2025.4.1"
 CACHE_DIR = "target/cache"
 DIST_DIR = "dist"
 LIB_DIR = "${DIST_DIR}/lib"
-OS = { script = "echo $OS" }
 BINARY_PATH = "../../target/release/hfm-player"
 
+# ---------- Default ----------
+[tasks.default]
+alias = "package"
+
+# ---------- Clean ----------
 [tasks.clean]
 description = "Remove distribution and cache directories"
+
+[tasks.clean.windows]
+script = [
+    "if exist ${DIST_DIR} rmdir /s /q ${DIST_DIR}",
+    "if exist ${CACHE_DIR} rmdir /s /q ${CACHE_DIR}"
+]
+
+[tasks.clean.linux]
 script = ["rm -rf ${DIST_DIR}", "rm -rf ${CACHE_DIR}"]
 
+[tasks.clean.mac]
+script = ["rm -rf ${DIST_DIR}", "rm -rf ${CACHE_DIR}"]
+
+# ---------- Prepare Cache ----------
 [tasks.prepare-cache]
 description = "Create cache directories"
+
+[tasks.prepare-cache.windows]
+script = [
+    "if not exist target\\cache\\gstreamer mkdir target\\cache\\gstreamer",
+    "if not exist target\\cache\\openvino mkdir target\\cache\\openvino"
+]
+
+[tasks.prepare-cache.linux]
+script = ["mkdir -p ${CACHE_DIR}/gstreamer", "mkdir -p ${CACHE_DIR}/openvino"]
+
+[tasks.prepare-cache.mac]
 script = ["mkdir -p ${CACHE_DIR}/gstreamer", "mkdir -p ${CACHE_DIR}/openvino"]
 
 # ---------- GStreamer ----------
@@ -22,21 +49,21 @@ dependencies = ["prepare-cache"]
 
 [tasks.prepare-gstreamer.windows]
 script = [
-    # Download if not already cached
-    "if not exist ${CACHE_DIR}\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip (",
-    "  curl -L -o ${CACHE_DIR}\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip https://gstreamer.freedesktop.org/downloads/gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip",
+    # Download using Windows built-in PowerShell invocation via curl alternative if curl binary is missing
+    "if not exist target\\cache\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip (",
+    "  powershell -Command \"Invoke-WebRequest -Uri 'https://gstreamer.freedesktop.org/downloads/gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip' -OutFile 'target\\cache\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip'\"",
     ")",
-    # Extract if not already extracted
-    "if not exist ${CACHE_DIR}\\gstreamer\\extracted (",
-    "  unzip -q ${CACHE_DIR}\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip -d ${CACHE_DIR}\\gstreamer\\extracted",
-    "  echo 'extracted' > ${CACHE_DIR}\\gstreamer\\extracted\\_marker",
+    # Extract using native PowerShell expand archive (removes dependency on unzip.exe)
+    "if not exist target\\cache\\gstreamer\\extracted (",
+    "  powershell -Command \"Expand-Archive -Path 'target\\cache\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip' -DestinationPath 'target\\cache\\gstreamer\\extracted' -Force\"",
+    "  echo extracted > target\\cache\\gstreamer\\extracted\\_marker",
     ")",
-    # Create lib directory
-    "mkdir -p ${LIB_DIR}",
-    # Copy all DLLs from bin/ to lib/
-    "cp ${CACHE_DIR}\\gstreamer\\extracted\\*\\bin\\*.dll ${LIB_DIR}/",
-    # Copy the entire plugin directory
-    "cp -r ${CACHE_DIR}\\gstreamer\\extracted\\*\\lib\\gstreamer-1.0 ${LIB_DIR}/",
+    # Create lib directory safely
+    "if not exist dist\\lib mkdir dist\\lib",
+    # Copy all DLLs from bin/ to lib/ using standard Windows xcopy/copy
+    "xcopy /y /s \"target\\cache\\gstreamer\\extracted\\*\\bin\\*.dll\" \"dist\\lib\\\"",
+    # Copy the entire plugin directory using xcopy
+    "xcopy /y /s /i \"target\\cache\\gstreamer\\extracted\\*\\lib\\gstreamer-1.0\" \"dist\\lib\\gstreamer-1.0\""
 ]
 
 [tasks.prepare-gstreamer.linux]
@@ -60,49 +87,45 @@ dependencies = ["prepare-cache"]
 
 [tasks.prepare-openvino.windows]
 script = [
-    # Download if not already cached
-    "if not exist ${CACHE_DIR}\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip (",
-    "  curl -L -o ${CACHE_DIR}\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_windows_x86_64.zip",
+    # Download via native PowerShell hook
+    "if not exist target\\cache\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip (",
+    "  powershell -Command \"Invoke-WebRequest -Uri 'https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_windows_x86_64.zip' -OutFile 'target\\cache\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip'\"",
     ")",
-    # Extract if not already extracted
-    "if not exist ${CACHE_DIR}\\openvino\\extracted (",
-    "  unzip -q ${CACHE_DIR}\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip -d ${CACHE_DIR}\\openvino\\extracted",
-    "  echo 'extracted' > ${CACHE_DIR}\\openvino\\extracted\\_marker",
+    # Extract via native PowerShell hook
+    "if not exist target\\cache\\openvino\\extracted (",
+    "  powershell -Command \"Expand-Archive -Path 'target\\cache\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip' -DestinationPath 'target\\cache\\openvino\\extracted' -Force\"",
+    "  echo extracted > target\\cache\\openvino\\extracted\\_marker",
     ")",
-    # Create lib directory
-    "mkdir -p ${LIB_DIR}",
-    # Copy all DLLs from runtime/bin/intel64/Release/
-    "cp ${CACHE_DIR}\\openvino\\extracted\\*\\runtime\\bin\\intel64\\Release\\*.dll ${LIB_DIR}/",
+    # Ensure lib directory exists
+    "if not exist dist\\lib mkdir dist\\lib",
+    # Copy all runtime DLLs using structural wildcard xcopy matches
+    "xcopy /y /s \"target\\cache\\openvino\\extracted\\*\\runtime\\bin\\intel64\\Release\\*.dll\" \"dist\\lib\\\""
 ]
 
 [tasks.prepare-openvino.linux]
 script = [
-    # Download if not already cached
     "if [ ! -f ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz ]; then",
     "  curl -L -o ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz",
     "fi",
-    # Extract if not already extracted
     "if [ ! -d ${CACHE_DIR}/openvino/extracted ]; then",
+    "  mkdir -p ${CACHE_DIR}/openvino/extracted",
     "  tar -xzf ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz -C ${CACHE_DIR}/openvino/extracted",
     "  touch ${CACHE_DIR}/openvino/extracted/_marker",
     "fi",
-    # Copy .so files
     "mkdir -p ${LIB_DIR}",
     "cp ${CACHE_DIR}/openvino/extracted/*/runtime/lib/intel64/*.so ${LIB_DIR}/",
 ]
 
 [tasks.prepare-openvino.mac]
 script = [
-    # Download if not already cached
     "if [ ! -f ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz ]; then",
     "  curl -L -o ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz",
     "fi",
-    # Extract if not already extracted
     "if [ ! -d ${CACHE_DIR}/openvino/extracted ]; then",
+    "  mkdir -p ${CACHE_DIR}/openvino/extracted",
     "  tar -xzf ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz -C ${CACHE_DIR}/openvino/extracted",
     "  touch ${CACHE_DIR}/openvino/extracted/_marker",
     "fi",
-    # Copy .dylib files
     "mkdir -p ${LIB_DIR}",
     "cp ${CACHE_DIR}/openvino/extracted/*/runtime/lib/*.dylib ${LIB_DIR}/",
 ]
@@ -122,29 +145,32 @@ args = ["build", "--release", "--features", "gui"]
 [tasks.bundle]
 description = "Bundle the application and runtime into dist/"
 dependencies = ["build-release", "copy-deps"]
+
+[tasks.bundle.windows]
+script = ["copy /y ..\\..\\target\\release\\hfm-player.exe dist\\"]
+
+[tasks.bundle.linux]
 script = [
-    # Copy the binary (platform‑specific)
-    "if [ ${OS} = 'Windows_NT' ]; then",
-    "  cp ${BINARY_PATH}.exe ${DIST_DIR}/",
-    "else",
-    "  cp ${BINARY_PATH} ${DIST_DIR}/",
-    "fi",
-    # On Linux/macOS, set rpath to find libraries relative to binary
-    "if [ ${OS} != 'Windows_NT' ]; then",
-    "  if [ $(uname -s) = 'Darwin' ]; then",
-    "    install_name_tool -add_rpath @executable_path/lib ${DIST_DIR}/hfm-player",
-    "  else",
-    "    patchelf --set-rpath '$ORIGIN/lib' ${DIST_DIR}/hfm-player",
-    "  fi",
-    "fi",
+    "cp ${BINARY_PATH} ${DIST_DIR}/",
+    "patchelf --set-rpath '$ORIGIN/lib' ${DIST_DIR}/hfm-player"
+]
+
+[tasks.bundle.mac]
+script = [
+    "cp ${BINARY_PATH} ${DIST_DIR}/",
+    "install_name_tool -add_rpath @executable_path/lib ${DIST_DIR}/hfm-player"
 ]
 
 # ---------- Main package task ----------
 [tasks.package]
 description = "Full packaging pipeline: build, bundle, and prepare distribution"
 dependencies = ["bundle"]
+
+[tasks.package.windows]
+script = ["echo Package ready in dist/", "dir dist"]
+
+[tasks.package.linux]
 script = ["echo 'Package ready in ${DIST_DIR}/'", "ls -la ${DIST_DIR}/"]
 
-# ---------- Default ----------
-[tasks.default]
-alias = "package"
+[tasks.package.mac]
+script = ["echo 'Package ready in ${DIST_DIR}/'", "ls -la ${DIST_DIR}/"]
