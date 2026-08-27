@@ -25,6 +25,13 @@ egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
 dhat = { workspace = true, optional = true }
+# Bin-specific dependencies
+reqwest = { workspace = true, features = ["blocking", "json"] }
+zip = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
+walkdir = { workspace = true }
+serde_json = { workspace = true }
 
 # GPU & windowing (target-specific features)
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -39,14 +46,6 @@ winit = { workspace = true, features = ["rwh_06"] }
 wgpu = { workspace = true, features = ["vulkan", "wgsl"] }
 winit = { workspace = true, features = ["x11", "wayland", "rwh_06"] }
 
-[dev-dependencies]
-reqwest = { workspace = true, features = ["blocking"] }
-zip = { workspace = true }
-tar = { workspace = true }
-flate2 = { workspace = true }
-walkdir = { workspace = true }
-serde_json = { workspace = true }
-
 [features]
 default = []
 gui = [] # enables GUI-only mode (no console on Windows)
@@ -54,4 +53,4 @@ dhat = ["dep:dhat"]
 
 [[bin]]
 name = "pack"
-path = "src/bin/pack.rs"
+path = "src/bin/pack/main.rs"
