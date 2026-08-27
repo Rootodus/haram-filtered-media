@@ -1,4 +1,4 @@
-#![allow(unused)] // this is temporary, and perhaps lib.rs is also temporary
+#![allow(unused)] // this is temporary
 
 mod browser;
 mod debug_config;
