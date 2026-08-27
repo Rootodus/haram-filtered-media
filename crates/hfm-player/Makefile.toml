@@ -21,7 +21,6 @@ description = "Prepare GStreamer runtime (platform-specific)"
 dependencies = ["prepare-cache"]
 
 [tasks.prepare-gstreamer.windows]
-description = "Download and extract GStreamer runtime for Windows"
 script = [
     # Download if not already cached
     "if not exist ${CACHE_DIR}\\gstreamer\\gstreamer-${GSTREAMER_VERSION}-msvc-x86_64.zip (",
@@ -41,7 +40,6 @@ script = [
 ]
 
 [tasks.prepare-gstreamer.linux]
-description = "Prepare GStreamer runtime for Linux (assumes system installation)"
 script = [
     "mkdir -p ${LIB_DIR}",
     "ldd ${BINARY_PATH} | grep gstreamer | awk '{print $3}' | xargs -I {} cp {} ${LIB_DIR}/",
@@ -49,7 +47,6 @@ script = [
 ]
 
 [tasks.prepare-gstreamer.mac]
-description = "Prepare GStreamer runtime for macOS (assumes Homebrew installation)"
 script = [
     "mkdir -p ${LIB_DIR}",
     "otool -L ${BINARY_PATH} | grep gstreamer | awk '{print $1}' | xargs -I {} cp {} ${LIB_DIR}/",
@@ -62,7 +59,6 @@ description = "Prepare OpenVINO runtime (platform-specific)"
 dependencies = ["prepare-cache"]
 
 [tasks.prepare-openvino.windows]
-description = "Download and extract OpenVINO runtime for Windows"
 script = [
     # Download if not already cached
     "if not exist ${CACHE_DIR}\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip (",
@@ -80,7 +76,6 @@ script = [
 ]
 
 [tasks.prepare-openvino.linux]
-description = "Download and extract OpenVINO runtime for Linux"
 script = [
     # Download if not already cached
     "if [ ! -f ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz ]; then",
@@ -97,7 +92,6 @@ script = [
 ]
 
 [tasks.prepare-openvino.mac]
-description = "Download and extract OpenVINO runtime for macOS"
 script = [
     # Download if not already cached
     "if [ ! -f ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz ]; then",
