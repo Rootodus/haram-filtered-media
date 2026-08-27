@@ -87,25 +87,25 @@ dependencies = ["prepare-cache"]
 
 [tasks.prepare-openvino.windows]
 script = [
-    # Download via native PowerShell hook
+    # Download using the correct URL (using curl, but we can also keep PowerShell)
     "if not exist target\\cache\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip (",
-    "  powershell -Command \"Invoke-WebRequest -Uri 'https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_windows_x86_64.zip' -OutFile 'target\\cache\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip'\"",
+    "  curl -L -o target\\cache\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip https://storage.openvinotoolkit.org/repositories/openvino/packages/${OPENVINO_VERSION}/windows/openvino_toolkit_windows_${OPENVINO_VERSION}.20426.82bbf0292c5_x86_64.zip",
     ")",
-    # Extract via native PowerShell hook
+    # Extract if not already extracted
     "if not exist target\\cache\\openvino\\extracted (",
     "  powershell -Command \"Expand-Archive -Path 'target\\cache\\openvino\\openvino_${OPENVINO_VERSION}_windows_x86_64.zip' -DestinationPath 'target\\cache\\openvino\\extracted' -Force\"",
     "  echo extracted > target\\cache\\openvino\\extracted\\_marker",
     ")",
-    # Ensure lib directory exists
     "if not exist dist\\lib mkdir dist\\lib",
-    # Copy all runtime DLLs using structural wildcard xcopy matches
+    # Copy DLLs (assuming same structure as before)
     "xcopy /y /s \"target\\cache\\openvino\\extracted\\*\\runtime\\bin\\intel64\\Release\\*.dll\" \"dist\\lib\\\""
 ]
 
 [tasks.prepare-openvino.linux]
 script = [
+    # Download Ubuntu 22.04 build (adjust if you prefer RHEL or Ubuntu 24)
     "if [ ! -f ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz ]; then",
-    "  curl -L -o ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz",
+    "  curl -L -o ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_linux_x86_64.tgz https://storage.openvinotoolkit.org/repositories/openvino/packages/${OPENVINO_VERSION}/ubuntu22/openvino_toolkit_ubuntu22_${OPENVINO_VERSION}.20426.82bbf0292c5_x86_64.tgz",
     "fi",
     "if [ ! -d ${CACHE_DIR}/openvino/extracted ]; then",
     "  mkdir -p ${CACHE_DIR}/openvino/extracted",
@@ -113,13 +113,14 @@ script = [
     "  touch ${CACHE_DIR}/openvino/extracted/_marker",
     "fi",
     "mkdir -p ${LIB_DIR}",
-    "cp ${CACHE_DIR}/openvino/extracted/*/runtime/lib/intel64/*.so ${LIB_DIR}/",
+    "cp ${CACHE_DIR}/openvino/extracted/*/runtime/lib/intel64/*.so ${LIB_DIR}/"
 ]
 
 [tasks.prepare-openvino.mac]
 script = [
+    # Download macOS x86_64 build (adjust to arm64 if needed)
     "if [ ! -f ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz ]; then",
-    "  curl -L -o ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz https://storage.openvinotoolkit.org/releases/${OPENVINO_VERSION}/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz",
+    "  curl -L -o ${CACHE_DIR}/openvino/openvino_${OPENVINO_VERSION}_macos_x86_64.tgz https://storage.openvinotoolkit.org/repositories/openvino/packages/${OPENVINO_VERSION}/macos/openvino_toolkit_macos_12_6_${OPENVINO_VERSION}.20426.82bbf0292c5_x86_64.tgz",
     "fi",
     "if [ ! -d ${CACHE_DIR}/openvino/extracted ]; then",
     "  mkdir -p ${CACHE_DIR}/openvino/extracted",
@@ -127,7 +128,7 @@ script = [
     "  touch ${CACHE_DIR}/openvino/extracted/_marker",
     "fi",
     "mkdir -p ${LIB_DIR}",
-    "cp ${CACHE_DIR}/openvino/extracted/*/runtime/lib/*.dylib ${LIB_DIR}/",
+    "cp ${CACHE_DIR}/openvino/extracted/*/runtime/lib/*.dylib ${LIB_DIR}/"
 ]
 
 # ---------- Copy dependencies to dist ----------
