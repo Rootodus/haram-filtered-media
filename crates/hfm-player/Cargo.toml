@@ -45,6 +45,7 @@ zip = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
 walkdir = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
 default = []

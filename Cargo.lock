@@ -2586,6 +2586,7 @@ dependencies = [
  "reqwest 0.13.4",
  "rfd",
  "ringbuf",
+ "serde_json",
  "tar",
  "walkdir",
  "wgpu",
