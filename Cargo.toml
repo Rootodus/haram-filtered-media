@@ -64,6 +64,11 @@ loom = "0.7.2"
 naga = { version = "30.0.1", default-features = false }
 proptest = "1.11.0"
 static_assertions = "1.1.0"
+reqwest = "0.13.4"
+zip = "8.6.0"
+tar = "0.4.46"
+flate2 = "1.1.9"
+walkdir = "2.5.0"
 
 # =========================================================================
 # DAILY DEVELOPMENT
