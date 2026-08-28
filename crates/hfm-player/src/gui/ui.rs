@@ -69,7 +69,10 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                         }
                         ui.label(match &state.video_path {
                             Some(p) => p.file_name().unwrap_or_default().to_string_lossy(),
+                            #[cfg(not(feature = "no-default-video"))]
                             None => "No video selected (default will be used)".into(),
+                            #[cfg(feature = "no-default-video")]
+                            None => "No video selected. Choose a video file.".into(),
                         });
                     });
 
