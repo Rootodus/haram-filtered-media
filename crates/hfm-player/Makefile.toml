@@ -2,7 +2,7 @@
 BINARY_PATH = "../../target/release/hfm-player"
 
 [tasks.default]
-alias = "package"
+alias = "dist"
 
 [tasks.clean]
 description = "Remove distribution and cache directories"
@@ -19,11 +19,10 @@ description = "Run the pack script to bundle dependencies"
 command = "cargo"
 args = ["run", "--bin", "pack"]
 
-[tasks.package]
+[tasks.dist]
 description = "Full packaging pipeline: build, bundle, and prepare distribution"
 dependencies = ["build-release", "run-pack"]
 
-# Optional: check URLs without downloading
 [tasks.check-urls]
 description = "Check that all dependency URLs are valid"
 command = "cargo"
