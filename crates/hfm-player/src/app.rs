@@ -162,7 +162,7 @@ impl App {
                     if let Some(path) = state.video_path.clone() {
                         path
                     } else {
-                        #[cfg(not(feature = "dist"))]
+                        #[cfg(not(feature = "no-default-video"))]
                         {
                             let default_path = format!(
                                 "{}/../hfm-core/assets/video_with_music.mp4",
@@ -170,7 +170,7 @@ impl App {
                             );
                             PathBuf::from(default_path)
                         }
-                        #[cfg(feature = "dist")]
+                        #[cfg(feature = "no-default-video")]
                         {
                             // No default video in dist mode – show error and go back to Setup.
                             eprintln!("No video selected. Choose a video file.");

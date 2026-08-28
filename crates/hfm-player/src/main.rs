@@ -1,4 +1,7 @@
-#![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(windows, feature = "only-gui-no-console"),
+    windows_subsystem = "windows"
+)]
 #![allow(unused)] // this is temporary 
 
 mod app;
