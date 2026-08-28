@@ -1,5 +1,7 @@
 //! Launcher that sets PATH and spawns the core binary from lib/.
 
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::env;
 use std::process::Command;
 
