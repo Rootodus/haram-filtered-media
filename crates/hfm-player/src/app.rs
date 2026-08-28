@@ -187,7 +187,6 @@ impl App {
                 ) {
                     Ok(duration) => {
                         self.state.lock().total_duration_ns = duration;
-                        self.state.lock().is_loading = false;
                         self.has_audio = self.pipeline_manager.has_audio;
                         self.state.lock().playback_state = PlaybackState::Playing;
                         // Reset the fallback clock start time
@@ -256,13 +255,6 @@ impl ApplicationHandler for App {
                 {
                     let mut state = state.lock();
                     state.current_time_ns = self.audio_clock.now_ns();
-                }
-
-                // Clear loading state if we have a frame to render.
-                if let Some(front_pts) = self.pipeline_manager.peek_video_pts() {
-                    if state.lock().is_loading {
-                        state.lock().is_loading = false;
-                    }
                 }
 
                 let mut frame_to_render = self.last_frame.clone();

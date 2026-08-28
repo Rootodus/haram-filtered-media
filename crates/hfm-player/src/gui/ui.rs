@@ -36,15 +36,20 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
 
             // 3. If loading, show a translucent overlay with a loading message.
             if state.is_loading {
-                egui::CentralPanel::default()
-                    .frame(
-                        egui::Frame::new()
-                            .fill(egui::Color32::from_black_alpha(180))
-                            .corner_radius(10.0),
-                    )
-                    .show(ui, |ui| {
+                egui::Area::new(egui::Id::new("loading_overlay"))
+                    .order(egui::Order::Foreground)
+                    .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                    .show(ui.ctx(), |ui| {
                         ui.centered_and_justified(|ui| {
-                            ui.heading("⏳ Loading video...");
+                            egui::Frame::window(ui.style())
+                                .fill(egui::Color32::from_black_alpha(200))
+                                .corner_radius(10.0)
+                                .inner_margin(20.0)
+                                .show(ui, |ui| {
+                                    ui.heading("⏳ Loading video...");
+                                    ui.add_space(10.0);
+                                    ui.label("Preparing pipeline...");
+                                });
                         });
                     });
             }
