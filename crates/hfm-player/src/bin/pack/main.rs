@@ -2,6 +2,7 @@
 //!
 //! Usage: cargo run --bin pack [--clean] [--check-urls]
 
+mod archive;
 mod bundle;
 mod download;
 mod gstreamer;
@@ -31,11 +32,11 @@ fn main() -> Result<()> {
     println!("OS: {}", env::consts::OS);
 
     download::prepare_cache()?;
-
     gstreamer::prepare_gstreamer()?;
     openvino::prepare_openvino()?;
     models::prepare_models()?;
     bundle::bundle_binary()?;
+    archive::archive_dist()?;
 
     println!("Packaging complete! Artifacts in dist/");
     Ok(())
