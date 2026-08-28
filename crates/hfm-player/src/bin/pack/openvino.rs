@@ -1,6 +1,6 @@
 //! OpenVINO packaging logic.
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -35,33 +35,30 @@ fn prepare_openvino_windows() -> Result<()> {
     let lib_dir = Path::new(LIB_DIR);
     ensure_dir(lib_dir)?;
 
-    let runtime_dir = WalkDir::new(&extracted_dir).into_iter().find_map(|e| {
-        if let Ok(entry) = e {
-            let path = entry.path();
-            if path.is_dir()
-                && path.ends_with("Release")
-                && path.parent().map(|p| p.ends_with("bin")).unwrap_or(false)
-            {
-                Some(path.to_path_buf())
-            } else {
-                None
+    // Find the directory containing openvino.dll.
+    let dll_dir = WalkDir::new(&extracted_dir)
+        .into_iter()
+        .find_map(|e| {
+            if let Ok(entry) = e {
+                let path = entry.path();
+                if path.is_file()
+                    && path.file_name().and_then(|n| n.to_str()) == Some("openvino.dll")
+                {
+                    return Some(path.parent().unwrap().to_path_buf());
+                }
             }
-        } else {
             None
-        }
-    });
+        })
+        .ok_or_else(|| anyhow!("Could not find openvino.dll in extracted archive"))?;
 
-    if let Some(runtime) = runtime_dir {
-        for entry in fs::read_dir(runtime)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("dll") {
-                let dest = lib_dir.join(path.file_name().unwrap());
-                fs::copy(&path, &dest)?;
-            }
+    // Copy all .dll files from that directory.
+    for entry in fs::read_dir(&dll_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("dll") {
+            let dest = lib_dir.join(path.file_name().unwrap());
+            fs::copy(&path, &dest)?;
         }
-    } else {
-        bail!("Could not find OpenVINO runtime DLLs in extracted archive");
     }
 
     println!("OpenVINO DLLs copied to {}", lib_dir.display());
