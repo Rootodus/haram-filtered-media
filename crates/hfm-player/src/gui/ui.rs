@@ -29,17 +29,12 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             // Store the exact height in logical points
             state.bottom_panel_height = res.response.rect.height();
 
-            // 2. Central panel
+            // 2. Central panel (Video area)
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
-                .show(ui, |_ui| {});
-
-            // 3. If loading, show a translucent overlay with a loading message.
-            if state.is_loading {
-                egui::Area::new(egui::Id::new("loading_overlay"))
-                    .order(egui::Order::Foreground)
-                    .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                    .show(ui.ctx(), |ui| {
+                .show(ui, |ui| {
+                    // Render the loading card inside the central panel bounds
+                    if state.is_loading {
                         ui.centered_and_justified(|ui| {
                             egui::Frame::window(ui.style())
                                 .fill(egui::Color32::from_black_alpha(200))
@@ -51,8 +46,8 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                                     ui.label("Preparing pipeline...");
                                 });
                         });
-                    });
-            }
+                    }
+                });
         }
     }
 }
