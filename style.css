@@ -1,0 +1,184 @@
+/* ── Reset & base ── */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family:
+        "Segoe UI",
+        -apple-system,
+        BlinkMacSystemFont,
+        Roboto,
+        sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1.5rem;
+}
+
+.container {
+    max-width: 680px;
+    width: 100%;
+    background: #161b22;
+    border-radius: 20px;
+    padding: 2.5rem 2rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    text-align: center;
+}
+
+h1 {
+    font-size: 2.6rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.25rem;
+    color: #f0f6fc;
+}
+
+.tagline {
+    font-size: 1.1rem;
+    color: #8b949e;
+    margin-bottom: 1.2rem;
+    font-weight: 400;
+}
+
+.description {
+    font-size: 1rem;
+    line-height: 1.6;
+    color: #b1bac4;
+    margin-bottom: 1.5rem;
+    max-width: 500px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.features {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.6rem 1.2rem;
+    margin-bottom: 1.8rem;
+    font-size: 0.9rem;
+    color: #8b949e;
+}
+.features span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.features span::before {
+    content: "•";
+    color: #58a6ff;
+    font-weight: bold;
+    font-size: 1.1rem;
+}
+
+/* ── Known Issues ── */
+.known-issues {
+    text-align: left;
+    background: #1c2128;
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 1.8rem;
+    border-left: 3px solid #d29922;
+}
+.issues-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #d29922;
+    margin-bottom: 0.3rem;
+}
+.known-issues ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.9rem;
+    color: #b1bac4;
+    line-height: 1.6;
+}
+.known-issues ul li {
+    padding-left: 1.2rem;
+    position: relative;
+}
+.known-issues ul li::before {
+    content: "–";
+    position: absolute;
+    left: 0;
+    color: #8b949e;
+}
+
+/* ── Download button ── */
+.download-btn {
+    display: inline-block;
+    padding: 0.8rem 2.4rem;
+    background: #238636;
+    color: #ffffff;
+    font-size: 1.15rem;
+    font-weight: 600;
+    border-radius: 40px;
+    text-decoration: none;
+    transition:
+        background 0.2s,
+        transform 0.1s;
+    box-shadow: 0 4px 12px rgba(35, 134, 54, 0.25);
+    border: none;
+    cursor: pointer;
+    margin-bottom: 0.5rem;
+}
+.download-btn:hover {
+    background: #2ea043;
+    transform: scale(1.02);
+}
+.download-btn:active {
+    transform: scale(0.98);
+}
+.download-btn .icon {
+    display: inline-block;
+    margin-right: 0.5rem;
+    font-size: 1.2rem;
+}
+
+/* ── Meta info ── */
+.meta {
+    font-size: 0.8rem;
+    color: #6e7681;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.8rem 1.5rem;
+    margin-top: 0.5rem;
+}
+.meta a {
+    color: #58a6ff;
+    text-decoration: none;
+    border-bottom: 1px dotted transparent;
+    transition: border-color 0.2s;
+}
+.meta a:hover {
+    border-bottom-color: #58a6ff;
+}
+
+/* ── Responsive ── */
+@media (max-width: 480px) {
+    .container {
+        padding: 1.8rem 1.2rem;
+    }
+    h1 {
+        font-size: 2rem;
+    }
+    .download-btn {
+        padding: 0.7rem 1.6rem;
+        font-size: 1rem;
+    }
+    .features {
+        flex-direction: column;
+        gap: 0.3rem;
+    }
+    .known-issues {
+        padding: 0.8rem 1rem;
+    }
+}
