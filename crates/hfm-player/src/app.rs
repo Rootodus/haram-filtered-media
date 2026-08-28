@@ -156,27 +156,49 @@ impl App {
                 self.state.lock().mode = AppMode::Playback;
                 self.sync_state.reset();
 
-                let (video_path, video_backend, audio_backend, filter_enabled, audio_enabled) = {
+                // Determine video path
+                let video_path = {
                     let mut state = self.state.lock();
-                    // If video_path is None, use the default.
-                    let video_path = state.video_path.clone().unwrap_or_else(|| {
-                        let default_path = format!(
-                            "{}/../hfm-core/assets/video_with_music.mp4",
-                            env!("CARGO_MANIFEST_DIR")
-                        );
-                        PathBuf::from(default_path)
-                    });
-                    // Store it back so is_video_loaded() returns true later.
+                    if let Some(path) = state.video_path.clone() {
+                        path
+                    } else {
+                        #[cfg(not(feature = "dist"))]
+                        {
+                            let default_path = format!(
+                                "{}/../hfm-core/assets/video_with_music.mp4",
+                                env!("CARGO_MANIFEST_DIR")
+                            );
+                            PathBuf::from(default_path)
+                        }
+                        #[cfg(feature = "dist")]
+                        {
+                            // No default video in dist mode – show error and go back to Setup.
+                            eprintln!("No video selected. Choose a video file.");
+                            state.mode = AppMode::Setup;
+                            // Return early from the function.
+                            return;
+                        }
+                    }
+                };
+
+                // Store the path back if it was previously None (for dev mode)
+                {
+                    let mut state = self.state.lock();
                     state.video_path = Some(video_path.clone());
+                    // Also set is_loading true
+                    state.is_loading = true;
+                }
+
+                // Now get the backends and other settings.
+                let (video_backend, audio_backend, filter_enabled, audio_enabled) = {
+                    let state = self.state.lock();
                     (
-                        video_path,
                         state.video_backend,
                         state.audio_backend,
                         state.video_filter_enabled,
                         state.audio_processing_enabled,
                     )
                 };
-                self.state.lock().is_loading = true;
 
                 match self.pipeline_manager.restart(
                     video_path,

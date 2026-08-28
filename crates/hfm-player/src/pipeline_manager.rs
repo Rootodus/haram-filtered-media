@@ -19,6 +19,26 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+/// Resolve the path to a model file.
+/// First checks if the model exists in the `models/` directory relative to the executable.
+/// If not, falls back to the development path (hfm-core/models/).
+fn resolve_model_path(filename: &str) -> PathBuf {
+    // Check relative to the executable (for distribution).
+    if let Ok(exe_path) = std::env::current_exe() {
+        let models_dir = exe_path.parent().unwrap().join("models");
+        let model_path = models_dir.join(filename);
+        if model_path.exists() {
+            return model_path;
+        }
+    }
+
+    // Fallback to development path.
+    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../hfm-core/models")
+        .join(filename);
+    dev_path
+}
+
 /// Adapter that turns `Receiver<RawVideoFrame>` into `hfm_core::FrameSource`.
 pub struct ChannelVideoSource {
     rx: Receiver<RawVideoFrame>,
@@ -262,10 +282,8 @@ impl PipelineManager {
 
     /// Build a DemucsConfig for the audio model (HT-Demucs) based on the selected backend.
     fn build_audio_config(&self, backend: crate::gui::Backend) -> DemucsConfig {
-        let model_path = format!(
-            "{}/../hfm-core/models/htdemucs_ft_vocals_fp16weights.onnx",
-            env!("CARGO_MANIFEST_DIR")
-        );
+        let audio_model_path = resolve_model_path("htdemucs_ft_vocals_fp16weights.onnx");
+        let audio_model_path = audio_model_path.to_string_lossy().to_string();
         let provider = match backend {
             crate::gui::Backend::Cpu => ExecutionProvider::Cpu,
             crate::gui::Backend::DirectML => {
@@ -305,7 +323,7 @@ impl PipelineManager {
             }
         };
         DemucsConfig {
-            model_path,
+            model_path: audio_model_path,
             provider,
             window_size: WINDOW_SAMPLES,
         }
@@ -387,13 +405,11 @@ impl PipelineManager {
             generation: self.generation.clone(),
         };
 
-        // Load video model (hardcoded path)
-        let model_path = format!(
-            "{}/../hfm-core/models/pphumanseg.onnx",
-            env!("CARGO_MANIFEST_DIR")
-        );
+        // Load video model – resolve path (dev or dist)
+        let video_model_path = resolve_model_path("human_segmentation_pphumanseg_2023mar.onnx");
+        let video_model_path = video_model_path.to_string_lossy().to_string();
         let video_config = self.build_video_config(video_backend);
-        let model = PeopleSegFilter::new(&model_path, Some(video_config))
+        let model = PeopleSegFilter::new(&video_model_path, Some(video_config))
             .map_err(|e| format!("Failed to load video model: {}", e))?;
 
         let mut pipeline = PipelineController::new(

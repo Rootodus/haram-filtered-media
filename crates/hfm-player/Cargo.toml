@@ -52,6 +52,7 @@ naga = { workspace = true, features = ["wgsl-in"] }
 [features]
 default = []
 gui = [] # enables GUI-only mode (no console on Windows)
+dist = [] # Disables default video fallback for distribution
 dhat = ["dep:dhat"]
 
 [[bin]]
