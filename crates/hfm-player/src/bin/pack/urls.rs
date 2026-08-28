@@ -9,8 +9,8 @@ pub const GSTREAMER_VERSION: &str = "1.28.6";
 pub const GSTREAMER_PLUGINS_VERSION: &str = "1.28.6";
 pub const OPENVINO_VERSION: &str = "2025.4.1";
 
-/// URL for the GStreamer runtime (stable 1.28.6 via `gstreamer-libs`).
-pub fn gstreamer_runtime_url() -> Result<String> {
+/// URL for the GStreamer core libraries (stable 1.28.6 via `gstreamer-libs`).
+pub fn gstreamer_libs_url() -> Result<String> {
     let os = env::consts::OS;
     match os {
         "windows" => get_pypi_wheel_url("gstreamer-libs", GSTREAMER_VERSION, "win_amd64"),
@@ -19,7 +19,7 @@ pub fn gstreamer_runtime_url() -> Result<String> {
             GSTREAMER_VERSION,
             "macosx_10_13_universal2",
         ),
-        _ => bail!("GStreamer runtime not available for {}", os),
+        _ => bail!("GStreamer libs not available for {}", os),
     }
 }
 
@@ -65,8 +65,8 @@ pub fn check_urls() -> Result<()> {
         env::consts::OS
     );
 
-    let runtime_url = gstreamer_runtime_url()?;
-    println!("  GStreamer runtime: {}", runtime_url);
+    let libs_url = gstreamer_libs_url()?;
+    println!("  GStreamer libs: {}", libs_url);
     let plugins_url = gstreamer_plugins_url()?;
     println!("  GStreamer plugins: {}", plugins_url);
     let ov_url = openvino_url()?;
