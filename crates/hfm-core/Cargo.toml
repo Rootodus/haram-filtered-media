@@ -39,6 +39,3 @@ loom = { workspace = true }
 pollster = { workspace = true }
 proptest = { workspace = true }
 static_assertions = { workspace = true }
-
-[build-dependencies]
-naga = { workspace = true, features = ["wgsl-in"] }

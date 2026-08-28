@@ -46,6 +46,9 @@ winit = { workspace = true, features = ["rwh_06"] }
 wgpu = { workspace = true, features = ["vulkan", "wgsl"] }
 winit = { workspace = true, features = ["x11", "wayland", "rwh_06"] }
 
+[build-dependencies]
+naga = { workspace = true, features = ["wgsl-in"] }
+
 [features]
 default = []
 gui = [] # enables GUI-only mode (no console on Windows)
