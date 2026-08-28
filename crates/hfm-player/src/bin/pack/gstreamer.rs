@@ -14,7 +14,7 @@ pub fn prepare_gstreamer() -> Result<()> {
         "macos" => prepare_gstreamer_macos()?,
         "linux" => {
             println!("Linux: GStreamer is not bundled; system installation required.");
-            println!("Please install GStreamer 1.0 via your package manager.");
+            println!("Install GStreamer 1.0 via your package manager.");
         }
         _ => println!("Unsupported OS: {}", os),
     }
