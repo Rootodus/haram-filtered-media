@@ -9,7 +9,13 @@ fn main() {
     let exe_path = env::current_exe().expect("Failed to get executable path");
     let root_dir = exe_path.parent().expect("Executable has no parent");
 
-    let real_exe = root_dir.join("lib").join("hfm-player.exe");
+    // The core binary is now named hfm-player-core (or .exe on Windows)
+    let core_name = if cfg!(windows) {
+        "hfm-player-core.exe"
+    } else {
+        "hfm-player-core"
+    };
+    let real_exe = root_dir.join("lib").join(core_name);
 
     if !real_exe.exists() {
         eprintln!("Error: Core binary not found at {:?}", real_exe);

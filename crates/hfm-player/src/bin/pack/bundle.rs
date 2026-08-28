@@ -13,7 +13,7 @@ pub fn bundle_binary() -> Result<()> {
     let lib_dir = dist_dir.join("lib");
     ensure_dir(&lib_dir)?;
 
-    // --- 1. Build the launcher with final-release profile ---
+    // --- 1. Build the launcher ---
     println!("Building launcher...");
     let status = std::process::Command::new("cargo")
         .args(["build", "--bin", "launcher", "--profile", "final-release"])
@@ -22,49 +22,57 @@ pub fn bundle_binary() -> Result<()> {
         bail!("Failed to build launcher");
     }
 
-    // --- 2. Copy the core binary (built with final-release) to lib/ ---
-    let exe_name = if os == "windows" {
+    // --- 2. Copy the core binary to lib/ as hfm-player-core ---
+    let core_name = if os == "windows" {
+        "hfm-player-core.exe"
+    } else {
+        "hfm-player-core"
+    };
+    let src_core = Path::new("../../target/final-release").join(if os == "windows" {
+        "hfm-player.exe"
+    } else {
+        "hfm-player"
+    });
+    let dest_core = lib_dir.join(core_name);
+    if !src_core.exists() {
+        bail!("Release binary not found at {}", src_core.display());
+    }
+    fs::copy(&src_core, &dest_core)?;
+    println!("Copied core binary to {}", dest_core.display());
+
+    // --- 3. Copy the launcher to dist/ as hfm-player ---
+    let launcher_name = if os == "windows" {
         "hfm-player.exe"
     } else {
         "hfm-player"
     };
-    let src_bin = Path::new("../../target/final-release").join(exe_name);
-    let dest_bin = lib_dir.join(exe_name);
-    if !src_bin.exists() {
-        bail!("Release binary not found at {}", src_bin.display());
-    }
-    fs::copy(&src_bin, &dest_bin)?;
-    println!("Copied core binary to {}", dest_bin.display());
-
-    // --- 3. Copy the launcher to dist/ with a descriptive name ---
-    let launcher_name = if os == "windows" {
-        "haram-filtered-media-player.exe"
-    } else {
-        "haram-filtered-media-player"
-    };
-    let launcher_src = Path::new("../../target/final-release").join(if os == "windows" {
+    let src_launcher = Path::new("../../target/final-release").join(if os == "windows" {
         "launcher.exe"
     } else {
         "launcher"
     });
-    let launcher_dest = dist_dir.join(launcher_name);
-    if !launcher_src.exists() {
-        bail!("Launcher binary not found at {}", launcher_src.display());
+    let dest_launcher = dist_dir.join(launcher_name);
+    if !src_launcher.exists() {
+        bail!("Launcher binary not found at {}", src_launcher.display());
     }
-    fs::copy(&launcher_src, &launcher_dest)?;
-    println!("Copied launcher to {}", launcher_dest.display());
+    fs::copy(&src_launcher, &dest_launcher)?;
+    println!("Copied launcher to {}", dest_launcher.display());
 
-    // --- 4. Set rpath on Linux/macOS ---
+    // --- 4. Set rpath on Linux/macOS for the core binary ---
     if os == "linux" {
         let status = std::process::Command::new("patchelf")
-            .args(&["--set-rpath", "$ORIGIN", dest_bin.to_str().unwrap()])
+            .args(&["--set-rpath", "$ORIGIN", dest_core.to_str().unwrap()])
             .status()?;
         if !status.success() {
             eprintln!("Warning: patchelf failed (is it installed?)");
         }
     } else if os == "macos" {
         let status = std::process::Command::new("install_name_tool")
-            .args(&["-add_rpath", "@executable_path", dest_bin.to_str().unwrap()])
+            .args(&[
+                "-add_rpath",
+                "@executable_path",
+                dest_core.to_str().unwrap(),
+            ])
             .status()?;
         if !status.success() {
             eprintln!("Warning: install_name_tool failed");
