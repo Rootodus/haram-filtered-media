@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use flate2::read::GzDecoder;
 use reqwest::blocking::Client;
 use serde_json::Value;
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::copy;
 use std::path::{Path, PathBuf};
@@ -126,6 +127,8 @@ pub fn prepare_cache() -> Result<()> {
     Ok(())
 }
 
+/// Copy all .dll/.dylib/.so files from a source directory to a destination,
+/// optionally also copying a named plugin directory (but skipping it in the first loop).
 pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&str>) -> Result<()> {
     ensure_dir(dest_dir)?;
     let ext = if cfg!(windows) {
@@ -135,11 +138,19 @@ pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&st
     } else {
         "so"
     };
-    // Walk the source and copy all files with the correct extension.
+
+    // First loop: copy all non‑plugin libraries to the top‑level dest_dir.
     for entry in WalkDir::new(src_dir) {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() {
+            // If a plugin subdirectory is specified, skip any file that lives inside that directory.
+            if let Some(sub) = plugin_subdir {
+                let sub_os = OsStr::new(sub);
+                if path.components().any(|c| c.as_os_str() == sub_os) {
+                    continue; // skip plugin files – they will be handled in the second loop
+                }
+            }
             if let Some(ext_os) = path.extension() {
                 if ext_os == ext {
                     let dest = dest_dir.join(path.file_name().unwrap());
@@ -149,7 +160,7 @@ pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&st
         }
     }
 
-    // If a plugin subdirectory is requested, find it and copy its contents.
+    // Second loop: if a plugin subdirectory is requested, find it and copy its contents.
     if let Some(sub) = plugin_subdir {
         if let Some(plugin_src) = find_plugin_dir(src_dir, sub) {
             let plugin_dest = dest_dir.join(sub);
@@ -173,10 +184,11 @@ pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&st
             }
         }
     }
+
     Ok(())
 }
 
-/// List of plugin DLLs to exclude from packaging.
+/// List of plugin DLLs to exclude from packaging (e.g., due to driver dependencies).
 fn should_exclude_plugin(filename: &str) -> bool {
     let excluded = [
         "gstnvcodec.dll",
