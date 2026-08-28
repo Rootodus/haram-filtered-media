@@ -4,16 +4,18 @@ use crate::download::get_pypi_wheel_url;
 use anyhow::{Result, bail};
 use std::env;
 
-pub const GSTREAMER_VERSION: &str = "1.27.90";
+// Both runtime and plugins now use the same stable 1.28.6 version.
+pub const GSTREAMER_VERSION: &str = "1.28.6";
 pub const GSTREAMER_PLUGINS_VERSION: &str = "1.28.6";
 pub const OPENVINO_VERSION: &str = "2025.4.1";
 
+/// URL for the GStreamer runtime (stable 1.28.6 via `gstreamer-libs`).
 pub fn gstreamer_runtime_url() -> Result<String> {
     let os = env::consts::OS;
     match os {
-        "windows" => get_pypi_wheel_url("gstreamer-runtime", GSTREAMER_VERSION, "win_amd64"),
+        "windows" => get_pypi_wheel_url("gstreamer-libs", GSTREAMER_VERSION, "win_amd64"),
         "macos" => get_pypi_wheel_url(
-            "gstreamer-runtime",
+            "gstreamer-libs",
             GSTREAMER_VERSION,
             "macosx_10_13_universal2",
         ),
@@ -21,6 +23,7 @@ pub fn gstreamer_runtime_url() -> Result<String> {
     }
 }
 
+/// URL for the GStreamer plugins (stable 1.28.6).
 pub fn gstreamer_plugins_url() -> Result<String> {
     let os = env::consts::OS;
     match os {
@@ -69,8 +72,6 @@ pub fn check_urls() -> Result<()> {
     let ov_url = openvino_url()?;
     println!("  OpenVINO: {}", ov_url);
 
-    // Optionally, you could do a HEAD request to verify existence,
-    // but we'll just print them for now.
     println!("URL check complete.");
     Ok(())
 }
