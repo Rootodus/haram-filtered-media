@@ -5,6 +5,7 @@
 mod bundle;
 mod download;
 mod gstreamer;
+mod models;
 mod openvino;
 mod urls;
 
@@ -33,6 +34,7 @@ fn main() -> Result<()> {
 
     gstreamer::prepare_gstreamer()?;
     openvino::prepare_openvino()?;
+    models::prepare_models()?;
     bundle::bundle_binary()?;
 
     println!("Packaging complete! Artifacts in dist/");

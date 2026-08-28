@@ -8,6 +8,8 @@ use std::env;
 pub const GSTREAMER_VERSION: &str = "1.28.6";
 pub const GSTREAMER_PLUGINS_VERSION: &str = "1.28.6";
 pub const OPENVINO_VERSION: &str = "2025.4.1";
+pub const PPHUMANSEG_MODEL_URL: &str = "https://huggingface.co/opencv/human_segmentation_pphumanseg/resolve/main/human_segmentation_pphumanseg_2023mar.onnx?download=true";
+pub const HTDEMUCS_MODEL_URL: &str = "https://huggingface.co/StemSplitio/htdemucs-ft-vocals-onnx/resolve/main/htdemucs_ft_vocals_fp16weights.onnx?download=true";
 
 /// URL for the GStreamer core libraries (stable 1.28.6 via `gstreamer-libs`).
 pub fn gstreamer_libs_url() -> Result<String> {
