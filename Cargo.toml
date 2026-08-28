@@ -121,5 +121,6 @@ debug = "line-tables-only"
 # Do not use panic = "abort" because code could rely/relies on catch_unwind
 inherits = "release"
 lto = "fat"
+debug = false
 codegen-units = 1
 strip = true
