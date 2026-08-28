@@ -20,19 +20,34 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// Resolve the path to a model file.
-/// First checks if the model exists in the `models/` directory relative to the executable.
-/// If not, falls back to the development path (hfm-core/models/).
+/// First checks the current working directory (expected to be the root of the distribution).
+/// Then checks the executable's parent directory with `../models/`.
+/// Finally falls back to the development path.
 fn resolve_model_path(filename: &str) -> PathBuf {
-    // Check relative to the executable (for distribution).
-    if let Ok(exe_path) = std::env::current_exe() {
-        let models_dir = exe_path.parent().unwrap().join("models");
-        let model_path = models_dir.join(filename);
+    // 1. Check current working directory (the launcher sets this to the dist root).
+    if let Ok(cwd) = std::env::current_dir() {
+        let model_path = cwd.join("models").join(filename);
         if model_path.exists() {
             return model_path;
         }
     }
 
-    // Fallback to development path.
+    // 2. Check relative to the executable's parent (core binary is in lib/).
+    if let Ok(exe_path) = std::env::current_exe() {
+        let exe_dir = exe_path.parent().unwrap();
+        // Core is in lib/, so models are at ../models/.
+        let model_path = exe_dir.join("../models").join(filename);
+        if model_path.exists() {
+            return model_path;
+        }
+        // Also check ./models/ (if the executable is in the root).
+        let model_path = exe_dir.join("models").join(filename);
+        if model_path.exists() {
+            return model_path;
+        }
+    }
+
+    // 3. Fallback to development path.
     let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../hfm-core/models")
         .join(filename);
