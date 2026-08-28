@@ -118,7 +118,7 @@ impl Default for AppState {
             current_time_ns: 0,
             total_duration_ns: 0,
             volume: Volume::default(),
-            log_lines: vec!["🚀 Media player ready".to_string()],
+            log_lines: vec!["Media player ready".to_string()],
             show_logs: false,
             mode: AppMode::default(),
             bottom_panel_height: 0.0,

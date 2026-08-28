@@ -223,7 +223,7 @@ impl ApplicationHandler for App {
             event_loop
                 .create_window(
                     winit::window::WindowAttributes::default()
-                        .with_title("hfm‑player")
+                        .with_title("hfm-player")
                         .with_inner_size(winit::dpi::LogicalSize::new(960, 540)),
                 )
                 .unwrap(),

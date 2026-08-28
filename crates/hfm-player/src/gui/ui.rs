@@ -41,7 +41,7 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                                 .corner_radius(10.0)
                                 .inner_margin(20.0)
                                 .show(ui, |ui| {
-                                    ui.heading("⏳ Loading video...");
+                                    ui.heading("Loading video...");
                                     ui.add_space(10.0);
                                     ui.label("Preparing pipeline...");
                                 });
@@ -60,11 +60,11 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                 .corner_radius(10.0)
                 .inner_margin(Margin::same(20))
                 .show(ui, |ui| {
-                    ui.heading("🎬 hfm-player Setup");
+                    ui.heading("hfm-player Setup");
                     ui.add_space(20.0);
 
                     ui.horizontal(|ui| {
-                        if ui.button("📂 Open Video").clicked() {
+                        if ui.button("Open Video").clicked() {
                             bridge.open_video_file();
                         }
                         ui.label(match &state.video_path {
@@ -78,13 +78,13 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                     ui.horizontal(|ui| {
                         ui.checkbox(
                             &mut state.video_filter_enabled,
-                            "🎨 Enable Video Filter (PPHumanSeg)",
+                            "Enable Video Filter (PPHumanSeg)",
                         );
                     });
                     ui.horizontal(|ui| {
                         ui.checkbox(
                             &mut state.audio_processing_enabled,
-                            "🎵 Enable Audio Processing (HT-Demucs)",
+                            "Enable Audio Processing (HT-Demucs)",
                         );
                     });
 
@@ -140,7 +140,7 @@ fn setup_ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
 
                     ui.add_space(20.0);
 
-                    if ui.button("▶ Confirm & Play").clicked() {
+                    if ui.button("Confirm & Play").clicked() {
                         bridge.send(super::GuiCommand::ConfirmSetup);
                     }
                     ui.label("If no video is selected, a default video will be used.");
