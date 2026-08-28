@@ -77,6 +77,9 @@ pub struct AppState {
 
     // Bottom panel
     pub bottom_panel_height: f32,
+
+    // Loading
+    pub is_loading: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +122,7 @@ impl Default for AppState {
             show_logs: false,
             mode: AppMode::default(),
             bottom_panel_height: 0.0,
+            is_loading: false,
         }
     }
 }

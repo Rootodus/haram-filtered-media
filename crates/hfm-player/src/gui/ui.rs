@@ -33,6 +33,21 @@ pub fn ui(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ui, |_ui| {});
+
+            // 3. If loading, show a translucent overlay with a loading message.
+            if state.is_loading {
+                egui::CentralPanel::default()
+                    .frame(
+                        egui::Frame::new()
+                            .fill(egui::Color32::from_black_alpha(180))
+                            .corner_radius(10.0),
+                    )
+                    .show(ui, |ui| {
+                        ui.centered_and_justified(|ui| {
+                            ui.heading("⏳ Loading video...");
+                        });
+                    });
+            }
         }
     }
 }

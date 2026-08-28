@@ -176,6 +176,7 @@ impl App {
                         state.audio_processing_enabled,
                     )
                 };
+                self.state.lock().is_loading = true;
 
                 match self.pipeline_manager.restart(
                     video_path,
@@ -186,6 +187,7 @@ impl App {
                 ) {
                     Ok(duration) => {
                         self.state.lock().total_duration_ns = duration;
+                        self.state.lock().is_loading = false;
                         self.has_audio = self.pipeline_manager.has_audio;
                         self.state.lock().playback_state = PlaybackState::Playing;
                         // Reset the fallback clock start time
@@ -205,9 +207,10 @@ impl App {
                 state.mode = AppMode::Setup;
                 state.current_time_ns = 0;
                 state.total_duration_ns = 0;
+                state.playback_state = PlaybackState::Paused;
+                state.is_loading = false;
                 // Reset fallback clock when going back to setup
                 self.start_instant = Instant::now();
-                state.playback_state = PlaybackState::Paused;
                 self.sync_state.reset();
                 self.last_frame = None;
             }
@@ -255,6 +258,13 @@ impl ApplicationHandler for App {
                     state.current_time_ns = self.audio_clock.now_ns();
                 }
 
+                // Clear loading state if we have a frame to render.
+                if let Some(front_pts) = self.pipeline_manager.peek_video_pts() {
+                    if state.lock().is_loading {
+                        state.lock().is_loading = false;
+                    }
+                }
+
                 let mut frame_to_render = self.last_frame.clone();
                 let now = if self.audio_clock.is_initialized() {
                     self.audio_clock.now_ns()
@@ -272,6 +282,9 @@ impl ApplicationHandler for App {
                         if !self.audio_clock.is_initialized() || delta <= SYNC_TOLERANCE_NS {
                             if let Some(frame) = self.pipeline_manager.pop_processed_frame() {
                                 frame_to_render = Some(frame.data);
+                                if state.lock().is_loading {
+                                    state.lock().is_loading = false;
+                                }
                                 self.last_frame = frame_to_render.clone();
                                 self.frame_count += 1;
                                 if self.fps_timer.elapsed() >= Duration::from_secs(1) {
