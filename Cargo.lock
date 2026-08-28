@@ -2590,6 +2590,7 @@ dependencies = [
  "tar",
  "walkdir",
  "wgpu",
+ "windows-sys 0.61.2",
  "winit",
  "zip",
 ]
