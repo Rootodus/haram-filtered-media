@@ -151,7 +151,6 @@ pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&st
 
     // If a plugin subdirectory is requested, find it and copy its contents.
     if let Some(sub) = plugin_subdir {
-        // Walk the source tree to find the first directory named `sub`.
         if let Some(plugin_src) = find_plugin_dir(src_dir, sub) {
             let plugin_dest = dest_dir.join(sub);
             ensure_dir(&plugin_dest)?;
@@ -159,6 +158,11 @@ pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&st
                 let entry = entry?;
                 let path = entry.path();
                 if path.is_file() {
+                    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if should_exclude_plugin(filename) {
+                        println!("Skipping plugin: {}", filename);
+                        continue;
+                    }
                     let rel = path.strip_prefix(&plugin_src)?;
                     let dest = plugin_dest.join(rel);
                     if let Some(parent) = dest.parent() {
@@ -170,6 +174,17 @@ pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&st
         }
     }
     Ok(())
+}
+
+/// List of plugin DLLs to exclude from packaging.
+fn should_exclude_plugin(filename: &str) -> bool {
+    let excluded = [
+        "gstnvcodec.dll",
+        "gstcuda.dll",
+        "gstd3d11.dll",
+        // add others if needed
+    ];
+    excluded.contains(&filename)
 }
 
 /// Recursively find a directory with the given name under `root`.
