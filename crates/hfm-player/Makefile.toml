@@ -10,9 +10,9 @@ command = "cargo"
 args = ["run", "--bin", "pack", "--", "--clean"]
 
 [tasks.build-release]
-description = "Build the release binary with GUI feature"
+description = "Build the release binary with GUI feature using final-release profile"
 command = "cargo"
-args = ["build", "--release", "--features", "gui"]
+args = ["build", "--profile", "final-release", "--features", "gui"]
 
 [tasks.run-pack]
 description = "Run the pack script to bundle dependencies"

@@ -13,22 +13,22 @@ pub fn bundle_binary() -> Result<()> {
     let lib_dir = dist_dir.join("lib");
     ensure_dir(&lib_dir)?;
 
-    // --- 1. Build the launcher ---
+    // --- 1. Build the launcher with final-release profile ---
     println!("Building launcher...");
     let status = std::process::Command::new("cargo")
-        .args(["build", "--bin", "launcher", "--release"])
+        .args(["build", "--bin", "launcher", "--profile", "final-release"])
         .status()?;
     if !status.success() {
         bail!("Failed to build launcher");
     }
 
-    // --- 2. Copy the core binary to lib/ ---
+    // --- 2. Copy the core binary (built with final-release) to lib/ ---
     let exe_name = if os == "windows" {
         "hfm-player.exe"
     } else {
         "hfm-player"
     };
-    let src_bin = Path::new("../../target/release").join(exe_name);
+    let src_bin = Path::new("../../target/final-release").join(exe_name);
     let dest_bin = lib_dir.join(exe_name);
     if !src_bin.exists() {
         bail!("Release binary not found at {}", src_bin.display());
@@ -42,7 +42,7 @@ pub fn bundle_binary() -> Result<()> {
     } else {
         "haram-filtered-media-player"
     };
-    let launcher_src = Path::new("../../target/release").join(if os == "windows" {
+    let launcher_src = Path::new("../../target/final-release").join(if os == "windows" {
         "launcher.exe"
     } else {
         "launcher"
