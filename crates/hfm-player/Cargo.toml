@@ -37,7 +37,6 @@ serde_json = { workspace = true }
 [target.'cfg(target_os = "windows")'.dependencies]
 wgpu = { workspace = true, features = ["dx12", "wgsl"] }
 winit = { workspace = true, features = ["rwh_06"] }
-windows-sys = { workspace = true, features = ["Win32_System_LibraryLoader"] }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 wgpu = { workspace = true, features = ["metal", "wgsl"] }
@@ -55,3 +54,7 @@ dhat = ["dep:dhat"]
 [[bin]]
 name = "pack"
 path = "src/bin/pack/main.rs"
+
+[[bin]]
+name = "launcher"
+path = "src/bin/launcher/main.rs"
