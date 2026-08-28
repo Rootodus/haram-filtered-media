@@ -6,7 +6,7 @@ use reqwest::blocking::Client;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::copy;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tar::Archive;
 use walkdir::WalkDir;
 use zip::ZipArchive;
@@ -135,6 +135,7 @@ pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&st
     } else {
         "so"
     };
+    // Walk the source and copy all files with the correct extension.
     for entry in WalkDir::new(src_dir) {
         let entry = entry?;
         let path = entry.path();
@@ -147,9 +148,11 @@ pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&st
             }
         }
     }
+
+    // If a plugin subdirectory is requested, find it and copy its contents.
     if let Some(sub) = plugin_subdir {
-        let plugin_src = src_dir.join(sub);
-        if plugin_src.exists() && plugin_src.is_dir() {
+        // Walk the source tree to find the first directory named `sub`.
+        if let Some(plugin_src) = find_plugin_dir(src_dir, sub) {
             let plugin_dest = dest_dir.join(sub);
             ensure_dir(&plugin_dest)?;
             for entry in WalkDir::new(&plugin_src) {
@@ -167,4 +170,17 @@ pub fn copy_libraries(src_dir: &Path, dest_dir: &Path, plugin_subdir: Option<&st
         }
     }
     Ok(())
+}
+
+/// Recursively find a directory with the given name under `root`.
+fn find_plugin_dir(root: &Path, name: &str) -> Option<PathBuf> {
+    WalkDir::new(root).into_iter().find_map(|e| {
+        if let Ok(entry) = e {
+            let path = entry.path();
+            if path.is_dir() && path.file_name().and_then(|n| n.to_str()) == Some(name) {
+                return Some(path.to_path_buf());
+            }
+        }
+        None
+    })
 }
