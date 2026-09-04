@@ -4,11 +4,11 @@ use std::collections::VecDeque;
 pub type PackedIndex = usize;
 
 const STATE_FREE: u8 = 0;
-pub const STATE_INGESTED: u8 = 1;
-pub const STATE_ML_ACQUIRED: u8 = 2;
-pub const STATE_ML_COMMITTED: u8 = 3;
-pub const STATE_GPU_UPLOADED: u8 = 4; // video only
-pub const STATE_CONSUMED: u8 = 5; // audio only
+const STATE_INGESTED: u8 = 1;
+const STATE_ML_ACQUIRED: u8 = 2;
+const STATE_ML_COMMITTED: u8 = 3;
+const STATE_GPU_UPLOADED: u8 = 4; // video only
+const STATE_CONSUMED: u8 = 5; // audio only
 
 #[repr(C)]
 pub struct Slot<const SIZE: usize> {
