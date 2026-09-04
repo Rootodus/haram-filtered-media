@@ -2,7 +2,7 @@
     all(windows, feature = "only-gui-no-console"),
     windows_subsystem = "windows"
 )]
-#![allow(unused)] // this is temporary 
+#![allow(unused)] // this is temporary
 
 mod app;
 mod audio_output;
