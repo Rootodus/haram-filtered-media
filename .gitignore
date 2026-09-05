@@ -11,6 +11,7 @@ fallbacks/
 *.png
 *.mp4
 *.wav
+*.zip
 temp.txt
 _temp.txt
 .compiler-diagnostics.json
