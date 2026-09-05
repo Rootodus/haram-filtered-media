@@ -4,8 +4,8 @@ use anyhow::Result;
 use std::env;
 use std::path::Path;
 
-use crate::download::{CACHE_DIR, LIB_DIR, copy_libraries, download_file, ensure_dir, extract_zip};
-use crate::urls::{gstreamer_libs_url, gstreamer_plugins_url};
+use crate::pack::download::{CACHE_DIR, LIB_DIR, copy_libraries, download_file, ensure_dir, extract_zip};
+use crate::pack::urls::{gstreamer_libs_url, gstreamer_plugins_url};
 
 pub fn prepare_gstreamer() -> Result<()> {
     let os = env::consts::OS;

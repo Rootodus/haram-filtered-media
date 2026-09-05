@@ -10,7 +10,7 @@ use tar::Builder;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
-use crate::download::DIST_DIR;
+use crate::pack::download::DIST_DIR;
 
 /// Create a platform‑specific archive of the dist/ folder.
 pub fn archive_dist() -> Result<()> {

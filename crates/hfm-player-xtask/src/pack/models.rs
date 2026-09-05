@@ -4,8 +4,8 @@ use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
-use crate::download::{download_file, ensure_dir};
-use crate::urls::{HTDEMUCS_MODEL_URL, PPHUMANSEG_MODEL_URL};
+use crate::pack::download::{download_file, ensure_dir};
+use crate::pack::urls::{HTDEMUCS_MODEL_URL, PPHUMANSEG_MODEL_URL};
 
 pub fn prepare_models() -> Result<()> {
     let cache_dir = Path::new("target/cache").join("models");

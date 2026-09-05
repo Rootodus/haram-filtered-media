@@ -3,9 +3,17 @@
 use anyhow::{Result, bail};
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::download::{DIST_DIR, ensure_dir};
+use crate::pack::download::{DIST_DIR, ensure_dir};
+
+/// Returns the workspace root directory.
+fn workspace_root() -> PathBuf {
+    // CARGO_MANIFEST_DIR points to <workspace>/crates/hfm-player-xtask/
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Go up two levels to the workspace root.
+    manifest_dir.parent().unwrap().parent().unwrap().to_path_buf()
+}
 
 pub fn bundle_binary() -> Result<()> {
     let os = env::consts::OS;
@@ -28,11 +36,10 @@ pub fn bundle_binary() -> Result<()> {
     } else {
         "hfm-player-core"
     };
-    let src_core = Path::new("../../target/final-release").join(if os == "windows" {
-        "hfm-player.exe"
-    } else {
-        "hfm-player"
-    });
+    let workspace_root = workspace_root();
+    let src_core = workspace_root
+        .join("target/final-release")
+        .join(if os == "windows" { "hfm-player.exe" } else { "hfm-player" });
     let dest_core = lib_dir.join(core_name);
     if !src_core.exists() {
         bail!("Release binary not found at {}", src_core.display());
@@ -46,11 +53,9 @@ pub fn bundle_binary() -> Result<()> {
     } else {
         "hfm-player"
     };
-    let src_launcher = Path::new("../../target/final-release").join(if os == "windows" {
-        "launcher.exe"
-    } else {
-        "launcher"
-    });
+    let src_launcher = workspace_root
+        .join("target/final-release")
+        .join(if os == "windows" { "launcher.exe" } else { "launcher" });
     let dest_launcher = dist_dir.join(launcher_name);
     if !src_launcher.exists() {
         bail!("Launcher binary not found at {}", src_launcher.display());

@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/hfm-core", "crates/hfm-player", "crates/hfm-web"]
+members = [
+    "crates/hfm-core",
+    "crates/hfm-player",
+    "crates/hfm-player-xtask",
+#    "crates/hfm-reader",
+    "crates/hfm-web",
+]
 
 [workspace.dependencies]
 # --- Shared Dependencies ---

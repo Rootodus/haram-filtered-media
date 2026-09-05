@@ -2574,7 +2574,6 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
- "flate2",
  "gstreamer",
  "gstreamer-app",
  "gstreamer-video",
@@ -2583,14 +2582,22 @@ dependencies = [
  "naga",
  "parking_lot",
  "pollster 1.0.1",
- "reqwest 0.13.4",
  "rfd",
  "ringbuf",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "hfm-player-xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "reqwest 0.13.4",
  "serde_json",
  "tar",
  "walkdir",
- "wgpu",
- "winit",
  "zip",
 ]
 

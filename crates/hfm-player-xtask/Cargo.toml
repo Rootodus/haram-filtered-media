@@ -1,0 +1,14 @@
+[package]
+name = "hfm-player-xtask"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+reqwest = { workspace = true, features = ["blocking", "json"] }
+zip = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
+walkdir = { workspace = true }
+serde_json = { workspace = true }

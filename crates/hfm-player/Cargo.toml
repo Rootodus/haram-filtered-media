@@ -25,13 +25,6 @@ egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
 dhat = { workspace = true, optional = true }
-# Bin-specific dependencies
-reqwest = { workspace = true, features = ["blocking", "json"] }
-zip = { workspace = true }
-tar = { workspace = true }
-flate2 = { workspace = true }
-walkdir = { workspace = true }
-serde_json = { workspace = true }
 
 # GPU & windowing (target-specific features)
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -54,11 +47,3 @@ default = []
 only-gui-no-console = [] # enables GUI-only mode (no console on Windows)
 no-default-video = [] # Disables default video fallback for distribution
 dhat = ["dep:dhat"]
-
-[[bin]]
-name = "pack"
-path = "src/bin/pack/main.rs"
-
-[[bin]]
-name = "launcher"
-path = "src/bin/launcher/main.rs"

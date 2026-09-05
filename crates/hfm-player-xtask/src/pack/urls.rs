@@ -1,6 +1,6 @@
 //! Centralized URL generation for GStreamer and OpenVINO.
 
-use crate::download::get_pypi_wheel_url;
+use crate::pack::download::get_pypi_wheel_url;
 use anyhow::{Result, bail};
 use std::env;
 

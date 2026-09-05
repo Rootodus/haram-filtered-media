@@ -6,8 +6,8 @@ use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
 
-use crate::download::{CACHE_DIR, LIB_DIR, download_file, ensure_dir, extract_tar_gz, extract_zip};
-use crate::urls::openvino_url;
+use crate::pack::download::{CACHE_DIR, LIB_DIR, download_file, ensure_dir, extract_tar_gz, extract_zip};
+use crate::pack::urls::openvino_url;
 
 pub fn prepare_openvino() -> Result<()> {
     let os = env::consts::OS;
