@@ -3,28 +3,31 @@
 use anyhow::{Result, bail};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::pack::download::{DIST_DIR, ensure_dir};
+use crate::pack::download::{dist_dir, ensure_dir};
 
 /// Returns the workspace root directory.
 fn workspace_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR points to <workspace>/crates/hfm-player-xtask/
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // Go up two levels to the workspace root.
     manifest_dir.parent().unwrap().parent().unwrap().to_path_buf()
 }
 
 pub fn bundle_binary() -> Result<()> {
     let os = env::consts::OS;
-    let dist_dir = Path::new(DIST_DIR);
+    let dist_dir = dist_dir();
     let lib_dir = dist_dir.join("lib");
     ensure_dir(&lib_dir)?;
 
     // --- 1. Build the launcher ---
     println!("Building launcher...");
     let status = std::process::Command::new("cargo")
-        .args(["build", "--bin", "launcher", "--profile", "final-release"])
+        .args([
+            "build",
+            "--package", "hfm-player",
+            "--bin", "launcher",
+            "--profile", "final-release",
+        ])
         .status()?;
     if !status.success() {
         bail!("Failed to build launcher");

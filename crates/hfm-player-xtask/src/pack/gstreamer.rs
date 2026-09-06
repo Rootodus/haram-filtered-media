@@ -2,9 +2,8 @@
 
 use anyhow::Result;
 use std::env;
-use std::path::Path;
 
-use crate::pack::download::{CACHE_DIR, LIB_DIR, copy_libraries, download_file, ensure_dir, extract_zip};
+use crate::pack::download::{cache_dir, lib_dir, copy_libraries, download_file, ensure_dir, extract_zip};
 use crate::pack::urls::{gstreamer_libs_url, gstreamer_plugins_url};
 
 pub fn prepare_gstreamer() -> Result<()> {
@@ -22,7 +21,7 @@ pub fn prepare_gstreamer() -> Result<()> {
 }
 
 fn prepare_gstreamer_windows() -> Result<()> {
-    let cache_dir = Path::new(CACHE_DIR).join("gstreamer");
+    let cache_dir = cache_dir().join("gstreamer");
     ensure_dir(&cache_dir)?;
 
     let libs_url = gstreamer_libs_url()?;
@@ -39,11 +38,11 @@ fn prepare_gstreamer_windows() -> Result<()> {
     let plugins_extract = cache_dir.join("plugins_extracted");
     extract_zip(&plugins_whl, &plugins_extract)?;
 
-    let lib_dir = Path::new(LIB_DIR);
-    ensure_dir(lib_dir)?;
+    let lib_dir = lib_dir();
+    ensure_dir(&lib_dir)?;
 
-    copy_libraries(&libs_extract, lib_dir, Some("gstreamer-1.0"))?;
-    copy_libraries(&plugins_extract, lib_dir, Some("gstreamer-1.0"))?;
+    copy_libraries(&libs_extract, &lib_dir, Some("gstreamer-1.0"))?;
+    copy_libraries(&plugins_extract, &lib_dir, Some("gstreamer-1.0"))?;
 
     println!(
         "GStreamer core libraries and plugins copied to {}",
@@ -53,7 +52,7 @@ fn prepare_gstreamer_windows() -> Result<()> {
 }
 
 fn prepare_gstreamer_macos() -> Result<()> {
-    let cache_dir = Path::new(CACHE_DIR).join("gstreamer");
+    let cache_dir = cache_dir().join("gstreamer");
     ensure_dir(&cache_dir)?;
 
     let libs_url = gstreamer_libs_url()?;
@@ -70,11 +69,11 @@ fn prepare_gstreamer_macos() -> Result<()> {
     let plugins_extract = cache_dir.join("plugins_extracted");
     extract_zip(&plugins_whl, &plugins_extract)?;
 
-    let lib_dir = Path::new(LIB_DIR);
-    ensure_dir(lib_dir)?;
+    let lib_dir = lib_dir();
+    ensure_dir(&lib_dir)?;
 
-    copy_libraries(&libs_extract, lib_dir, Some("gstreamer-1.0"))?;
-    copy_libraries(&plugins_extract, lib_dir, Some("gstreamer-1.0"))?;
+    copy_libraries(&libs_extract, &lib_dir, Some("gstreamer-1.0"))?;
+    copy_libraries(&plugins_extract, &lib_dir, Some("gstreamer-1.0"))?;
 
     println!(
         "GStreamer core libraries and plugins copied to {}",

@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use flate2::read::GzDecoder;
 use reqwest::blocking::Client;
 use serde_json::Value;
+use std::env;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::copy;
@@ -12,9 +13,26 @@ use tar::Archive;
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
-pub const CACHE_DIR: &str = "target/cache";
-pub const DIST_DIR: &str = "dist";
-pub const LIB_DIR: &str = "dist/lib";
+/// Returns the workspace root directory.
+fn workspace_root() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir.parent().unwrap().parent().unwrap().to_path_buf()
+}
+
+/// Absolute path to the distribution directory (at workspace root).
+pub fn dist_dir() -> PathBuf {
+    workspace_root().join("dist")
+}
+
+/// Absolute path to the cache directory (at workspace root).
+pub fn cache_dir() -> PathBuf {
+    workspace_root().join("target/cache")
+}
+
+/// Absolute path to the `dist/lib` directory.
+pub fn lib_dir() -> PathBuf {
+    dist_dir().join("lib")
+}
 
 pub fn ensure_dir(path: &Path) -> Result<()> {
     if !path.exists() {
@@ -47,11 +65,7 @@ pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
         println!("Already extracted: {}", dest_dir.display());
         return Ok(());
     }
-    println!(
-        "Extracting {} to {}",
-        zip_path.display(),
-        dest_dir.display()
-    );
+    println!("Extracting {} to {}", zip_path.display(), dest_dir.display());
     let file = File::open(zip_path)?;
     let mut archive = ZipArchive::new(file)?;
     archive.extract(dest_dir)?;
@@ -63,11 +77,7 @@ pub fn extract_tar_gz(tgz_path: &Path, dest_dir: &Path) -> Result<()> {
         println!("Already extracted: {}", dest_dir.display());
         return Ok(());
     }
-    println!(
-        "Extracting {} to {}",
-        tgz_path.display(),
-        dest_dir.display()
-    );
+    println!("Extracting {} to {}", tgz_path.display(), dest_dir.display());
     let tar_gz = File::open(tgz_path)?;
     let tar = GzDecoder::new(tar_gz);
     let mut archive = Archive::new(tar);
@@ -107,21 +117,21 @@ pub fn get_pypi_wheel_url(package: &str, version: &str, platform_substr: &str) -
 }
 
 pub fn clean() -> Result<()> {
-    let dist = Path::new(DIST_DIR);
-    let cache = Path::new(CACHE_DIR);
+    let dist = dist_dir();
+    let cache = cache_dir();
     if dist.exists() {
         fs::remove_dir_all(dist)?;
-        println!("Removed {}", DIST_DIR);
+        println!("Removed dist/");
     }
     if cache.exists() {
         fs::remove_dir_all(cache)?;
-        println!("Removed {}", CACHE_DIR);
+        println!("Removed target/cache/");
     }
     Ok(())
 }
 
 pub fn prepare_cache() -> Result<()> {
-    let cache = Path::new(CACHE_DIR);
+    let cache = cache_dir();
     ensure_dir(&cache.join("gstreamer"))?;
     ensure_dir(&cache.join("openvino"))?;
     Ok(())

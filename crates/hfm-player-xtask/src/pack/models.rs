@@ -2,16 +2,15 @@
 
 use anyhow::Result;
 use std::fs;
-use std::path::Path;
 
-use crate::pack::download::{download_file, ensure_dir};
+use crate::pack::download::{cache_dir, dist_dir, download_file, ensure_dir};
 use crate::pack::urls::{HTDEMUCS_MODEL_URL, PPHUMANSEG_MODEL_URL};
 
 pub fn prepare_models() -> Result<()> {
-    let cache_dir = Path::new("target/cache").join("models");
+    let cache_dir = cache_dir().join("models");
     ensure_dir(&cache_dir)?;
 
-    let dist_models_dir = Path::new("dist").join("models");
+    let dist_models_dir = dist_dir().join("models");
     ensure_dir(&dist_models_dir)?;
 
     // --- PPHumanSeg model ---

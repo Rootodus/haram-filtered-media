@@ -3,10 +3,9 @@
 use anyhow::{Result, anyhow, bail};
 use std::env;
 use std::fs;
-use std::path::Path;
 use walkdir::WalkDir;
 
-use crate::pack::download::{CACHE_DIR, LIB_DIR, download_file, ensure_dir, extract_tar_gz, extract_zip};
+use crate::pack::download::{cache_dir, lib_dir, download_file, ensure_dir, extract_tar_gz, extract_zip};
 use crate::pack::urls::openvino_url;
 
 pub fn prepare_openvino() -> Result<()> {
@@ -21,7 +20,7 @@ pub fn prepare_openvino() -> Result<()> {
 }
 
 fn prepare_openvino_windows() -> Result<()> {
-    let cache_dir = Path::new(CACHE_DIR).join("openvino");
+    let cache_dir = cache_dir().join("openvino");
     let extracted_dir = cache_dir.join("extracted");
     let zip_path = cache_dir.join("openvino.zip");
     ensure_dir(&cache_dir)?;
@@ -32,8 +31,8 @@ fn prepare_openvino_windows() -> Result<()> {
         extract_zip(&zip_path, &extracted_dir)?;
     }
 
-    let lib_dir = Path::new(LIB_DIR);
-    ensure_dir(lib_dir)?;
+    let lib_dir = lib_dir();
+    ensure_dir(&lib_dir)?;
 
     // Find the directory containing openvino.dll.
     let dll_dir = WalkDir::new(&extracted_dir)
@@ -66,7 +65,7 @@ fn prepare_openvino_windows() -> Result<()> {
 }
 
 fn prepare_openvino_linux() -> Result<()> {
-    let cache_dir = Path::new(CACHE_DIR).join("openvino");
+    let cache_dir = cache_dir().join("openvino");
     let extracted_dir = cache_dir.join("extracted");
     let tgz_path = cache_dir.join("openvino.tgz");
     ensure_dir(&cache_dir)?;
@@ -77,8 +76,8 @@ fn prepare_openvino_linux() -> Result<()> {
         extract_tar_gz(&tgz_path, &extracted_dir)?;
     }
 
-    let lib_dir = Path::new(LIB_DIR);
-    ensure_dir(lib_dir)?;
+    let lib_dir = lib_dir();
+    ensure_dir(&lib_dir)?;
 
     let runtime_dir = WalkDir::new(&extracted_dir).into_iter().find_map(|e| {
         if let Ok(entry) = e {
@@ -114,7 +113,7 @@ fn prepare_openvino_linux() -> Result<()> {
 }
 
 fn prepare_openvino_macos() -> Result<()> {
-    let cache_dir = Path::new(CACHE_DIR).join("openvino");
+    let cache_dir = cache_dir().join("openvino");
     let extracted_dir = cache_dir.join("extracted");
     let tgz_path = cache_dir.join("openvino.tgz");
     ensure_dir(&cache_dir)?;
@@ -125,8 +124,8 @@ fn prepare_openvino_macos() -> Result<()> {
         extract_tar_gz(&tgz_path, &extracted_dir)?;
     }
 
-    let lib_dir = Path::new(LIB_DIR);
-    ensure_dir(lib_dir)?;
+    let lib_dir = lib_dir();
+    ensure_dir(&lib_dir)?;
 
     let runtime_dir = WalkDir::new(&extracted_dir).into_iter().find_map(|e| {
         if let Ok(entry) = e {
