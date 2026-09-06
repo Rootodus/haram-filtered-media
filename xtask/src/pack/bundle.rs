@@ -6,11 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::config::CrateConfig;
+use super::{PLAYER_FEATURES, CrateConfig};
 use super::download::ensure_dir;
-
-// Feature flags used for all builds of hfm-player.
-const BUILD_FEATURES: &[&str] = &["only-gui-no-console", "no-default-video"];
 
 pub fn bundle_binary(config: &CrateConfig) -> Result<()> {
     let os = env::consts::OS;
@@ -22,7 +19,7 @@ pub fn bundle_binary(config: &CrateConfig) -> Result<()> {
     println!("Building launcher...");
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--package", config.package, "--bin", config.launcher_bin, "--profile", "final-release"]);
-    for feature in BUILD_FEATURES {
+    for feature in PLAYER_FEATURES {
         cmd.args(["--features", feature]);
     }
     let status = cmd.status()?;
@@ -34,7 +31,7 @@ pub fn bundle_binary(config: &CrateConfig) -> Result<()> {
     println!("Building core binary...");
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--package", config.package, "--bin", config.core_bin, "--profile", "final-release"]);
-    for feature in BUILD_FEATURES {
+    for feature in PLAYER_FEATURES {
         cmd.args(["--features", feature]);
     }
     let status = cmd.status()?;

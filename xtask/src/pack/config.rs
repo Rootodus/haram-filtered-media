@@ -4,6 +4,8 @@ use anyhow::{Result, bail};
 use std::env;
 use std::path::PathBuf;
 
+pub const PLAYER_FEATURES: &[&str] = &["only-gui-no-console", "no-default-video"];
+
 /// Configuration for packaging a specific workspace crate.
 #[derive(Debug, Clone)]
 pub struct CrateConfig {

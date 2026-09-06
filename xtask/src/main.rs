@@ -15,7 +15,7 @@ mod pack;
 
 use std::env;
 use std::process::Command;
-use pack::get_config;
+use pack::{PLAYER_FEATURES, get_config};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -52,11 +52,19 @@ fn check_urls() {
 }
 
 fn build() {
-    run_cargo("build", &[
-        "--package", "hfm-player",
-        "--profile", "final-release",
-        "--features", "only-gui-no-console,no-default-video",
-    ]);
+    let mut cmd = Command::new("cargo");
+    cmd.args(["build", "--package", "hfm-player", "--profile", "final-release"]);
+    for feature in PLAYER_FEATURES {
+        cmd.args(["--features", feature]);
+    }
+    run_cargo_cmd(cmd);
+}
+
+fn run_cargo_cmd(mut cmd: Command) {
+    let status = cmd.status().expect("Failed to run cargo");
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
 }
 
 fn pack(crate_name: &str) {
@@ -76,15 +84,4 @@ fn pack(crate_name: &str) {
 fn dist(crate_name: &str) {
     build();
     pack(crate_name);
-}
-
-fn run_cargo(command: &str, args: &[&str]) {
-    let status = Command::new("cargo")
-        .arg(command)
-        .args(args)
-        .status()
-        .expect("Failed to run cargo");
-    if !status.success() {
-        std::process::exit(status.code().unwrap_or(1));
-    }
 }

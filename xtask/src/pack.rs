@@ -12,7 +12,7 @@ mod models;
 mod openvino;
 mod urls;
 
-pub use config::{CrateConfig, get_config};
+pub use config::{PLAYER_FEATURES, CrateConfig, get_config};
 
 use anyhow::Result;
 
