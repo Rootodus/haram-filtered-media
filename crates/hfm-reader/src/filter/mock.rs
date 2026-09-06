@@ -17,7 +17,7 @@ impl UppercaseFilter {
 impl TextFilter for UppercaseFilter {
     fn process(&self, raw: &RawChunk) -> ReaderResult<ProcessedChunk> {
         let transformed = raw.data.to_uppercase();
-        Ok(ProcessedChunk::new(raw.offset, transformed))
+        Ok(ProcessedChunk::new(raw.offset, transformed, raw.generation))
     }
 }
 
@@ -34,7 +34,7 @@ impl NoopFilter {
 
 impl TextFilter for NoopFilter {
     fn process(&self, raw: &RawChunk) -> ReaderResult<ProcessedChunk> {
-        Ok(ProcessedChunk::new(raw.offset, raw.data.clone()))
+        Ok(ProcessedChunk::new(raw.offset, raw.data.clone(), raw.generation))
     }
 }
 

@@ -40,7 +40,7 @@ pub enum PipelineState {
 /// Provides a synchronous API to send commands and read the buffer.
 pub struct PipelineController {
     source: Mutex<Option<Box<dyn TextSource>>>,
-    buffer: Arc<TextBufferImpl>,
+    buffer: Arc<parking_lot::Mutex<TextBufferImpl>>,
     filter: Arc<dyn TextFilter>,
     generation: Arc<SeekGeneration>,
     running: Arc<AtomicBool>,
@@ -58,7 +58,7 @@ impl PipelineController {
     /// The pipeline is initially idle. Call `start()` to start the threads.
     pub fn new(
         source: Box<dyn TextSource>,
-        buffer: Arc<TextBufferImpl>,
+        buffer: TextBufferImpl,
         filter: impl TextFilter + 'static,
     ) -> Self {
         let (cmd_tx, cmd_rx) = bounded(16);
@@ -68,7 +68,7 @@ impl PipelineController {
 
         Self {
             source: Mutex::new(Some(source)),
-            buffer,
+            buffer: Arc::new(parking_lot::Mutex::new(buffer)),
             filter,
             generation,
             running,
@@ -173,7 +173,8 @@ impl PipelineController {
                                 match filter.process(&raw) {
                                     Ok(processed) => {
                                         // Apply to buffer.
-                                        if let Err(e) = buffer.apply_processed(processed) {
+                                        let mut buffer_guard = buffer.lock();
+                                        if let Err(e) = buffer_guard.apply_processed(processed) {
                                             eprintln!("Worker: apply_processed error: {}", e);
                                         }
                                     }
@@ -207,7 +208,7 @@ impl PipelineController {
     }
 
     /// Get a reference to the buffer.
-    pub fn buffer(&self) -> Arc<TextBufferImpl> {
+    pub fn buffer(&self) -> Arc<parking_lot::Mutex<TextBufferImpl>> {
         self.buffer.clone()
     }
 

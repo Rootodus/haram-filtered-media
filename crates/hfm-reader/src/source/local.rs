@@ -90,7 +90,7 @@ impl TextSource for LocalFileSource {
         let data = self.content[start_usize..end_usize].to_string();
         self.current_idx += 1;
 
-        PullOutcome::Chunk(RawChunk::new(start, data))
+        PullOutcome::Chunk(RawChunk::new(start, data, 0))
     }
 
     fn seek(&mut self, offset: Offset) -> ReaderResult<()> {

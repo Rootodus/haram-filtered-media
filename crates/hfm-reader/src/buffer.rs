@@ -216,8 +216,7 @@ impl TextBufferImpl {
 
 impl TextBuffer for TextBufferImpl {
     fn insert_raw(&mut self, chunk: RawChunk) -> ReaderResult<()> {
-        // Acquire write lock.
-        let _lock = self.lock.write();
+        // No lock needed because we have &mut self.
 
         // If the raw offset already exists, we could overwrite, but we assume unique.
         if self.raw_to_index.contains_key(&chunk.offset) {
@@ -263,7 +262,7 @@ impl TextBuffer for TextBufferImpl {
     }
 
     fn apply_processed(&mut self, chunk: ProcessedChunk) -> ReaderResult<()> {
-        let _lock = self.lock.write();
+        // No lock needed because we have &mut self.
 
         // Find the entry by raw offset.
         let idx = self.find_chunk_index(chunk.offset)?;
@@ -336,7 +335,7 @@ impl TextBuffer for TextBufferImpl {
     }
 
     fn flush_before(&mut self, threshold: Offset, generation: u64) -> Vec<RawChunk> {
-        let _lock = self.lock.write();
+        // No lock needed because we have &mut self.
         self.flush_internal(threshold, generation)
     }
 }
