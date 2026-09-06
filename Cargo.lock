@@ -2589,6 +2589,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hfm-reader"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "hfm-core",
+ "parking_lot",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "hfm-web"
 version = "0.1.0"
 dependencies = [
