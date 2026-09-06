@@ -9,6 +9,9 @@ use std::process::Command;
 use super::config::CrateConfig;
 use super::download::ensure_dir;
 
+// Feature flags used for all builds of hfm-player.
+const BUILD_FEATURES: &[&str] = &["only-gui-no-console", "no-default-video"];
+
 pub fn bundle_binary(config: &CrateConfig) -> Result<()> {
     let os = env::consts::OS;
     let dist_dir = config.dist_dir();
@@ -17,28 +20,24 @@ pub fn bundle_binary(config: &CrateConfig) -> Result<()> {
 
     // --- 1. Build the launcher ---
     println!("Building launcher...");
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "--package", config.package,
-            "--bin", config.launcher_bin,
-            "--profile", "final-release",
-        ])
-        .status()?;
+    let mut cmd = Command::new("cargo");
+    cmd.args(["build", "--package", config.package, "--bin", config.launcher_bin, "--profile", "final-release"]);
+    for feature in BUILD_FEATURES {
+        cmd.args(["--features", feature]);
+    }
+    let status = cmd.status()?;
     if !status.success() {
         bail!("Failed to build launcher");
     }
 
     // --- 2. Build the core binary ---
     println!("Building core binary...");
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "--package", config.package,
-            "--bin", config.core_bin,
-            "--profile", "final-release",
-        ])
-        .status()?;
+    let mut cmd = Command::new("cargo");
+    cmd.args(["build", "--package", config.package, "--bin", config.core_bin, "--profile", "final-release"]);
+    for feature in BUILD_FEATURES {
+        cmd.args(["--features", feature]);
+    }
+    let status = cmd.status()?;
     if !status.success() {
         bail!("Failed to build core binary");
     }
