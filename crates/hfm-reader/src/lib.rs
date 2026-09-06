@@ -4,8 +4,11 @@ pub mod buffer;
 pub mod source;
 pub mod filter;
 pub mod pipeline;
+pub mod types;
 
-// Re-export key traits and types (to be filled after implementations)
+// Re-export key types and traits
+pub use types::{Offset, RawChunk, ProcessedChunk, ChunkState, ReaderError};
+// Re-export traits once implemented
 // pub use buffer::TextBuffer;
 // pub use source::TextSource;
 // pub use filter::TextFilter;
