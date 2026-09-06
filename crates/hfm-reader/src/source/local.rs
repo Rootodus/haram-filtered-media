@@ -108,6 +108,7 @@ impl TextSource for LocalFileSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_local_source_basic() {
@@ -135,6 +136,9 @@ mod tests {
             PullOutcome::Chunk(chunk) => {
                 assert_eq!(chunk.offset, Offset::ZERO);
                 assert_eq!(chunk.data, "line1");
+                // generation is set by the pipeline, not the source, so it should be 0 by default.
+                // In tests, the source doesn't set it; it will be set by the pipeline.
+                // We'll skip checking generation here because it's not set.
             }
             _ => panic!("Expected chunk"),
         }

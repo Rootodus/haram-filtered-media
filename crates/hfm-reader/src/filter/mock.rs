@@ -41,10 +41,11 @@ impl TextFilter for NoopFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Offset;
 
     #[test]
     fn test_uppercase() {
-        let raw = RawChunk::new(0.into(), "hello world");
+        let raw = RawChunk::new(0.into(), "hello world", 0);
         let filter = UppercaseFilter;
         let processed = filter.process(&raw).unwrap();
         assert_eq!(processed.data, "HELLO WORLD");
@@ -53,7 +54,7 @@ mod tests {
 
     #[test]
     fn test_noop() {
-        let raw = RawChunk::new(0.into(), "keep as is");
+        let raw = RawChunk::new(0.into(), "keep as is", 0);
         let filter = NoopFilter;
         let processed = filter.process(&raw).unwrap();
         assert_eq!(processed.data, "keep as is");

@@ -126,11 +126,10 @@ impl PipelineController {
                         // We'll handle commands in the main controller thread, not here.
                         // The pump just pulls raw chunks and sends them.
                         match source.try_pull_chunk(Duration::from_millis(10)) {
-                            PullOutcome::Chunk(chunk) => {
-                                // Check generation; discard if stale.
-                                if chunk.generation != generation.current() {
-                                    continue;
-                                }
+                            PullOutcome::Chunk(mut chunk) => {
+                                // Stamp the chunk with the current generation.
+                                let current_gen = generation.current();
+                                chunk.generation = current_gen;
                                 let _ = raw_tx.send(chunk); // Ignore send errors (worker may be gone).
                             }
                             PullOutcome::Empty => {
