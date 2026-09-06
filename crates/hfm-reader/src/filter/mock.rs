@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn test_uppercase() {
-        let raw = RawChunk::new(0.into(), "hello world", 0);
+        let raw = RawChunk::new(Offset(0), "hello world", 0);
         let filter = UppercaseFilter;
         let processed = filter.process(&raw).unwrap();
         assert_eq!(processed.data, "HELLO WORLD");
@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn test_noop() {
-        let raw = RawChunk::new(0.into(), "keep as is", 0);
+        let raw = RawChunk::new(Offset(0), "keep as is", 0);
         let filter = NoopFilter;
         let processed = filter.process(&raw).unwrap();
         assert_eq!(processed.data, "keep as is");
