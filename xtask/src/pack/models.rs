@@ -3,14 +3,15 @@
 use anyhow::Result;
 use std::fs;
 
-use crate::pack::download::{cache_dir, dist_dir, download_file, ensure_dir};
-use crate::pack::urls::{HTDEMUCS_MODEL_URL, PPHUMANSEG_MODEL_URL};
+use super::config::CrateConfig;
+use super::download::{cache_dir, download_file, ensure_dir};
+use super::urls::{HTDEMUCS_MODEL_URL, PPHUMANSEG_MODEL_URL};
 
-pub fn prepare_models() -> Result<()> {
+pub fn prepare_models(config: &CrateConfig) -> Result<()> {
     let cache_dir = cache_dir().join("models");
     ensure_dir(&cache_dir)?;
 
-    let dist_models_dir = dist_dir().join("models");
+    let dist_models_dir = config.dist_dir().join("models");
     ensure_dir(&dist_models_dir)?;
 
     // --- PPHumanSeg model ---
@@ -27,7 +28,7 @@ pub fn prepare_models() -> Result<()> {
 
     if !pphumanseg_dest.exists() {
         fs::copy(&pphumanseg_cache, &pphumanseg_dest)?;
-        println!("Copied PPHumanSeg model to dist/models/");
+        println!("Copied PPHumanSeg model to {}/", dist_models_dir.display());
     }
 
     // --- HTDemucs model ---
@@ -44,7 +45,7 @@ pub fn prepare_models() -> Result<()> {
 
     if !htdemucs_dest.exists() {
         fs::copy(&htdemucs_cache, &htdemucs_dest)?;
-        println!("Copied HTDemucs model to dist/models/");
+        println!("Copied HTDemucs model to {}/", dist_models_dir.display());
     }
 
     Ok(())

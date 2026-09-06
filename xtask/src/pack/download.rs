@@ -4,7 +4,6 @@ use anyhow::{Context, Result, bail};
 use flate2::read::GzDecoder;
 use reqwest::blocking::Client;
 use serde_json::Value;
-use std::env;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::copy;
@@ -13,25 +12,11 @@ use tar::Archive;
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
-/// Returns the workspace root directory.
-fn workspace_root() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.parent().unwrap().parent().unwrap().to_path_buf()
-}
-
-/// Absolute path to the distribution directory (at workspace root).
-pub fn dist_dir() -> PathBuf {
-    workspace_root().join("dist")
-}
+use super::config::workspace_root;
 
 /// Absolute path to the cache directory (at workspace root).
 pub fn cache_dir() -> PathBuf {
     workspace_root().join("target/cache")
-}
-
-/// Absolute path to the `dist/lib` directory.
-pub fn lib_dir() -> PathBuf {
-    dist_dir().join("lib")
 }
 
 pub fn ensure_dir(path: &Path) -> Result<()> {
@@ -116,15 +101,16 @@ pub fn get_pypi_wheel_url(package: &str, version: &str, platform_substr: &str) -
     );
 }
 
+/// Remove the entire `dist/` folder and the `target/cache/` folder.
 pub fn clean() -> Result<()> {
-    let dist = dist_dir();
+    let dist = workspace_root().join("dist");
     let cache = cache_dir();
     if dist.exists() {
-        fs::remove_dir_all(dist)?;
+        fs::remove_dir_all(&dist)?;
         println!("Removed dist/");
     }
     if cache.exists() {
-        fs::remove_dir_all(cache)?;
+        fs::remove_dir_all(&cache)?;
         println!("Removed target/cache/");
     }
     Ok(())

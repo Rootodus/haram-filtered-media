@@ -6,4 +6,4 @@ rustc-workspace-wrapper = ""
 rustflags = ["-C", "linker=lld-link", "-C", "link-arg=/STACK:8388608"]
 
 [alias]
-player-xtask = "run --package hfm-player-xtask --"
+xtask = "run --package xtask --"

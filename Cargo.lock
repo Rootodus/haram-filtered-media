@@ -2589,19 +2589,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hfm-player-xtask"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "flate2",
- "reqwest 0.13.4",
- "serde_json",
- "tar",
- "walkdir",
- "zip",
-]
-
-[[package]]
 name = "hfm-web"
 version = "0.1.0"
 dependencies = [
@@ -7316,6 +7303,19 @@ name = "xml-rs"
 version = "0.8.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "reqwest 0.13.4",
+ "serde_json",
+ "tar",
+ "walkdir",
+ "zip",
+]
 
 [[package]]
 name = "yoke"

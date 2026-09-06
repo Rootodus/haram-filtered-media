@@ -1,6 +1,6 @@
-//! Automation tasks for hfm-player.
+//! Automation tasks for workspace crates.
 //!
-//! Usage: cargo xtask [TASK]
+//! Usage: cargo xtask [TASK] [CRATE]
 //!
 //! Tasks:
 //!   clean         Remove dist/ and target/cache/
@@ -8,25 +8,30 @@
 //!   pack          Run the pack logic (download deps, bundle)
 //!   dist          Build + pack (default)
 //!   check-urls    Validate download URLs
+//!
+//! CRATE defaults to "hfm-player" if not specified.
 
 mod pack;
 
 use std::env;
 use std::process::Command;
+use pack::get_config;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     let task = args.get(1).map(String::as_str).unwrap_or("dist");
+    let crate_name = args.get(2).map(String::as_str).unwrap_or("hfm-player");
 
     match task {
         "clean" => clean(),
         "build" => build(),
-        "pack" => pack(),
-        "dist" => dist(),
+        "pack" => pack(crate_name),
+        "dist" => dist(crate_name),
         "check-urls" => check_urls(),
         _ => {
             eprintln!("Unknown task: {}", task);
             eprintln!("Available: clean, build, pack, dist, check-urls");
+            eprintln!("Usage: cargo xtask [TASK] [CRATE]  (default CRATE = hfm-player)");
             std::process::exit(1);
         }
     }
@@ -54,16 +59,23 @@ fn build() {
     ]);
 }
 
-fn pack() {
-    if let Err(e) = pack::run() {
+fn pack(crate_name: &str) {
+    let config = match get_config(crate_name) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = pack::run(config) {
         eprintln!("Pack failed: {}", e);
         std::process::exit(1);
     }
 }
 
-fn dist() {
+fn dist(crate_name: &str) {
     build();
-    pack();
+    pack(crate_name);
 }
 
 fn run_cargo(command: &str, args: &[&str]) {

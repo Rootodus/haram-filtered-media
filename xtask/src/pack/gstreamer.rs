@@ -3,14 +3,15 @@
 use anyhow::Result;
 use std::env;
 
-use crate::pack::download::{cache_dir, lib_dir, copy_libraries, download_file, ensure_dir, extract_zip};
-use crate::pack::urls::{gstreamer_libs_url, gstreamer_plugins_url};
+use super::config::CrateConfig;
+use super::download::{cache_dir, copy_libraries, download_file, ensure_dir, extract_zip};
+use super::urls::{gstreamer_libs_url, gstreamer_plugins_url};
 
-pub fn prepare_gstreamer() -> Result<()> {
+pub fn prepare_gstreamer(config: &CrateConfig) -> Result<()> {
     let os = env::consts::OS;
     match os {
-        "windows" => prepare_gstreamer_windows()?,
-        "macos" => prepare_gstreamer_macos()?,
+        "windows" => prepare_gstreamer_windows(config)?,
+        "macos" => prepare_gstreamer_macos(config)?,
         "linux" => {
             println!("Linux: GStreamer is not bundled; system installation required.");
             println!("Install GStreamer 1.0 via your package manager.");
@@ -20,7 +21,7 @@ pub fn prepare_gstreamer() -> Result<()> {
     Ok(())
 }
 
-fn prepare_gstreamer_windows() -> Result<()> {
+fn prepare_gstreamer_windows(config: &CrateConfig) -> Result<()> {
     let cache_dir = cache_dir().join("gstreamer");
     ensure_dir(&cache_dir)?;
 
@@ -38,7 +39,7 @@ fn prepare_gstreamer_windows() -> Result<()> {
     let plugins_extract = cache_dir.join("plugins_extracted");
     extract_zip(&plugins_whl, &plugins_extract)?;
 
-    let lib_dir = lib_dir();
+    let lib_dir = config.lib_dir();
     ensure_dir(&lib_dir)?;
 
     copy_libraries(&libs_extract, &lib_dir, Some("gstreamer-1.0"))?;
@@ -51,7 +52,7 @@ fn prepare_gstreamer_windows() -> Result<()> {
     Ok(())
 }
 
-fn prepare_gstreamer_macos() -> Result<()> {
+fn prepare_gstreamer_macos(config: &CrateConfig) -> Result<()> {
     let cache_dir = cache_dir().join("gstreamer");
     ensure_dir(&cache_dir)?;
 
@@ -69,7 +70,7 @@ fn prepare_gstreamer_macos() -> Result<()> {
     let plugins_extract = cache_dir.join("plugins_extracted");
     extract_zip(&plugins_whl, &plugins_extract)?;
 
-    let lib_dir = lib_dir();
+    let lib_dir = config.lib_dir();
     ensure_dir(&lib_dir)?;
 
     copy_libraries(&libs_extract, &lib_dir, Some("gstreamer-1.0"))?;

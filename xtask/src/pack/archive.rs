@@ -3,43 +3,31 @@
 use anyhow::{Result, bail};
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tar::Builder;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
-use crate::pack::download::dist_dir;
+use super::config::CrateConfig;
+use super::config::workspace_root;
 
-/// Returns the workspace root directory.
-fn workspace_root() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.parent().unwrap().parent().unwrap().to_path_buf()
-}
-
-/// Create a platform‑specific archive of the dist/ folder at the workspace root.
-pub fn archive_dist() -> Result<()> {
-    let os = std::env::consts::OS;
-    let archive_name = match os {
-        "windows" => "hfm-player-windows-x64.zip",
-        "linux" => "hfm-player-linux-x86_64.tar.gz",
-        "macos" => "hfm-player-macos-universal.tar.gz",
-        _ => bail!("Unsupported OS for archiving: {}", os),
-    };
-
-    let dist_path = dist_dir();
+/// Create a platform‑specific archive of the crate's dist folder.
+pub fn archive_dist(config: &CrateConfig) -> Result<()> {
+    let dist_path = config.dist_dir();
     if !dist_path.exists() {
         bail!("Distribution folder does not exist: {}", dist_path.display());
     }
 
+    let archive_name = config.archive_name();
     let archive_path = workspace_root().join(archive_name);
 
+    let os = std::env::consts::OS;
     match os {
         "windows" => create_zip(&dist_path, &archive_path)?,
         "linux" | "macos" => create_tar_gz(&dist_path, &archive_path)?,
-        _ => unreachable!(),
+        _ => bail!("Unsupported OS for archiving: {}", os),
     }
 
     println!("Archive created: {}", archive_path.display());
