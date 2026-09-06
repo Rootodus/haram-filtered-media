@@ -1,0 +1,15 @@
+[package]
+name = "hfm-reader"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+hfm-core = { path = "../hfm-core" }
+crossbeam-channel = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+# Will add proptest, loom, etc. later

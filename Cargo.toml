@@ -4,7 +4,7 @@ members = [
     "xtask",
     "crates/hfm-core",
     "crates/hfm-player",
-#    "crates/hfm-reader",
+    "crates/hfm-reader",
     "crates/hfm-web",
 ]
 
