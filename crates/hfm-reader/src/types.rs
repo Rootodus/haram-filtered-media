@@ -29,18 +29,20 @@ impl From<u64> for Offset {
     }
 }
 
-/// A raw (unprocessed) text chunk with its starting offset.
+/// A raw (unprocessed) text chunk with its starting offset and seek generation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawChunk {
     pub offset: Offset,
     pub data: String,
+    pub generation: u64,
 }
 
 impl RawChunk {
-    pub fn new(offset: Offset, data: impl Into<String>) -> Self {
+    pub fn new(offset: Offset, data: impl Into<String>, generation: u64) -> Self {
         Self {
             offset,
             data: data.into(),
+            generation,
         }
     }
 
@@ -50,18 +52,20 @@ impl RawChunk {
     }
 }
 
-/// A processed text chunk with its starting offset.
+/// A processed text chunk with its starting offset and seek generation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcessedChunk {
     pub offset: Offset,
     pub data: String,
+    pub generation: u64,
 }
 
 impl ProcessedChunk {
-    pub fn new(offset: Offset, data: impl Into<String>) -> Self {
+    pub fn new(offset: Offset, data: impl Into<String>, generation: u64) -> Self {
         Self {
             offset,
             data: data.into(),
+            generation,
         }
     }
 

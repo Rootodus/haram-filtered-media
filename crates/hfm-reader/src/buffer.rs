@@ -123,7 +123,7 @@ impl TextBufferImpl {
         for &idx in remove_indices.iter().rev() {
             let entry = self.chunks.remove(idx);
             // Reconstruct RawChunk from stored raw data.
-            discarded.push(RawChunk::new(entry.raw_offset, entry.raw_data));
+            discarded.push(RawChunk::new(entry.raw_offset, entry.raw_data, entry.generation));
             // raw_to_index will be rebuilt later.
         }
 
@@ -157,7 +157,7 @@ impl TextBuffer for TextBufferImpl {
         // Acquire write lock.
         let _lock = self.lock.write();
 
-        // If the raw offset already exists, overwrite? We assume unique.
+        // If the raw offset already exists, we could overwrite, but we assume unique.
         if self.raw_to_index.contains_key(&chunk.offset) {
             return Err(ReaderError::Internal(format!(
                 "Raw chunk already exists at offset {:?}",
@@ -181,7 +181,7 @@ impl TextBuffer for TextBufferImpl {
             raw_data: chunk.data,
             current_offset,
             processed: None,
-            generation: 0, // will be set by pipeline controller on insertion
+            generation: chunk.generation,
         };
 
         // Insert into chunks vector (append, since raw offsets increase).
@@ -207,37 +207,22 @@ impl TextBuffer for TextBufferImpl {
         let idx = self.find_chunk_index(chunk.offset)?;
         let entry = &mut self.chunks[idx];
 
-        // Verify that the raw data exists and we haven't applied processed yet.
-        // We allow overwriting if already processed.
-        let raw_len = entry.raw_data.len();
-        let old_len = entry.len();
+        // Store the generation from the processed chunk.
+        // We can optionally verify it matches the stored generation, but we'll just store it.
+        // However, we must ensure the generation matches for flush consistency.
+        // We'll update the entry's generation to the one from the processed chunk.
+        // This is correct because the processed chunk carries the generation that was
+        // current at processing time, and we want to keep that.
+        entry.generation = chunk.generation;
 
-        // Replace the range in processed_text.
+        let raw_len = entry.raw_data.len();
         let start = entry.current_offset.as_usize();
-        let end = start + raw_len; // raw range, not processed range.
-        // The raw range always occupies [current_offset, current_offset + raw_len)
-        // because we inserted raw data contiguous. But if there were previous shifts,
-        // current_offset may have moved; however, the raw range of this chunk
-        // is still at current_offset, because its current_offset was set when inserted
-        // and shifts only affect subsequent chunks. So the raw data occupies exactly
-        // [current_offset, current_offset + raw_len) in processed_text.
-        // However, if this chunk was already processed, the processed data may be
-        // longer/shorter, but we still replace the raw range because we stored
-        // the raw data separately. The processed_text currently contains the
-        // processed data if any, but we need to replace the raw range with the new
-        // processed data. But we don't store raw data in processed_text; we store
-        // either raw or processed. Since we always append raw data first, and later
-        // replace, the range we need to replace is from current_offset to current_offset + raw_len.
-        // However, if this chunk was already processed, the current_offset may have shifted
-        // due to previous replacements? Actually current_offset is stable for a given chunk;
-        // it only changes when chunks before it are shifted. So it's accurate.
-        // So we replace the range [start, start+raw_len) with the new processed data.
+        // Replace the raw range with the processed data.
         let new_text = &chunk.data;
         self.processed_text.replace_range(start..start + raw_len, new_text);
 
         // Update entry.
         entry.processed = Some(chunk.data.clone());
-        // raw_len unchanged, but we need to compute delta for shifting.
         let new_len = new_text.len();
         let delta = new_len as i64 - raw_len as i64;
 
@@ -245,8 +230,6 @@ impl TextBuffer for TextBufferImpl {
         if delta != 0 {
             self.shift_offsets(idx + 1, delta);
         }
-
-        // Update the raw_to_index map is fine (keys are raw offsets, unchanged).
 
         Ok(())
     }
@@ -270,34 +253,22 @@ impl TextBuffer for TextBufferImpl {
         let _lock = self.lock.read();
 
         let target = processed_offset.as_u64();
-        // Linear scan over chunks (max 256, acceptable).
         let mut best_raw = None;
-        let mut best_current = 0;
         for entry in &self.chunks {
             let cur = entry.current_offset.as_u64();
             let end = entry.end_offset().as_u64();
             if cur <= target && target < end {
-                // Found the exact chunk.
+                // Exact match within this chunk.
                 return Ok(entry.raw_offset);
             }
-            // Keep track of the last chunk that starts before target.
             if cur <= target {
                 best_raw = Some(entry.raw_offset);
-                best_current = cur;
             }
         }
 
-        // If we didn't find an exact chunk, return the raw offset of the last chunk
-        // that starts before the target, or 0 if none.
         if let Some(raw) = best_raw {
-            // But we need to adjust by the offset within the chunk? Actually we just need the
-            // raw offset of the chunk that contains the position. If the target is exactly
-            // at the boundary between chunks, we can return the raw offset of the next chunk.
-            // For simplicity, we return the raw offset of the last chunk whose start <= target.
-            // That is sufficient for seeking.
             Ok(raw)
         } else {
-            // No chunk starts before target; return 0 (start of document).
             Ok(Offset::ZERO)
         }
     }
@@ -313,19 +284,19 @@ mod tests {
     use super::*;
     use crate::types::{RawChunk, ProcessedChunk};
 
-    fn make_raw(offset: u64, data: &str) -> RawChunk {
-        RawChunk::new(Offset(offset), data.to_string())
+    fn make_raw(offset: u64, data: &str, gen: u64) -> RawChunk {
+        RawChunk::new(Offset(offset), data.to_string(), gen)
     }
 
-    fn make_processed(offset: u64, data: &str) -> ProcessedChunk {
-        ProcessedChunk::new(Offset(offset), data.to_string())
+    fn make_processed(offset: u64, data: &str, gen: u64) -> ProcessedChunk {
+        ProcessedChunk::new(Offset(offset), data.to_string(), gen)
     }
 
     #[test]
     fn test_insert_and_read() {
         let mut buffer = TextBufferImpl::new(10);
-        buffer.insert_raw(make_raw(0, "hello ")).unwrap();
-        buffer.insert_raw(make_raw(6, "world")).unwrap();
+        buffer.insert_raw(make_raw(0, "hello ", 0)).unwrap();
+        buffer.insert_raw(make_raw(6, "world", 0)).unwrap();
 
         let text = buffer.read_range(Offset(0), Offset(11)).unwrap();
         assert_eq!(text, "hello world");
@@ -334,11 +305,11 @@ mod tests {
     #[test]
     fn test_apply_processed_shorter() {
         let mut buffer = TextBufferImpl::new(10);
-        buffer.insert_raw(make_raw(0, "hello world")).unwrap();
-        buffer.insert_raw(make_raw(11, "!" )).unwrap();
+        buffer.insert_raw(make_raw(0, "hello world", 0)).unwrap();
+        buffer.insert_raw(make_raw(11, "!", 0)).unwrap();
 
         // Process first chunk to "hi".
-        buffer.apply_processed(make_processed(0, "hi")).unwrap();
+        buffer.apply_processed(make_processed(0, "hi", 0)).unwrap();
 
         // Now the second chunk should have shifted.
         // Original: "hello world!" (12 bytes)
@@ -356,11 +327,11 @@ mod tests {
     #[test]
     fn test_apply_processed_longer() {
         let mut buffer = TextBufferImpl::new(10);
-        buffer.insert_raw(make_raw(0, "hi")).unwrap();
-        buffer.insert_raw(make_raw(2, "!")).unwrap();
+        buffer.insert_raw(make_raw(0, "hi", 0)).unwrap();
+        buffer.insert_raw(make_raw(2, "!", 0)).unwrap();
 
         // Process first chunk to "hello".
-        buffer.apply_processed(make_processed(0, "hello")).unwrap();
+        buffer.apply_processed(make_processed(0, "hello", 0)).unwrap();
 
         // Delta = 5 - 2 = +3. Second chunk shifts from 2 to 5.
         let idx = buffer.find_chunk_index(Offset(2)).unwrap();
@@ -372,18 +343,18 @@ mod tests {
     #[test]
     fn test_translate_to_raw() {
         let mut buffer = TextBufferImpl::new(10);
-        buffer.insert_raw(make_raw(0, "abc")).unwrap();
-        buffer.insert_raw(make_raw(3, "def")).unwrap();
+        buffer.insert_raw(make_raw(0, "abc", 0)).unwrap();
+        buffer.insert_raw(make_raw(3, "def", 0)).unwrap();
 
         // Process first chunk to "xyz" (length 3, same as raw).
-        buffer.apply_processed(make_processed(0, "xyz")).unwrap();
+        buffer.apply_processed(make_processed(0, "xyz", 0)).unwrap();
 
         // Raw offset 0 maps to current 0, raw offset 3 maps to current 3.
         assert_eq!(buffer.translate_to_raw(Offset(0)).unwrap(), Offset(0));
         assert_eq!(buffer.translate_to_raw(Offset(3)).unwrap(), Offset(3));
 
         // Now process second chunk to "uv" (length 2, delta -1).
-        buffer.apply_processed(make_processed(3, "uv")).unwrap();
+        buffer.apply_processed(make_processed(3, "uv", 0)).unwrap();
         // First chunk is at current 0, second is now at current 3 (since shift -1).
         // But the second chunk's raw offset is 3, and its current offset is 3.
         // Translate a target offset that falls within the second chunk: e.g., 4 (end).
@@ -396,9 +367,9 @@ mod tests {
     #[test]
     fn test_flush_before() {
         let mut buffer = TextBufferImpl::new(10);
-        buffer.insert_raw(make_raw(0, "a")).unwrap();
-        buffer.insert_raw(make_raw(1, "b")).unwrap();
-        buffer.insert_raw(make_raw(2, "c")).unwrap();
+        buffer.insert_raw(make_raw(0, "a", 0)).unwrap();
+        buffer.insert_raw(make_raw(1, "b", 0)).unwrap();
+        buffer.insert_raw(make_raw(2, "c", 0)).unwrap();
 
         // All generation 0.
         // Flush before offset 1 (everything before current offset 1).
@@ -421,23 +392,15 @@ mod tests {
     #[test]
     fn test_generation_filter() {
         let mut buffer = TextBufferImpl::new(10);
-        buffer.insert_raw(make_raw(0, "a")).unwrap();
-        // Simulate generation 1 for second chunk.
-        let mut chunk = make_raw(1, "b");
-        // We need to set generation manually; but our API doesn't expose generation.
-        // For test, we'll modify internal state.
-        // Actually we'll just call insert_raw which sets generation 0.
-        // We'll need to add a way to set generation. For now, skip.
-        // This test will pass when we add generation support in insert_raw.
-        // We'll add a parameter to insert_raw later.
+        buffer.insert_raw(make_raw(0, "a", 1)).unwrap();
+        buffer.insert_raw(make_raw(1, "b", 0)).unwrap();
+
+        // Flush with generation 1 should remove generation 0 chunks.
+        let discarded = buffer.flush_before(Offset(100), 1);
+        assert_eq!(discarded.len(), 1);
+        assert_eq!(discarded[0].offset, Offset(1)); // the generation 0 chunk
+        // The generation 1 chunk should remain.
+        let remaining = buffer.read_range(Offset(0), Offset(1)).unwrap();
+        assert_eq!(remaining, "a");
     }
 }
-
-This implementation covers:
-- `insert_raw`: appends raw data and stores the entry with `generation` set to 0 (to be updated later by the pipeline controller via a setter method).
-- `apply_processed`: replaces the raw range with processed text, shifts subsequent chunks, and updates the entry.
-- `read_range`: direct string slice.
-- `translate_to_raw`: linear scan (O(n)) but n is bounded by `max_chunks` (default 256).
-- `flush_before`: removes old chunks and compacts the string, re‑basing offsets.
-
-We should add a method to set the generation when inserting raw chunks; the pipeline controller will need to pass the current generation. We can modify `insert_raw` to take a `generation` parameter, but that would break the trait. Instead, we can add a separate method like `insert_raw_with_gen` or store the generation in a separate map. For now, we set generation to 0 and the pipeline controller can update it via a helper (e.g., `set_chunk_generation`). To keep it simple, we'll add a method `set_generation_for_raw` or modify the trait later. For Phase 3, we accept that generation is 0 and will handle it in Phase 5 when integrating the pipeline.
