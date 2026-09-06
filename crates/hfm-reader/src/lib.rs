@@ -8,10 +8,11 @@ pub mod types;
 
 // Re-export key types and traits
 pub use types::{Offset, RawChunk, ProcessedChunk, ChunkState, ReaderError};
-// Re-export traits
-pub use buffer::TextBuffer;
+// Re-export traits and implementations
+pub use buffer::{TextBuffer, TextBufferImpl};
 pub use source::{TextSource, PullOutcome, LocalFileSource};
-pub use filter::TextFilter;
+pub use filter::{TextFilter, UppercaseFilter, NoopFilter};
+pub use pipeline::{PipelineController, PipelineCommand, PipelineState};
 
 #[cfg(test)]
 mod tests {

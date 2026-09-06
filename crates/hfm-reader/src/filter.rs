@@ -1,7 +1,8 @@
-//! Text filter trait.
-//! Filters transform raw text chunks into processed text chunks.
+//! Text filter abstraction and implementations.
 
-use crate::types::{ProcessedChunk, RawChunk, ReaderError, ReaderResult};
+pub mod mock;
+
+use crate::types::{ProcessedChunk, RawChunk, ReaderResult};
 
 /// A filter that processes raw text chunks.
 ///
@@ -17,3 +18,6 @@ pub trait TextFilter: Send + Sync {
     /// Returns `ReaderError::Filter` if processing fails (e.g., model error).
     fn process(&self, raw: &RawChunk) -> ReaderResult<ProcessedChunk>;
 }
+
+// Re-export mock filters.
+pub use mock::{UppercaseFilter, NoopFilter};
