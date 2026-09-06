@@ -2596,6 +2596,7 @@ dependencies = [
  "crossbeam-channel",
  "hfm-core",
  "parking_lot",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 
