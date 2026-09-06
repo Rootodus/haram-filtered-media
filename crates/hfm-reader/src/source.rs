@@ -4,6 +4,8 @@
 use crate::types::{Offset, RawChunk, ReaderError, ReaderResult};
 use std::time::Duration;
 
+pub mod local;
+
 /// Outcome of a `try_pull_chunk` operation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PullOutcome {
@@ -39,3 +41,6 @@ pub trait TextSource: Send + Sync {
     /// does not support seeking.
     fn seek(&mut self, offset: Offset) -> ReaderResult<()>;
 }
+
+// Re-export the local implementation.
+pub use local::LocalFileSource;

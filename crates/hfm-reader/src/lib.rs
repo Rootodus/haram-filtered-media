@@ -10,7 +10,7 @@ pub mod types;
 pub use types::{Offset, RawChunk, ProcessedChunk, ChunkState, ReaderError};
 // Re-export traits
 pub use buffer::TextBuffer;
-pub use source::{TextSource, PullOutcome};
+pub use source::{TextSource, PullOutcome, LocalFileSource};
 pub use filter::TextFilter;
 
 #[cfg(test)]
