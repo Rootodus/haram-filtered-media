@@ -1,37 +1,30 @@
-//! Minimal GUI for hfm-reader using egui and winit.
+//! Minimal GUI for hfm-reader using eframe and egui.
 
 use std::sync::Arc;
 
-use egui::{CentralPanel, Context, Panel};
-use egui_winit::egui::ViewportId;
-use egui_winit::winit::application::ApplicationHandler;
-use egui_winit::winit::dpi::LogicalSize;
-use egui_winit::winit::event::WindowEvent;
-use egui_winit::winit::event_loop::{ActiveEventLoop, EventLoop};
-use egui_winit::winit::window::{Window, WindowAttributes};
-use egui_winit::State;
+use eframe::egui;
+use eframe::egui::{CentralPanel, Context, Panel, ScrollArea};
 use hfm_reader::{
     LocalFileSource, PipelineCommand, PipelineController, PipelineState,
     TextBuffer, TextBufferImpl, UppercaseFilter, Offset,
 };
+use parking_lot::Mutex;
 use rfd::FileDialog;
 
-struct App {
-    window: Option<Arc<Window>>,
-    pipeline: Option<PipelineController>,
-    egui_state: Option<State>,
+struct ReaderApp {
+    controller: Option<PipelineController>,
+    buffer: Arc<Mutex<TextBufferImpl>>,
     file_path: Option<String>,
     text_content: String,
     loading: bool,
     error: Option<String>,
 }
 
-impl App {
+impl ReaderApp {
     fn new() -> Self {
         Self {
-            window: None,
-            pipeline: None,
-            egui_state: None,
+            controller: None,
+            buffer: Arc::new(Mutex::new(TextBufferImpl::new(256))),
             file_path: None,
             text_content: String::new(),
             loading: false,
@@ -44,9 +37,6 @@ impl App {
         self.loading = true;
         self.error = None;
 
-        // Create a buffer.
-        let buffer = TextBufferImpl::new(256);
-
         // Create a source.
         let source = match LocalFileSource::new(&path) {
             Ok(src) => src,
@@ -57,9 +47,10 @@ impl App {
             }
         };
 
-        // Create a pipeline with UppercaseFilter.
+        // Create a pipeline with UppercaseFilter (for demo; replace later with ONNX).
         let filter = UppercaseFilter::new();
-        let mut controller = PipelineController::new(Box::new(source), buffer, filter);
+        let buffer_clone = self.buffer.clone();
+        let mut controller = PipelineController::new(Box::new(source), buffer_clone, filter);
 
         if let Err(e) = controller.start() {
             self.error = Some(format!("Failed to start pipeline: {}", e));
@@ -67,17 +58,13 @@ impl App {
             return;
         }
 
-        self.pipeline = Some(controller);
+        self.controller = Some(controller);
         self.loading = false;
-
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
     }
 
     fn update_text_content(&mut self) {
-        if let Some(pipeline) = &self.pipeline {
-            let buffer_lock = pipeline.buffer();
+        if let Some(controller) = &self.controller {
+            let buffer_lock = controller.buffer();
             let buffer = buffer_lock.lock();
             // Read a large range (e.g., up to 1MB) for simplicity.
             let max_offset = Offset(1024 * 1024);
@@ -89,10 +76,10 @@ impl App {
         }
     }
 
-    fn render_ui(&mut self, ui: &mut egui::Ui) {
+    fn render_ui(&mut self, ctx: &Context) {
         // If no file is loaded, show the file picker.
         if self.file_path.is_none() && self.error.is_none() && !self.loading {
-            CentralPanel::default().show(ui, |ui| {
+            CentralPanel::default().show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("hfm-reader");
                     ui.add_space(20.0);
@@ -110,7 +97,7 @@ impl App {
         }
 
         if self.loading {
-            CentralPanel::default().show(ui, |ui| {
+            CentralPanel::default().show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("Loading...");
                 });
@@ -119,10 +106,10 @@ impl App {
         }
 
         if let Some(err) = self.error.clone() {
-            CentralPanel::default().show(ui, |ui| {
+            CentralPanel::default().show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("Error");
-                    ui.label(&err);
+                    ui.label(err);
                     if ui.button("Try Again").clicked() {
                         self.error = None;
                         self.file_path = None;
@@ -133,9 +120,9 @@ impl App {
         }
 
         // Main text view.
-        CentralPanel::default().show(ui, |ui| {
+        CentralPanel::default().show(ctx, |ui| {
             let available = ui.available_size();
-            let scroll_area = egui::ScrollArea::vertical()
+            let scroll_area = ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .max_height(available.y);
 
@@ -147,7 +134,7 @@ impl App {
         });
 
         // Top toolbar.
-        Panel::top("toolbar").show(ui, |ui| {
+        Panel::top("toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open").clicked() {
                     if let Some(path) = FileDialog::new()
@@ -158,20 +145,20 @@ impl App {
                     }
                 }
                 ui.label(format!("File: {}", self.file_path.as_deref().unwrap_or("none")));
-                if let Some(pipeline) = &self.pipeline {
-                    let state = pipeline.state();
+                if let Some(controller) = &self.controller {
+                    let state = controller.state();
                     ui.label(format!("State: {:?}", state));
                     if state == PipelineState::Running {
                         if ui.button("Pause").clicked() {
-                            let _ = pipeline.send_command(PipelineCommand::Pause);
+                            let _ = controller.send_command(PipelineCommand::Pause);
                         }
                     } else if state == PipelineState::Paused {
                         if ui.button("Resume").clicked() {
-                            let _ = pipeline.send_command(PipelineCommand::Resume);
+                            let _ = controller.send_command(PipelineCommand::Resume);
                         }
                     }
                     if ui.button("Stop").clicked() {
-                        let _ = pipeline.send_command(PipelineCommand::Stop);
+                        let _ = controller.send_command(PipelineCommand::Stop);
                     }
                 }
             });
@@ -179,85 +166,28 @@ impl App {
     }
 }
 
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    WindowAttributes::default()
-                        .with_title("hfm-reader")
-                        .with_inner_size(LogicalSize::new(800, 600)),
-                )
-                .unwrap(),
-        );
-        self.window = Some(window.clone());
-
-        // Create the egui state with the window.
-        let viewport_id = ViewportId::from_hash_of(window.id());
-        let scale_factor = window.scale_factor() as f32;
-        let ctx = Context::default();
-        self.egui_state = Some(State::new(
-            ctx,
-            viewport_id,
-            &window,
-            Some(scale_factor),
-            None,
-            None,
-        ));
-
-        window.request_redraw();
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        event: WindowEvent,
-    ) {
-        let window = self.window.as_ref().unwrap().clone();
-
-        // Forward event to egui.
-        if let Some(state) = self.egui_state.as_mut() {
-            let _ = state.on_window_event(&window, &event);
+impl eframe::App for ReaderApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // If we have a controller, ensure we repaint frequently to update text.
+        if self.controller.is_some() {
+            self.update_text_content();
+            ctx.request_repaint();
         }
-
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::RedrawRequested => {
-                // Extract raw input and context without holding a borrow on self.egui_state.
-                let raw_input = {
-                    let state = self.egui_state.as_mut().unwrap();
-                    state.take_egui_input(&window)
-                };
-                let ctx = {
-                    let state = self.egui_state.as_ref().unwrap();
-                    state.egui_ctx().clone()
-                };
-                // Run UI.
-                let mut output = ctx.run_ui(raw_input, |ui| {
-                    self.render_ui(ui);
-                });
-                // Clear texture deltas to avoid panic on drop.
-                output.textures_delta.clear();
-                // Clear texture deltas to avoid panic on drop.
-                output.textures_delta.clear();
-                window.request_redraw();
-            }
-            _ => {}
-        }
-    }
-
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
+        self.render_ui(ctx);
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), eframe::Error> {
     env_logger::init();
-    let event_loop = EventLoop::new()?;
-    let mut app = App::new();
-    event_loop.run_app(&mut app)?;
-    Ok(())
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([800.0, 600.0])
+            .with_title("hfm-reader"),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "hfm-reader",
+        options,
+        Box::new(|_cc| Box::new(ReaderApp::new())),
+    )
 }
