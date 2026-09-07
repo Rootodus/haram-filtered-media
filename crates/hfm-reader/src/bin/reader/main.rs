@@ -118,11 +118,11 @@ impl App {
             return;
         }
 
-        if let Some(err) = &self.error {
+        if let Some(err) = self.error.clone() {
             CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("Error");
-                    ui.label(err);
+                    ui.label(&err);
                     if ui.button("Try Again").clicked() {
                         self.error = None;
                         self.file_path = None;
