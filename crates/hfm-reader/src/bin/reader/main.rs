@@ -1,9 +1,9 @@
 //! Minimal GUI for hfm-reader using egui and winit.
 
 use std::sync::Arc;
-use std::time::Duration;
 
-use egui::{CentralPanel, Context, TopBottomPanel};
+use egui::{CentralPanel, Context};
+use egui::containers::TopBottomPanel;
 use egui_winit::egui::ViewportId;
 use egui_winit::winit::application::ApplicationHandler;
 use egui_winit::winit::dpi::LogicalSize;
@@ -15,15 +15,13 @@ use hfm_reader::{
     LocalFileSource, PipelineCommand, PipelineController, PipelineState,
     TextBuffer, TextBufferImpl, UppercaseFilter, Offset,
 };
-use parking_lot::Mutex;
 use rfd::FileDialog;
 
 struct App {
     window: Option<Arc<Window>>,
     pipeline: Option<PipelineController>,
-    egui_state: State,
+    egui_state: Option<State>,
     file_path: Option<String>,
-    scroll_offset: f32,
     text_content: String,
     loading: bool,
     error: Option<String>,
@@ -31,29 +29,11 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        // We'll create the egui state in `resumed` with the window.
-        // Temporary dummy state until we have the window.
-        let dummy_ctx = Context::default();
-        let dummy_state = State::new(
-            dummy_ctx,
-            ViewportId::from_hash_of(0),
-            // We need a dummy window handle; this will be replaced in `resumed`.
-            // We'll use a placeholder by creating a temporary window? Actually,
-            // we'll just create the state in `resumed` where we have the window.
-            // For now, we'll store None and set it later.
-            // We'll use Option<State> instead.
-            // Actually, easier: initialize with a dummy and then replace.
-            // But we can't replace the field easily without move. Let's use Option<State>.
-            // I'll change the field type to Option<State>.
-            // I'll restructure: App holds egui_state: Option<State>.
-        );
-        // We'll use Option<State>.
         Self {
             window: None,
             pipeline: None,
-            egui_state: dummy_state, // will be replaced
+            egui_state: None,
             file_path: None,
-            scroll_offset: 0.0,
             text_content: String::new(),
             loading: false,
             error: None,
@@ -110,10 +90,10 @@ impl App {
         }
     }
 
-    fn render_ui(&mut self, ctx: &Context) {
+    fn render_ui(&mut self, ui: &mut egui::Ui) {
         // If no file is loaded, show the file picker.
         if self.file_path.is_none() && self.error.is_none() && !self.loading {
-            CentralPanel::default().show(ctx, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("hfm-reader");
                     ui.add_space(20.0);
@@ -131,7 +111,7 @@ impl App {
         }
 
         if self.loading {
-            CentralPanel::default().show(ctx, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("Loading...");
                 });
@@ -140,7 +120,7 @@ impl App {
         }
 
         if let Some(err) = &self.error {
-            CentralPanel::default().show(ctx, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("Error");
                     ui.label(err);
@@ -154,7 +134,7 @@ impl App {
         }
 
         // Main text view.
-        CentralPanel::default().show(ctx, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             let available = ui.available_size();
             let scroll_area = egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
@@ -168,7 +148,7 @@ impl App {
         });
 
         // Top toolbar.
-        TopBottomPanel::top("toolbar").show(ctx, |ui| {
+        TopBottomPanel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open").clicked() {
                     if let Some(path) = FileDialog::new()
@@ -217,7 +197,14 @@ impl ApplicationHandler for App {
         let viewport_id = ViewportId::from_hash_of(window.id());
         let scale_factor = window.scale_factor() as f32;
         let ctx = Context::default();
-        self.egui_state = State::new(ctx, viewport_id, &window, Some(scale_factor), None, None);
+        self.egui_state = Some(State::new(
+            ctx,
+            viewport_id,
+            &window,
+            Some(scale_factor),
+            None,
+            None,
+        ));
 
         window.request_redraw();
     }
@@ -225,28 +212,31 @@ impl ApplicationHandler for App {
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        window_id: winit::window::WindowId,
+        _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let window = self.window.as_ref().unwrap();
+        let window = self.window.as_ref().unwrap().clone();
 
         // Forward event to egui.
-        self.egui_state.on_window_event(&window, &event);
+        if let Some(state) = self.egui_state.as_mut() {
+            state.on_window_event(&window, &event);
+        }
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
-                let raw_input = self.egui_state.take_egui_input(&window);
-                let full_output = self.egui_state.egui_ctx().run_ui(raw_input, |ctx| {
-                    self.render_ui(ctx);
+                // Get state mutably.
+                let state = self.egui_state.as_mut().unwrap();
+                let raw_input = state.take_egui_input(&window);
+                let ctx = state.egui_ctx();
+                // Run UI.
+                let _output = ctx.run_ui(raw_input, |ui| {
+                    // We need to call render_ui on self, but self is borrowed mutably
+                    // for the whole method. The closure captures `&mut self`.
+                    // Since we already have `&mut self`, we can call `self.render_ui(ui)`.
+                    self.render_ui(ui);
                 });
-
-                // Here we would render the primitives. For simplicity, we'll just
-                // request redraw. In a real implementation, we'd use egui_glow or wgpu.
-                // For now, we'll just request redraw again.
                 window.request_redraw();
-
-                // We also need to handle textures and such; but this is minimal.
             }
             _ => {}
         }
