@@ -2,8 +2,7 @@
 
 use std::sync::Arc;
 
-use egui::{CentralPanel, Context};
-use egui::TopBottomPanel;
+use egui::{CentralPanel, Context, Panel};
 use egui_winit::egui::ViewportId;
 use egui_winit::winit::application::ApplicationHandler;
 use egui_winit::winit::dpi::LogicalSize;
@@ -148,7 +147,7 @@ impl App {
         });
 
         // Top toolbar.
-        TopBottomPanel::top("toolbar").show(ui, |ui| {
+        Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open").clicked() {
                     if let Some(path) = FileDialog::new()
