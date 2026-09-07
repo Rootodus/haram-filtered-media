@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use egui::{CentralPanel, Context};
-use egui::containers::TopBottomPanel;
+use egui::TopBottomPanel;
 use egui_winit::egui::ViewportId;
 use egui_winit::winit::application::ApplicationHandler;
 use egui_winit::winit::dpi::LogicalSize;
@@ -225,15 +225,17 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
-                // Get state mutably.
-                let state = self.egui_state.as_mut().unwrap();
-                let raw_input = state.take_egui_input(&window);
-                let ctx = state.egui_ctx();
+                // Extract raw input and context without holding a borrow on self.egui_state.
+                let raw_input = {
+                    let state = self.egui_state.as_mut().unwrap();
+                    state.take_egui_input(&window)
+                };
+                let ctx = {
+                    let state = self.egui_state.as_ref().unwrap();
+                    state.egui_ctx().clone()
+                };
                 // Run UI.
                 let _output = ctx.run_ui(raw_input, |ui| {
-                    // We need to call render_ui on self, but self is borrowed mutably
-                    // for the whole method. The closure captures `&mut self`.
-                    // Since we already have `&mut self`, we can call `self.render_ui(ui)`.
                     self.render_ui(ui);
                 });
                 window.request_redraw();
