@@ -43,16 +43,7 @@ impl LocalFileSource {
                 }
             }
         }
-        // Ensure the last line is represented.
-        // If the file is non-empty and doesn't end with \n, the final offset
-        // is content.len().
-        if !content.is_empty() {
-            let last = *line_offsets.last().unwrap_or(&Offset::ZERO);
-            let content_len = Offset(content.len() as u64);
-            if last != content_len {
-                line_offsets.push(content_len);
-            }
-        }
+        // No sentinel needed; try_pull_chunk uses content.len() as end for the last chunk.
 
         Ok(Self {
             content,
