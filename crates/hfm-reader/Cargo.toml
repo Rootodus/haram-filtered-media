@@ -16,6 +16,7 @@ egui-winit = { workspace = true }
 egui_glow = { workspace = true }
 winit = { workspace = true, features = ["rwh_06"] }
 pollster = { workspace = true }
+env_logger = "0.11"
 
 [dev-dependencies]
 tempfile = { workspace = true }
