@@ -457,7 +457,7 @@ mod tests {
         buffer.insert_raw(make_raw(1, "b", 0)).unwrap();
 
         // Flush with generation 1 should remove generation 0 chunks.
-        let discarded = buffer.flush_before(Offset(1), 1);
+        let discarded = buffer.flush_before(Offset(0), 1);
         assert_eq!(discarded.len(), 1);
         assert_eq!(discarded[0].offset, Offset(1)); // the generation 0 chunk
         // The generation 1 chunk should remain.

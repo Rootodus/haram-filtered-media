@@ -78,7 +78,10 @@ impl TextSource for LocalFileSource {
 
         let start_usize = start.as_usize();
         let end_usize = end.as_usize();
-        let data = self.content[start_usize..end_usize].to_string();
+        let data = self.content[start_usize..end_usize]
+            .trim_end_matches('\n')
+            .trim_end_matches('\r')
+            .to_string();
         self.current_idx += 1;
 
         PullOutcome::Chunk(RawChunk::new(start, data, 0))
