@@ -2610,6 +2610,7 @@ dependencies = [
  "egui",
  "egui-winit",
  "egui_glow",
+ "env_logger",
  "hfm-core",
  "parking_lot",
  "pollster 1.0.1",
