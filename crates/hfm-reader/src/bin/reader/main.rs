@@ -234,9 +234,11 @@ impl ApplicationHandler for App {
                     state.egui_ctx().clone()
                 };
                 // Run UI.
-                let _output = ctx.run_ui(raw_input, |ui| {
+                let output = ctx.run_ui(raw_input, |ui| {
                     self.render_ui(ui);
                 });
+                // Clear texture deltas to avoid panic on drop.
+                output.textures_delta.clear();
                 window.request_redraw();
             }
             _ => {}
