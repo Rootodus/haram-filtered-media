@@ -1636,6 +1636,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_glow"
+version = "0.36.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b65e45f8d8d7c6d848b3ec41f642b54ad828033f1511d4b4c9adc09040166a"
+dependencies = [
+ "bytemuck",
+ "egui",
+ "glow",
+ "log",
+ "profiling",
+]
+
+[[package]]
 name = "either"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2594,10 +2607,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "egui",
+ "egui-winit",
+ "egui_glow",
  "hfm-core",
  "parking_lot",
+ "pollster 1.0.1",
+ "rfd",
  "tempfile",
  "thiserror 2.0.20",
+ "winit",
 ]
 
 [[package]]
