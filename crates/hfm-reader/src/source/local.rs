@@ -138,9 +138,10 @@ mod tests {
         }
 
         // Pull second line.
+        // The offset is 6 because "line1" (5 bytes) + newline (1 byte) = 6.
         match source.try_pull_chunk(Duration::from_secs(0)) {
             PullOutcome::Chunk(chunk) => {
-                assert_eq!(chunk.offset, Offset(5));
+                assert_eq!(chunk.offset, Offset(6));
                 assert_eq!(chunk.data, "line2");
             }
             _ => panic!("Expected chunk"),
@@ -160,7 +161,7 @@ mod tests {
         source.seek(Offset(6)).unwrap();
         match source.try_pull_chunk(Duration::from_secs(0)) {
             PullOutcome::Chunk(chunk) => {
-                assert_eq!(chunk.offset, Offset(5));
+                assert_eq!(chunk.offset, Offset(6));
                 assert_eq!(chunk.data, "line2");
             }
             _ => panic!("Expected chunk"),
