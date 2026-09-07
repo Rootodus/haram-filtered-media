@@ -218,7 +218,7 @@ impl ApplicationHandler for App {
 
         // Forward event to egui.
         if let Some(state) = self.egui_state.as_mut() {
-            state.on_window_event(&window, &event);
+            let _ = state.on_window_event(&window, &event);
         }
 
         match event {
