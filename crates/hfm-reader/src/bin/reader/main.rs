@@ -77,7 +77,7 @@ impl ReaderApp {
                     self.text_content = "(error reading buffer)".to_string();
                 }
             } else {
-                self.text_content = "(waiting for text...)";
+                self.text_content = "(waiting for text...)".to_string();
             }
         }
     }
