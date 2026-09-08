@@ -68,7 +68,7 @@ pub trait TextBuffer: Send + Sync {
     ///   are also discarded regardless of offset.
     ///
     /// Returns the discarded raw chunks (for potential cleanup).
-    fn flush_before(&self, threshold: Offset, generation: u64) -> Vec<RawChunk>;
+    fn flush_before(&mut self, threshold: Offset, generation: u64) -> Vec<RawChunk>;
 }
 
 /// Internal entry for a chunk stored in the buffer.
