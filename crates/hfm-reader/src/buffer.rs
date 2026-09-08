@@ -54,6 +54,9 @@ pub trait TextBuffer: Send + Sync {
     /// the processed document.
     fn translate_to_raw(&self, processed_offset: Offset) -> ReaderResult<Offset>;
 
+    /// Returns the current length of the processed document in bytes.
+    fn len(&self) -> usize;
+
     /// Discard all chunks that end **before** the given offset.
     ///
     /// Chunks that overlap or start after `offset` are retained.
@@ -65,7 +68,7 @@ pub trait TextBuffer: Send + Sync {
     ///   are also discarded regardless of offset.
     ///
     /// Returns the discarded raw chunks (for potential cleanup).
-    fn flush_before(&mut self, threshold: Offset, generation: u64) -> Vec<RawChunk>;
+    fn flush_before(&self, threshold: Offset, generation: u64) -> Vec<RawChunk>;
 }
 
 /// Internal entry for a chunk stored in the buffer.
@@ -332,6 +335,11 @@ impl TextBuffer for TextBufferImpl {
         } else {
             Ok(Offset::ZERO)
         }
+    }
+
+    fn len(&self) -> usize {
+        let _lock = self.lock.read();
+        self.processed_text.len()
     }
 
     fn flush_before(&mut self, threshold: Offset, generation: u64) -> Vec<RawChunk> {

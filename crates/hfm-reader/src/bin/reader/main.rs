@@ -65,22 +65,19 @@ impl ReaderApp {
         if let Some(controller) = &self.controller {
             let buffer_lock = controller.buffer();
             let buffer = buffer_lock.lock();
-            // Read a large range (e.g., up to 1MB) for simplicity.
-            let max_offset = Offset(1024 * 1024);
-            if let Ok(text) = buffer.read_range(Offset(0), max_offset) {
-                let text_len = text.len();
-                self.text_content = text;
-                // Optional: print buffer length occasionally to see if it grows.
-                // We'll print only when the text is non-empty to reduce noise.
-                if text_len > 0 {
-                    println!("[UI] Buffer text length: {} chars", text_len);
+            let len = buffer.len();
+            if len > 0 {
+                // Read the entire buffer.
+                let end = Offset(len as u64);
+                if let Ok(text) = buffer.read_range(Offset(0), end) {
+                    self.text_content = text;
+                    // Uncomment below for debugging:
+                    // println!("[UI] Buffer text length: {} chars", len);
+                } else {
+                    self.text_content = "(error reading buffer)".to_string();
                 }
             } else {
-                self.text_content = "(error reading buffer)".to_string();
-                // Also print the error to console for debugging.
-                if let Err(e) = buffer.read_range(Offset(0), max_offset) {
-                    eprintln!("[UI] read_range error: {:?}", e);
-                }
+                self.text_content = "(waiting for text...)";
             }
         }
     }
