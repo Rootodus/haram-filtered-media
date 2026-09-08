@@ -40,7 +40,7 @@ pub enum PipelineState {
 /// Provides a synchronous API to send commands and read the buffer.
 pub struct PipelineController {
     source: Mutex<Option<Box<dyn TextSource>>>,
-    buffer: Arc<parking_lot::Mutex<TextBufferImpl>>,
+    buffer: Arc<Mutex<TextBufferImpl>>,
     filter: Arc<dyn TextFilter>,
     generation: Arc<SeekGeneration>,
     running: Arc<AtomicBool>,
@@ -58,7 +58,7 @@ impl PipelineController {
     /// The pipeline is initially idle. Call `start()` to start the threads.
     pub fn new(
         source: Box<dyn TextSource>,
-        buffer: TextBufferImpl,
+        buffer: Arc<Mutex<TextBufferImpl>>,
         filter: impl TextFilter + 'static,
     ) -> Self {
         let (cmd_tx, cmd_rx) = bounded(16);
@@ -68,7 +68,7 @@ impl PipelineController {
 
         Self {
             source: Mutex::new(Some(source)),
-            buffer: Arc::new(parking_lot::Mutex::new(buffer)),
+            buffer,
             filter,
             generation,
             running,
@@ -118,13 +118,6 @@ impl PipelineController {
                 .name("reader-pump".to_string())
                 .spawn(move || {
                     while running.load(Ordering::Acquire) {
-                        // Check for pause state via a shared atomic? We'll use the generation
-                        // and a separate pause flag. For simplicity, we'll use the command channel
-                        // but we need to poll it. We'll use a non-blocking recv_timeout.
-                        // Actually, the pump should check the state; we can use a shared atomic for pause.
-                        // For now, we'll use a simple approach: if we receive a pause command, we pause.
-                        // We'll handle commands in the main controller thread, not here.
-                        // The pump just pulls raw chunks and sends them.
                         match source.try_pull_chunk(Duration::from_millis(10)) {
                             PullOutcome::Chunk(mut chunk) => {
                                 // Stamp the chunk with the current generation.
@@ -133,16 +126,9 @@ impl PipelineController {
                                 let _ = raw_tx.send(chunk); // Ignore send errors (worker may be gone).
                             }
                             PullOutcome::Empty => {
-                                // Wait briefly and loop.
                                 thread::sleep(Duration::from_millis(1));
                             }
                             PullOutcome::Eos => {
-                                // End of file; we'll keep running but return empty.
-                                // We could break, but then we'd need to restart on seek.
-                                // We'll just keep polling and return Empty.
-                                // We can also break and the worker will eventually stop.
-                                // For now, we'll set a flag or just continue.
-                                // To avoid busy-waiting, we sleep.
                                 thread::sleep(Duration::from_millis(100));
                             }
                         }
@@ -208,7 +194,7 @@ impl PipelineController {
     }
 
     /// Get a reference to the buffer.
-    pub fn buffer(&self) -> Arc<parking_lot::Mutex<TextBufferImpl>> {
+    pub fn buffer(&self) -> Arc<Mutex<TextBufferImpl>> {
         self.buffer.clone()
     }
 

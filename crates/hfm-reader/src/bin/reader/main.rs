@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use eframe::egui::{CentralPanel, Context, Panel, ScrollArea};
+use eframe::egui::{CentralPanel, Panel, ScrollArea, Ui};
 use hfm_reader::{
     LocalFileSource, PipelineCommand, PipelineController, PipelineState,
     TextBuffer, TextBufferImpl, UppercaseFilter, Offset,
@@ -49,8 +49,7 @@ impl ReaderApp {
 
         // Create a pipeline with UppercaseFilter (for demo; replace later with ONNX).
         let filter = UppercaseFilter::new();
-        let buffer_clone = self.buffer.clone();
-        let mut controller = PipelineController::new(Box::new(source), buffer_clone, filter);
+        let mut controller = PipelineController::new(Box::new(source), self.buffer.clone(), filter);
 
         if let Err(e) = controller.start() {
             self.error = Some(format!("Failed to start pipeline: {}", e));
@@ -76,10 +75,10 @@ impl ReaderApp {
         }
     }
 
-    fn render_ui(&mut self, ctx: &Context) {
+    fn render_ui(&mut self, ui: &mut Ui) {
         // If no file is loaded, show the file picker.
         if self.file_path.is_none() && self.error.is_none() && !self.loading {
-            CentralPanel::default().show(ctx, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("hfm-reader");
                     ui.add_space(20.0);
@@ -97,7 +96,7 @@ impl ReaderApp {
         }
 
         if self.loading {
-            CentralPanel::default().show(ctx, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("Loading...");
                 });
@@ -106,7 +105,7 @@ impl ReaderApp {
         }
 
         if let Some(err) = self.error.clone() {
-            CentralPanel::default().show(ctx, |ui| {
+            CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.heading("Error");
                     ui.label(err);
@@ -120,7 +119,7 @@ impl ReaderApp {
         }
 
         // Main text view.
-        CentralPanel::default().show(ctx, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             let available = ui.available_size();
             let scroll_area = ScrollArea::vertical()
                 .auto_shrink([false; 2])
@@ -134,7 +133,7 @@ impl ReaderApp {
         });
 
         // Top toolbar.
-        Panel::top("toolbar").show(ctx, |ui| {
+        Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open").clicked() {
                     if let Some(path) = FileDialog::new()
@@ -167,13 +166,13 @@ impl ReaderApp {
 }
 
 impl eframe::App for ReaderApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         // If we have a controller, ensure we repaint frequently to update text.
         if self.controller.is_some() {
             self.update_text_content();
-            ctx.request_repaint();
+            ui.ctx().request_repaint();
         }
-        self.render_ui(ctx);
+        self.render_ui(ui);
     }
 }
 
@@ -188,6 +187,6 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "hfm-reader",
         options,
-        Box::new(|_cc| Box::new(ReaderApp::new())),
+        Box::new(|_cc| Ok(Box::new(ReaderApp::new()))),
     )
 }
