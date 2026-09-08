@@ -110,6 +110,7 @@ impl PipelineController {
         // Spawn pump thread.
         let pump_handle = {
             let mut source = source;
+            let buffer = buffer.clone();
             let generation = generation.clone();
             let running = running.clone();
             let raw_tx = raw_tx.clone();
@@ -123,7 +124,21 @@ impl PipelineController {
                                 // Stamp the chunk with the current generation.
                                 let current_gen = generation.current();
                                 chunk.generation = current_gen;
-                                let _ = raw_tx.send(chunk); // Ignore send errors (worker may be gone).
+
+                                // Insert the raw chunk into the buffer.
+                                let insert_result = {
+                                    let mut buffer_guard = buffer.lock();
+                                    buffer_guard.insert_raw(chunk.clone())
+                                };
+
+                                if let Err(e) = insert_result {
+                                    eprintln!("Pump: insert_raw error: {}", e);
+                                    // Skip sending to worker; the worker would fail anyway.
+                                    continue;
+                                }
+
+                                // Send the raw chunk to the worker for processing.
+                                let _ = raw_tx.send(chunk);
                             }
                             PullOutcome::Empty => {
                                 thread::sleep(Duration::from_millis(1));
