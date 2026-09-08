@@ -68,11 +68,12 @@ impl ReaderApp {
             // Read a large range (e.g., up to 1MB) for simplicity.
             let max_offset = Offset(1024 * 1024);
             if let Ok(text) = buffer.read_range(Offset(0), max_offset) {
+                let text_len = text.len();
                 self.text_content = text;
                 // Optional: print buffer length occasionally to see if it grows.
                 // We'll print only when the text is non-empty to reduce noise.
-                if !text.is_empty() {
-                    println!("[UI] Buffer text length: {} chars", text.len());
+                if text_len > 0 {
+                    println!("[UI] Buffer text length: {} chars", text_len);
                 }
             } else {
                 self.text_content = "(error reading buffer)".to_string();
