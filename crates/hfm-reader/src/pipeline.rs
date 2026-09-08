@@ -124,6 +124,7 @@ impl PipelineController {
                                 // Stamp the chunk with the current generation.
                                 let current_gen = generation.current();
                                 chunk.generation = current_gen;
+                                println!("[PUMP] Pulled chunk at offset {:?}, len: {}", chunk.offset, chunk.data.len());
 
                                 // Insert the raw chunk into the buffer.
                                 let insert_result = {
@@ -131,14 +132,22 @@ impl PipelineController {
                                     buffer_guard.insert_raw(chunk.clone())
                                 };
 
-                                if let Err(e) = insert_result {
-                                    eprintln!("Pump: insert_raw error: {}", e);
-                                    // Skip sending to worker; the worker would fail anyway.
-                                    continue;
+                                match insert_result {
+                                    Ok(()) => {
+                                        println!("[PUMP] Inserted raw chunk at offset {:?}", chunk.offset);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[PUMP] insert_raw error: {}", e);
+                                        // Skip sending to worker; the worker would fail anyway.
+                                        continue;
+                                    }
                                 }
 
                                 // Send the raw chunk to the worker for processing.
-                                let _ = raw_tx.send(chunk);
+                                let send_result = raw_tx.send(chunk);
+                                if let Err(e) = send_result {
+                                    eprintln!("[PUMP] Failed to send chunk to worker: {}", e);
+                                }
                             }
                             PullOutcome::Empty => {
                                 thread::sleep(Duration::from_millis(1));
@@ -166,13 +175,16 @@ impl PipelineController {
                     while running.load(Ordering::Acquire) {
                         match raw_rx.recv_timeout(Duration::from_millis(100)) {
                             Ok(raw) => {
+                                println!("[WORKER] Received raw chunk at offset {:?}", raw.offset);
                                 // Check generation.
                                 if raw.generation != generation.current() {
+                                    println!("[WORKER] Discarding stale chunk (gen mismatch)");
                                     continue;
                                 }
                                 // Process.
                                 match filter.process(&raw) {
                                     Ok(processed) => {
+                                        println!("[WORKER] Processed chunk at offset {:?}, new len: {}", processed.offset, processed.data.len());
                                         // Apply to buffer.
                                         let mut buffer_guard = buffer.lock();
                                         if let Err(e) = buffer_guard.apply_processed(processed) {
