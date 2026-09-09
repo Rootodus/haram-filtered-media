@@ -1,0 +1,3 @@
+this is url: https://huggingface.co/s-nlp/bart-base-detox/tree/main
+
+note the license is different, so include license and mention in readme
