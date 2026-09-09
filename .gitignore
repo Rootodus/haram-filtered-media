@@ -6,6 +6,8 @@ fallbacks/
 .cargo/*
 !.cargo/config.toml
 *.exe
+*.safetensors
+*.bin
 *.onnx
 *.jpg
 *.png
