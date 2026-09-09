@@ -78,10 +78,7 @@ impl TextSource for LocalFileSource {
 
         let start_usize = start.as_usize();
         let end_usize = end.as_usize();
-        let data = self.content[start_usize..end_usize]
-            .trim_end_matches('\n')
-            .trim_end_matches('\r')
-            .to_string();
+        let data = self.content[start_usize..end_usize].to_string();
         self.current_idx += 1;
 
         PullOutcome::Chunk(RawChunk::new(start, data, 0))
@@ -129,7 +126,7 @@ mod tests {
         match source.try_pull_chunk(Duration::from_secs(0)) {
             PullOutcome::Chunk(chunk) => {
                 assert_eq!(chunk.offset, Offset::ZERO);
-                assert_eq!(chunk.data, "line1");
+                assert_eq!(chunk.data, "line1\n");
                 // generation is set by the pipeline, not the source, so it should be 0 by default.
                 // In tests, the source doesn't set it; it will be set by the pipeline.
                 // We'll skip checking generation here because it's not set.
@@ -142,7 +139,7 @@ mod tests {
         match source.try_pull_chunk(Duration::from_secs(0)) {
             PullOutcome::Chunk(chunk) => {
                 assert_eq!(chunk.offset, Offset(6));
-                assert_eq!(chunk.data, "line2");
+                assert_eq!(chunk.data, "line2\n");
             }
             _ => panic!("Expected chunk"),
         }
@@ -152,7 +149,7 @@ mod tests {
         match source.try_pull_chunk(Duration::from_secs(0)) {
             PullOutcome::Chunk(chunk) => {
                 assert_eq!(chunk.offset, Offset::ZERO);
-                assert_eq!(chunk.data, "line1");
+                assert_eq!(chunk.data, "line1\n");
             }
             _ => panic!("Expected chunk"),
         }
@@ -162,7 +159,7 @@ mod tests {
         match source.try_pull_chunk(Duration::from_secs(0)) {
             PullOutcome::Chunk(chunk) => {
                 assert_eq!(chunk.offset, Offset(6));
-                assert_eq!(chunk.data, "line2");
+                assert_eq!(chunk.data, "line2\n");
             }
             _ => panic!("Expected chunk"),
         }
