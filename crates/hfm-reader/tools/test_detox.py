@@ -10,12 +10,11 @@
 from transformers import BartForConditionalGeneration, AutoTokenizer
 import re
 
-# Load model and tokenizer
-base_model_name = 'facebook/bart-base'
-model_name = 's-nlp/bart-base-detox'
+# === LOAD FROM LOCAL DIRECTORY ===
+model_path = './models/bart-base-detox'  # Relative to your project root
 
-tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-model = BartForConditionalGeneration.from_pretrained(model_name)
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+model = BartForConditionalGeneration.from_pretrained(model_path)
 
 def detoxify(text, max_input_tokens=512, max_output_new_tokens=512):
     # === INPUT HANDLING ===
@@ -37,29 +36,28 @@ def detoxify(text, max_input_tokens=512, max_output_new_tokens=512):
     # Strictly cap the generated output to 512 new tokens
     output_ids = model.generate(
         input_ids,
-        max_new_tokens=max_output_new_tokens,  # This is the hard cap for output
+        max_new_tokens=max_output_new_tokens,
         num_return_sequences=1,
         early_stopping=True
     )
-    
+
     decoded = tokenizer.decode(output_ids[0], skip_special_tokens=True)
     
-    # (Optional) Check if the output was cut off by the 512 limit
-    output_token_count = len(output_ids[0])
-    if output_token_count >= max_output_new_tokens:
-        print(f"⚠️  Warning: Output hit the 512-token limit and was truncated.")
-    
+    # Optional: warn if output was cut off
+    if len(output_ids[0]) >= max_output_new_tokens:
+        print(f"⚠️  Warning: Output hit the {max_output_new_tokens}-token limit.")
+
     return decoded
 
 # Read and parse the file
-with open('text_has_profanity.txt', 'r', encoding='utf-8') as f:
+with open('./tools/text_has_profanity.txt', 'r', encoding='utf-8') as f:
     content = f.read()
 
-# Extract all text inside <p> tags
+# Extract all <p> blocks
 blocks = re.findall(r'<p>(.*?)</p>', content, re.DOTALL)
 
 if not blocks:
-    print("No <p> tags found in input.txt")
+    print("No <p> tags found.")
     exit()
 
 print("=" * 60)
@@ -70,10 +68,9 @@ for idx, block in enumerate(blocks, 1):
     cleaned = block.strip()
     if not cleaned:
         continue
-    
-    # Both input and output are strictly capped at 512
-    result = detoxify(cleaned, max_input_tokens=512, max_output_new_tokens=512)
-    
+
+    result = detoxify(cleaned)
+
     print(f"\n--- Block {idx} ---")
     print(f"Input:  {cleaned}")
     print(f"Output: {result}")
