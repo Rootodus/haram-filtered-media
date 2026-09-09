@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.8"
+# dependencies = [
+#     "transformers",
+#     "torch",
+#     "accelerate",
+# ]
+# ///
+
 from transformers import BartForConditionalGeneration, AutoTokenizer
 import re
 
