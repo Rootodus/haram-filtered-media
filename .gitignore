@@ -19,3 +19,4 @@ _temp.txt
 .compiler-diagnostics.json
 .aider*
 !.aider.conf.yml
+.idea/
