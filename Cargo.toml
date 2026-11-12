@@ -8,7 +8,6 @@ members = [
 ]
 
 [workspace.dependencies]
-# --- Shared Dependencies ---
 mimalloc = "0.1.52"
 anyhow = "1.0.104"
 bytemuck = { version = "1.25.2", features = ["derive"] }
@@ -25,7 +24,6 @@ eframe = "0.36.1"
 env_logger = "0.11.11"
 serde_json = "1.0.151"
 tempfile = "3.27.0"
-# --- Unique Core Dependencies (Used only by hfm-core) ---
 cpal = "0.18.2"
 crossbeam = "0.8.4"
 crossbeam-channel = "0.5.16"
@@ -38,6 +36,7 @@ ringbuf = "0.5.1"
 thiserror = "2.0.20"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false }
+tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] }
 # --- Dev and Build Tooling ---
 criterion = "0.8.2"
 dhat = "0.3.3"
