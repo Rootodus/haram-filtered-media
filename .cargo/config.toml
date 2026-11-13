@@ -5,5 +5,9 @@ rustc-workspace-wrapper = ""
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "linker=lld-link", "-C", "link-arg=/STACK:8388608"]
 
+[target.x86_64-unknown-linux-gnu]
+linker = "gcc"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
 [alias]
 xtask = "run --package xtask --"
