@@ -6,28 +6,10 @@ use eframe::egui;
 use eframe::egui::{CentralPanel, Panel, ScrollArea, Ui};
 use hfm_reader::{
     LocalFileSource, PipelineCommand, PipelineController, PipelineState,
-    TextBuffer, TextBufferImpl, UppercaseFilter, BartDetoxFilter, TextFilter,
-    Offset,
+    TextBuffer, TextBufferImpl, UppercaseFilter, Offset,
 };
 use parking_lot::Mutex;
 use rfd::FileDialog;
-
-fn resolve_model_path() -> Option<std::path::PathBuf> {
-    // Check relative to the executable
-    let exe = std::env::current_exe().ok()?;
-    let exe_dir = exe.parent()?;
-    let model_dir = exe_dir.join("models").join("bart-base-detox").join("onnx");
-    if model_dir.exists() {
-        return Some(model_dir);
-    }
-    // Check relative to current working directory
-    let cwd = std::env::current_dir().ok()?;
-    let model_dir = cwd.join("models").join("bart-base-detox").join("onnx");
-    if model_dir.exists() {
-        return Some(model_dir);
-    }
-    None
-}
 
 struct ReaderApp {
     controller: Option<PipelineController>,
@@ -65,21 +47,8 @@ impl ReaderApp {
             }
         };
 
-        // Try to load the detox model; fallback to UppercaseFilter if not available.
-        let model_path = resolve_model_path();
-        let filter: Box<dyn TextFilter> = if let Some(path) = model_path {
-            match BartDetoxFilter::new(&path, 512, 128) {
-                Ok(f) => Box::new(f) as Box<dyn TextFilter>,
-                Err(e) => {
-                    eprintln!("Failed to load detox model: {}. Falling back to Uppercase.", e);
-                    Box::new(UppercaseFilter::new())
-                }
-            }
-        } else {
-            eprintln!("Model not found; falling back to Uppercase filter.");
-            Box::new(UppercaseFilter::new())
-        };
-
+        // Create a pipeline with UppercaseFilter (for demo; replace later with ONNX).
+        let filter = UppercaseFilter::new();
         let mut controller = PipelineController::new(Box::new(source), self.buffer.clone(), filter);
 
         if let Err(e) = controller.start() {
@@ -98,9 +67,12 @@ impl ReaderApp {
             let buffer = buffer_lock.lock();
             let len = buffer.len();
             if len > 0 {
+                // Read the entire buffer.
                 let end = Offset(len as u64);
                 if let Ok(text) = buffer.read_range(Offset(0), end) {
                     self.text_content = text;
+                    // Uncomment below for debugging:
+                    // println!("[UI] Buffer text length: {} chars", len);
                 } else {
                     self.text_content = "(error reading buffer)".to_string();
                 }
@@ -202,6 +174,7 @@ impl ReaderApp {
 
 impl eframe::App for ReaderApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        // If we have a controller, ensure we repaint frequently to update text.
         if self.controller.is_some() {
             self.update_text_content();
             ui.ctx().request_repaint();

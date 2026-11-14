@@ -11,7 +11,7 @@ pub use types::{Offset, RawChunk, ProcessedChunk, ChunkState, ReaderError};
 // Re-export traits and implementations
 pub use buffer::{TextBuffer, TextBufferImpl};
 pub use source::{TextSource, PullOutcome, LocalFileSource};
-pub use filter::{TextFilter, UppercaseFilter, NoopFilter, BartDetoxFilter};
+pub use filter::{TextFilter, UppercaseFilter, NoopFilter};
 pub use pipeline::{PipelineController, PipelineCommand, PipelineState};
 
 #[cfg(test)]

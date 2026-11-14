@@ -1,7 +1,6 @@
 //! Text filter abstraction and implementations.
 
 pub mod mock;
-pub mod detox;
 
 use crate::types::{ProcessedChunk, RawChunk, ReaderResult};
 
@@ -20,6 +19,5 @@ pub trait TextFilter: Send + Sync {
     fn process(&self, raw: &RawChunk) -> ReaderResult<ProcessedChunk>;
 }
 
-// Re-export mock filters and detox filter.
+// Re-export mock filters.
 pub use mock::{UppercaseFilter, NoopFilter};
-pub use detox::BartDetoxFilter;
