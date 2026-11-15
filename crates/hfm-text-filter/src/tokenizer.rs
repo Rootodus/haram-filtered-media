@@ -14,7 +14,7 @@ pub struct BartTokenizer {
 impl BartTokenizer {
     pub fn new(model_dir: &Path) -> Result<Self, ReaderError> {
         let path = model_dir.join("tokenizer.json");
-        let inner = Tokenizer::from_file(path).map_err(|e| {
+        let inner = Tokenizer::from_file(&path).map_err(|e| {
             ReaderError::Tokenizer(format!("Failed to load tokenizer from {:?}: {}", path, e))
         })?;
         Ok(Self { inner })

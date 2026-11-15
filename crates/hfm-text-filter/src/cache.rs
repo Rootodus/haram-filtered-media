@@ -46,15 +46,15 @@ const INPUT_NAMES: [&str; 24] = [
 
 impl PopulatedCache {
     /// Extract the 24 present tensors from the ONNX output.
-    pub fn update_from_outputs(outputs: &SessionOutputs) -> Result<Self, ReaderError> {
+    /// Consumes the SessionOutputs because `Value` is not cloneable.
+    pub fn update_from_outputs(mut outputs: SessionOutputs) -> Result<Self, ReaderError> {
         let mut tensor_vec = Vec::with_capacity(24);
-        
+
         for &name in &OUTPUT_NAMES {
             let tensor = outputs
-                .get(name)
-                .ok_or_else(|| ReaderError::Onnx(format!("Missing cache output: {}", name)))?
-                .clone();
-            
+                .remove(name)
+                .ok_or_else(|| ReaderError::Onnx(format!("Missing cache output: {}", name)))?;
+
             tensor_vec.push(tensor);
         }
 
@@ -66,11 +66,12 @@ impl PopulatedCache {
     }
 
     /// Format the cached tensors into a named list for the ONNX inputs! macro.
-    pub fn build_inputs(&self) -> Vec<(&'static str, Value)> {
+    /// Returns references because `Value` cannot be cloned.
+    pub fn build_inputs(&self) -> Vec<(&'static str, &Value)> {
         INPUT_NAMES
             .iter()
             .copied()
-            .zip(self.tensors.iter().cloned())
+            .zip(self.tensors.iter())
             .collect()
     }
 }
