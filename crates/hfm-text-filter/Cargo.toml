@@ -17,9 +17,9 @@ env_logger = { workspace = true }
 eframe = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 axum = { workspace = true, features = ["ws"] }
-futures-util = "0.3.34"
+futures-util = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
+serde_json = { workspace = true }
 tower-http = { workspace = true, features = ["cors", "trace"] }
 ort = { workspace = true }
 tokenizers = { workspace = true }
@@ -28,4 +28,5 @@ regex = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio-tungstenite = { workspace = true }
 # Will add proptest, loom, etc. later
