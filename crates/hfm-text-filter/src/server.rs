@@ -14,14 +14,12 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::filter::BartDetoxFilter;
+use crate::filter::{BartDetoxFilter, TextFilter}; // Added TextFilter
 use crate::types::RawChunk;
 
 /// Shared state across all WebSocket connections.
 #[derive(Clone)]
 pub struct AppState {
-    // We use parking_lot::Mutex because we are inside spawn_blocking.
-    // std::sync::Mutex would also work, but parking_lot is faster.
     pub filter: Arc<Mutex<BartDetoxFilter>>,
 }
 
@@ -72,7 +70,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 Ok(r) => r,
                 Err(e) => {
                     let resp = FilterResponse { clean_text: None, error: Some(format!("Invalid JSON: {}", e)) };
-                    let _ = sender.send(Message::Text(serde_json::to_string(&resp).unwrap())).await;
+                    let _ = sender.send(Message::Text(serde_json::to_string(&resp).unwrap().into())).await;
                     continue;
                 }
             };
@@ -95,7 +93,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             };
 
             let json = serde_json::to_string(&resp).unwrap();
-            if sender.send(Message::Text(json)).await.is_err() {
+            if sender.send(Message::Text(json.into())).await.is_err() {
                 break; // Client disconnected
             }
         }
