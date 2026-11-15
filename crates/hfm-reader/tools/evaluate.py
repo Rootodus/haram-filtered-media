@@ -9,6 +9,14 @@
 #     "sentence-transformers",
 #     "psutil",
 # ]
+#
+# [[tool.uv.index]]
+# name = "pytorch-cpu"
+# url = "https://download.pytorch.org/whl/cpu"
+# explicit = true
+#
+# [tool.uv.sources]
+# torch = { index = "pytorch-cpu" }
 # ///
 """Evaluate bart-base-detox (ONNX) on three corpora.
 
