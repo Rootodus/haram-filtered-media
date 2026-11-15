@@ -28,7 +28,10 @@ impl TokenMask {
         let mut root = TrieNode::new();
         
         for word in banned_words {
-            if let Ok(token_ids) = tokenizer.encode(word) {
+            if let Ok(token_ids) = tokenizer.encode_no_special(word) {
+                if token_ids.0.is_empty() {
+                    continue;
+                }
                 let mut current = &mut root;
                 for &id in &token_ids.0 {
                     current = current.children.entry(id as u32).or_insert_with(TrieNode::new);
@@ -181,13 +184,54 @@ mod tests {
     fn test_apply_mask_no_match() {
         let mask = build_test_mask();
         let mut logits = vec![0.0; 100];
-        
+
         let history = vec![99, 99];
         mask.apply_mask(&mut logits, &history);
-        
+
         // Nothing should be masked.
         for val in logits {
             assert_ne!(val, f32::NEG_INFINITY);
         }
+    }
+
+    #[test]
+    fn test_token_mask_new_with_real_tokenizer() {
+        let model_dir = std::path::Path::new("models/bart-base-detox/onnx");
+        if !model_dir.join("tokenizer.json").exists() {
+            println!("Skipping test: tokenizer.json not found. Run from crate root with models downloaded.");
+            return;
+        }
+
+        let tokenizer = crate::tokenizer::BartTokenizer::new(model_dir).unwrap();
+        let banned = vec!["shit".to_string(), "fuck".to_string()];
+        let mask = TokenMask::new(&banned, &tokenizer);
+
+        // We need a large logits array. Get vocab size from tokenizer.
+        let mut logits = vec![0.0; tokenizer.vocab_size()];
+
+        // Encode "shit" without special tokens to get the exact token IDs
+        let shit_tokens = tokenizer.encode_no_special("shit").unwrap().0;
+        assert!(!shit_tokens.is_empty(), "Tokenization of 'shit' failed");
+
+        // Apply mask using all but the last token as history
+        let history = &shit_tokens[..shit_tokens.len() - 1];
+        mask.apply_mask(&mut logits, history);
+
+        // The last token of "shit" should now be masked (-inf)
+        let last_token = shit_tokens[shit_tokens.len() - 1] as usize;
+        assert_eq!(
+            logits[last_token], 
+            f32::NEG_INFINITY, 
+            "Expected last token of 'shit' to be masked"
+        );
+
+        // An unrelated token (e.g., the first token of "hello") should not be masked
+        let hello_tokens = tokenizer.encode_no_special("hello").unwrap().0;
+        let hello_first = hello_tokens[0] as usize;
+        assert_ne!(
+            logits[hello_first], 
+            f32::NEG_INFINITY, 
+            "Unrelated token should not be masked"
+        );
     }
 }

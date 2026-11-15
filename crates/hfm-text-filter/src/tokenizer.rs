@@ -26,10 +26,20 @@ impl BartTokenizer {
         let mut encoding = self.inner.encode(text, true).map_err(|e| {
             ReaderError::Tokenizer(format!("Failed to encode text: {}", e))
         })?;
-        
+
         // Ensure the sequence doesn't exceed BART's maximum length.
         encoding.truncate(MAX_TOKENS, 0, tokenizers::TruncationDirection::Right);
-        
+
+        let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
+        Ok(TokenIds(ids))
+    }
+
+    /// Encode a string WITHOUT special tokens (used for building the Trie).
+    pub fn encode_no_special(&self, text: &str) -> ReaderResult<TokenIds> {
+        let encoding = self.inner.encode(text, false).map_err(|e| {
+            ReaderError::Tokenizer(format!("Failed to encode text (no special): {}", e))
+        })?;
+
         let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
         Ok(TokenIds(ids))
     }
