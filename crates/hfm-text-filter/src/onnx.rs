@@ -140,7 +140,9 @@ impl BartOnnxModel {
         let start_idx = (seq_len - 1) * vocab_size;
         let logits_vec: Vec<f32> = data.iter().skip(start_idx).take(vocab_size).copied().collect();
 
-        let new_cache = PopulatedCache::update_from_outputs(outputs)?;
+        // decoder_with_past only outputs the 12 decoder tensors.
+        // The 12 encoder tensors are preserved from the previous cache.
+        let new_cache = cache.update_from_past_outputs(outputs)?;
 
         Ok((logits_vec, new_cache))
     }

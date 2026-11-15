@@ -65,6 +65,56 @@ impl PopulatedCache {
         Ok(Self { tensors })
     }
 
+    /// Update the cache after a `decoder_with_past_model.onnx` step.
+    ///
+    /// `decoder_with_past_model.onnx` outputs only 12 tensors (6 layers × 2 =
+    /// decoder key/value). The 12 encoder key/value tensors were computed once in
+    /// step 1 and do not change; they are carried over from `self`.
+    ///
+    /// Consumes `self` because `Value` is not cloneable.
+    pub fn update_from_past_outputs(
+        self,
+        mut outputs: SessionOutputs,
+    ) -> Result<Self, ReaderError> {
+        // Consume the old array into an iterator so we can move the encoder
+        // tensors out of it one at a time.
+        let mut old_iter = self.tensors.into_iter();
+        let mut new_tensors: Vec<Value> = Vec::with_capacity(24);
+
+        for layer in 0..6u32 {
+            // Discard the old decoder K/V (they are being replaced).
+            let _old_dkey = old_iter.next().expect("Cache length mismatch");
+            let _old_dval = old_iter.next().expect("Cache length mismatch");
+            // Preserve the old encoder K/V (they do not change).
+            let old_ekey = old_iter.next().expect("Cache length mismatch");
+            let old_eval = old_iter.next().expect("Cache length mismatch");
+
+            // Pull new decoder K/V from the current step's outputs.
+            let dkey_name = format!("present.{}.decoder.key", layer);
+            let dkey = outputs
+                .remove(&dkey_name)
+                .ok_or_else(|| ReaderError::Onnx(format!("Missing {}", dkey_name)))?;
+
+            let dval_name = format!("present.{}.decoder.value", layer);
+            let dval = outputs
+                .remove(&dval_name)
+                .ok_or_else(|| ReaderError::Onnx(format!("Missing {}", dval_name)))?;
+
+            // Reassemble in the array layout expected by INPUT_NAMES:
+            // [dkey, dval, ekey, eval] per layer.
+            new_tensors.push(dkey);
+            new_tensors.push(dval);
+            new_tensors.push(old_ekey);
+            new_tensors.push(old_eval);
+        }
+
+        let tensors: [Value; 24] = new_tensors
+            .try_into()
+            .map_err(|_| ReaderError::Internal("Cache array size mismatch".to_string()))?;
+
+        Ok(Self { tensors })
+    }
+
     /// Format the cached tensors into a named list for the ONNX inputs! macro.
     /// Consumes `self` because `Value` cannot be cloned.
     pub fn build_inputs(self) -> Vec<(&'static str, Value)> {
