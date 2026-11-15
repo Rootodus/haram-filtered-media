@@ -1,22 +1,6 @@
-a damm
-a damn
-a dang
-a danm
-a fck
-a fk
-a fuck
-a jerk
-a pita
-af
 all hail
 amen
-an ass
-an asshole
 arse
-as fuck
-as heck
-as hell
-as shit
 ass
 asses
 asshat
@@ -29,14 +13,12 @@ batshit
 biblically
 bitch
 bitching
-bs
 bullshit
 bullshitting
 bullsht
 bulshit
 butt
 christ
-christ.
 christus
 cocksucker
 crap
@@ -47,8 +29,6 @@ cunt
 cunts
 curse
 cursed
-cursed_chemistry
-cursedchemistry
 curses
 daddy
 damm
@@ -77,7 +57,6 @@ fag
 faggot
 fags
 fck
-fk
 fkin
 fking
 fkn
@@ -125,26 +104,20 @@ heck
 hel
 hell
 helluva
-helluva of
 hels
 holey
 holy
 holy cow
-holy cow.
 holy crap
 holy fuck
 holy moly
 holy shit
-holy shit.
 jackass
 jeetje
 jeez
-jeez.
 jerk
 jesus
 jesus christ
-jesus christ.
-jesus.
 jezus
 jfc
 kanker
@@ -202,10 +175,6 @@ shitty
 sht
 slut
 stfu
-tf
-the fuck
-the heck
-the hell
 tits
 trinity
 twat
@@ -214,16 +183,6 @@ unfuck
 unfucking
 ungodly
 unholy
-what the
 whore
 wtf
 wth
-☠️
-👹
-👺
-👻
-👽
-👿
-💀
-😈
-🤡
