@@ -1,5 +1,7 @@
 //! Core data types and errors for the text processing pipeline.
 
+pub mod tensor;
+
 /// A raw (unprocessed) text chunk.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawChunk {
@@ -30,8 +32,14 @@ pub enum ReaderError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Filter error: {0}")]
-    Filter(String),
+    #[error("Tokenizer error: {0}")]
+    Tokenizer(String),
+
+    #[error("ONNX runtime error: {0}")]
+    Onnx(String),
+
+    #[error("Masking error: {0}")]
+    Mask(String),
 
     #[error("Internal error: {0}")]
     Internal(String),
