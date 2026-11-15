@@ -1,9 +1,9 @@
 //! Raw ONNX session execution, isolated from tokenization and masking.
 
-use crate::cache::{EmptyCache, PopulatedCache};
+use crate::cache::PopulatedCache;
 use crate::types::tensor::{AttentionMask, TokenIds};
 use crate::types::{ReaderError, ReaderResult};
-use ort::session::{Session, SessionOutputs};
+use ort::session::Session;
 use ort::value::Value;
 use std::path::Path;
 
@@ -35,7 +35,6 @@ impl BartOnnxModel {
         })
     }
 
-    /// Run the encoder to get hidden states.
     pub fn run_encoder(&self, ids: &TokenIds, mask: &AttentionMask) -> Result<Value, ReaderError> {
         let seq_len = ids.0.len();
         
@@ -50,7 +49,7 @@ impl BartOnnxModel {
             "attention_mask" => Value::from_array(attention_mask).map_err(|e| ReaderError::Onnx(e.to_string()))?,
         ];
 
-        let outputs = self.encoder.run(inputs)
+        let mut outputs = self.encoder.run(inputs)
             .map_err(|e| ReaderError::Onnx(format!("Encoder run failed: {}", e)))?;
 
         let hidden = outputs.remove("last_hidden_state")
@@ -59,7 +58,6 @@ impl BartOnnxModel {
         Ok(hidden)
     }
 
-    /// Run the decoder for the very first token (no past cache).
     pub fn run_decoder_step_one(
         &self,
         decoder_input_ids: &TokenIds,
@@ -83,28 +81,27 @@ impl BartOnnxModel {
         let mut outputs = self.decoder.run(inputs)
             .map_err(|e| ReaderError::Onnx(format!("Decoder step one failed: {}", e)))?;
 
-        // Extract logits: shape is [1, 1, vocab_size]
         let logits_value = outputs.remove("logits")
             .ok_or_else(|| ReaderError::Onnx("Missing logits".into()))?;
         let logits_array = logits_value.try_extract_tensor::<f32>()
             .map_err(|e| ReaderError::Onnx(format!("Logits extract failed: {}", e)))?;
         
-        // Flatten the [1, 1, vocab_size] array into a Vec<f32>
-        let logits_vec = logits_array.view().iter().copied().collect();
+        // Shape is [1, seq_len, vocab_size]. We only want the last token's logits.
+        let vocab_size = logits_array.shape()[2];
+        let start_idx = (seq_len - 1) * vocab_size;
+        let logits_vec: Vec<f32> = logits_array.iter().skip(start_idx).take(vocab_size).copied().collect();
 
-        // Extract the 24 KV cache tensors
         let cache = PopulatedCache::update_from_outputs(outputs)?;
 
         Ok((logits_vec, cache))
     }
 
-    /// Run the decoder for subsequent tokens (with past cache).
     pub fn run_decoder_step_with_past(
         &self,
         decoder_input_ids: &TokenIds,
         encoder_hidden: &Value,
         attention_mask: &AttentionMask,
-        cache: &PopulatedCache,
+        cache: PopulatedCache, // Ownership moved here
     ) -> Result<(Vec<f32>, PopulatedCache), ReaderError> {
         let seq_len = decoder_input_ids.0.len();
         let enc_seq_len = attention_mask.0.len();
@@ -114,11 +111,14 @@ impl BartOnnxModel {
         let mask = ndarray::Array2::from_shape_vec((1, enc_seq_len), attention_mask.0.clone())
             .map_err(|e| ReaderError::Internal(format!("Shape error: {}", e)))?;
 
-        // Start with the base inputs
+        // Build base inputs
+        let input_ids_val = Value::from_array(input_ids).map_err(|e| ReaderError::Onnx(e.to_string()))?;
+        let mask_val = Value::from_array(mask).map_err(|e| ReaderError::Onnx(e.to_string()))?;
+
         let mut inputs = ort::inputs![
-            "input_ids" => Value::from_array(input_ids).map_err(|e| ReaderError::Onnx(e.to_string()))?,
+            "input_ids" => input_ids_val,
             "encoder_hidden_states" => encoder_hidden,
-            "encoder_attention_mask" => Value::from_array(mask).map_err(|e| ReaderError::Onnx(e.to_string()))?,
+            "encoder_attention_mask" => mask_val,
         ];
 
         // Append the 24 cache tensors
@@ -133,7 +133,10 @@ impl BartOnnxModel {
             .ok_or_else(|| ReaderError::Onnx("Missing logits".into()))?;
         let logits_array = logits_value.try_extract_tensor::<f32>()
             .map_err(|e| ReaderError::Onnx(format!("Logits extract failed: {}", e)))?;
-        let logits_vec = logits_array.view().iter().copied().collect();
+            
+        let vocab_size = logits_array.shape()[2];
+        let start_idx = (seq_len - 1) * vocab_size;
+        let logits_vec: Vec<f32> = logits_array.iter().skip(start_idx).take(vocab_size).copied().collect();
 
         let new_cache = PopulatedCache::update_from_outputs(outputs)?;
 

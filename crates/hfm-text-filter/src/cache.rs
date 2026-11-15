@@ -66,12 +66,11 @@ impl PopulatedCache {
     }
 
     /// Format the cached tensors into a named list for the ONNX inputs! macro.
-    /// Returns references because `Value` cannot be cloned.
-    pub fn build_inputs(&self) -> Vec<(&'static str, &Value)> {
+    /// Consumes `self` because `Value` cannot be cloned.
+    pub fn build_inputs(self) -> Vec<(&'static str, Value)> {
         INPUT_NAMES
-            .iter()
-            .copied()
-            .zip(self.tensors.iter())
+            .into_iter()
+            .zip(self.tensors)
             .collect()
     }
 }
