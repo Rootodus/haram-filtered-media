@@ -23,12 +23,12 @@ pub struct AppState {
     pub filter: Arc<Mutex<Box<dyn TextFilter>>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct FilterRequest {
     text: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct FilterResponse {
     clean_text: Option<String>,
     error: Option<String>,

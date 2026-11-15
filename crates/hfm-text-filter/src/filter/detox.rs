@@ -14,7 +14,6 @@ pub struct BartDetoxFilter {
     model: BartOnnxModel,
     tokenizer: BartTokenizer,
     mask: TokenMask,
-    banned_words: Vec<String>, // Kept for potential future re-initialization
     fallback_regex: FallbackRegex,
     max_new_tokens: usize,
     eos_token_id: i64,
@@ -38,7 +37,6 @@ impl BartDetoxFilter {
             model,
             tokenizer,
             mask,
-            banned_words,
             fallback_regex,
             max_new_tokens,
             eos_token_id,

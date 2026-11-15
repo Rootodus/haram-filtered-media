@@ -2,7 +2,7 @@
 
 use crate::cache::PopulatedCache;
 use crate::types::tensor::{AttentionMask, TokenIds};
-use crate::types::{ReaderError, ReaderResult};
+use crate::types::ReaderError;
 use ort::session::{Session, SessionInputValue};
 use ort::value::Value;
 use std::borrow::Cow;

@@ -98,8 +98,6 @@ impl TokenMask {
 mod tests {
     use super::*;
     use crate::types::tensor::TokenIds;
-    use crate::types::{ReaderError, ReaderResult};
-    use std::path::Path;
 
     // A fake tokenizer for testing without loading the real 500MB model.
     struct MockTokenizer;
