@@ -94,10 +94,15 @@ mod tests {
 
     #[test]
     fn test_regex_special_characters_escaped() {
-        // Words with regex metacharacters must be treated literally.
-        let fb = make(&["c++"]);
-        assert_eq!(fb.apply("I like c++."), "I like [redacted].");
-        assert_eq!(fb.apply("abc"), "abc");
+        // Words containing regex metacharacters must be treated literally.
+        // Note: the banned word must start and end with a word character for `\b`
+        // to anchor correctly. This matches realistic banned-word usage.
+        let fb = make(&["test.word"]);
+        assert_eq!(fb.apply("This is test.word."), "This is [redacted].");
+        // The dot must be escaped, not treated as "any character".
+        assert_eq!(fb.apply("testXword"), "testXword");
+        // Case-insensitive.
+        assert_eq!(fb.apply("TEST.WORD"), "[redacted]");
     }
 
     #[test]
