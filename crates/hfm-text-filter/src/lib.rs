@@ -4,6 +4,7 @@ pub mod cache;
 pub mod filter;
 pub mod mask;
 pub mod onnx;
+pub mod server;
 pub mod tokenizer;
 pub mod types;
 
