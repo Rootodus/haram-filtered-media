@@ -17,7 +17,7 @@ impl UppercaseFilter {
 impl TextFilter for UppercaseFilter {
     fn process(&self, raw: &RawChunk) -> ReaderResult<ProcessedChunk> {
         let transformed = raw.data.to_uppercase();
-        Ok(ProcessedChunk::new(raw.offset, transformed, raw.generation))
+        Ok(ProcessedChunk::new(transformed))
     }
 }
 
@@ -34,30 +34,27 @@ impl NoopFilter {
 
 impl TextFilter for NoopFilter {
     fn process(&self, raw: &RawChunk) -> ReaderResult<ProcessedChunk> {
-        Ok(ProcessedChunk::new(raw.offset, raw.data.clone(), raw.generation))
+        Ok(ProcessedChunk::new(raw.data.clone()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Offset;
 
     #[test]
     fn test_uppercase() {
-        let raw = RawChunk::new(Offset(0), "hello world", 0);
+        let raw = RawChunk::new("hello world");
         let filter = UppercaseFilter;
         let processed = filter.process(&raw).unwrap();
         assert_eq!(processed.data, "HELLO WORLD");
-        assert_eq!(processed.offset, Offset(0));
     }
 
     #[test]
     fn test_noop() {
-        let raw = RawChunk::new(Offset(0), "keep as is", 0);
+        let raw = RawChunk::new("keep as is");
         let filter = NoopFilter;
         let processed = filter.process(&raw).unwrap();
         assert_eq!(processed.data, "keep as is");
-        assert_eq!(processed.offset, Offset(0));
     }
 }
