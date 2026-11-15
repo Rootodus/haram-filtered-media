@@ -45,8 +45,8 @@ from transformers import AutoTokenizer, NoBadWordsLogitsProcessor, LogitsProcess
 TOOLS = Path(__file__).parent
 DATA = TOOLS / "data"
 RESULTS = TOOLS / "results"
-# Point to the quantized INT8 directory by default
-DEFAULT_MODEL_DIR = TOOLS.parent / "models" / "bart-base-detox" / "onnx_int8"
+# Point to the FP32 directory
+DEFAULT_MODEL_DIR = TOOLS.parent / "models" / "bart-base-detox" / "onnx"
 PARADETOX_TSV = DATA / "paradetox" / "paradetox.tsv"
 BANNED_WORDS = DATA / "banned_words.txt"
 STRICT_BANNED = DATA / "strict_banned.txt"
@@ -54,7 +54,7 @@ RANT_FILE = DATA / "text_has_profanity.txt"
 
 MAX_INPUT = 512
 MAX_OUTPUT = 128
-NUM_BEAMS = 5
+NUM_BEAMS = 1
 EVAL_BATCH_SIZE = 16
 
 
@@ -360,7 +360,7 @@ def main():
     print("=" * 60)
     print_quality_table(reports)
 
-    suffix = "int8_masked" if args.mask else "int8_unmasked"
+    suffix = "fp32_greedy_masked" if args.mask else "fp32_greedy_unmasked"
     csv_path = RESULTS / f"summary_{suffix}.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
