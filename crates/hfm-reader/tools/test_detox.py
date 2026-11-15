@@ -50,7 +50,7 @@ def detoxify(text, max_input_tokens=512, max_output_new_tokens=512):
     return decoded
 
 # Read and parse the file
-with open('./tools/text_has_profanity.txt', 'r', encoding='utf-8') as f:
+with open('./tools/data/text_has_profanity.txt', 'r', encoding='utf-8') as f:
     content = f.read()
 
 # Extract all <p> blocks
