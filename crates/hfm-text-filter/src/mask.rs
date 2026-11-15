@@ -189,13 +189,16 @@ mod tests {
         let mask = build_test_mask();
         let mut logits = vec![0.0; 100];
 
+        // History unrelated to any banned sequence.
         let history = vec![99, 99];
         mask.apply_mask(&mut logits, &history);
 
-        // Nothing should be masked.
-        for val in logits {
-            assert_ne!(val, f32::NEG_INFINITY);
-        }
+        // Token 10 is the prefix of banned word [10, 20], not a banned word itself.
+        assert_ne!(logits[10], f32::NEG_INFINITY);
+        // Token 20 is the second half of [10, 20], but history doesn't end in 10.
+        assert_ne!(logits[20], f32::NEG_INFINITY);
+        // Token 30 is a single-token banned word, always masked regardless of history.
+        assert_eq!(logits[30], f32::NEG_INFINITY);
     }
 
     #[test]
