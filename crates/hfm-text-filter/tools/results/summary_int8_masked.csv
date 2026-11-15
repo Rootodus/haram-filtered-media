@@ -1,0 +1,4 @@
+corpus,n,overall_banned,banned_other,banned_profanity,banned_religious,bleu,rouge,cosine,avg_ms
+paradetox,500,0.0000,0.0000,0.0000,0.0000,0.6299,0.8390,0.8706,783.1
+strict_banned,100,0.0100,0.0000,0.0000,0.0100,,,,777.1
+text_has_profanity,30,0.0000,0.0000,0.0000,0.0000,,,,1198.1
