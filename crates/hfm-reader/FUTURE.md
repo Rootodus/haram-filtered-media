@@ -16,22 +16,20 @@ Browser extension + localhost Rust server beats a local reader for web text.
 Not a redefinition: `hfm-reader` stays the local-file reader. The extension +
 server is a separate product. Candidate name: `hfm-web-filter`.
 
-## Prerequisites (block the pivot)
+## Python Measurement Findings (Completed)
 
-Measure in Python first:
+We tested `bart-base-detox` (ONNX) in Python on ParaDetox, a realistic rant, and a strict banned-word test set. Key findings:
 
-1. Banned-substring rate of `bart-base-detox` output on ParaDetox, a realistic
-   rant, and a strict banned-word test set.
-2. Latency matrix: sequential greedy, sequential beam=5, 4-worker, batched-8.
-   Report p50/p95 and RSS.
-3. Argmax-is-masked rate: how often the unmasked argmax token contains a banned
-   substring. Decides whether logit suppression is worth building.
+1. **Model Quality is High**: BLEU 0.687, Cosine 0.896 on ParaDetox. The model naturally rewrites well.
+2. **Model Fails on Strict Words**: Out-of-distribution, the model fails 10-17% of the time, copying banned words (especially religious terms) directly from the input.
+3. **Logit Suppression is Mandatory**: Unmasked argmax failed only 0.15% of the time, but output failure was 17%. This proves the model uses cross-attention copying and subword splits, bypassing simple argmax checks.
+4. **Preemptive Masking Works**: Using `NoBadWordsLogitsProcessor`, banned rates dropped to near-zero (0.0% on ParaDetox, 1.0% on strict). Quality did not drop (Cosine 0.895).
+5. **Regex Fallback is Still Needed**: Masking caught 99%, but the remaining 1% (rare casing/subword edge cases) means a regex post-filter is mathematically required to guarantee 0%.
+6. **Latency is Too High**: Base latency is ~500ms/segment (CPU). Masking adds a 60% penalty in Python. This requires Int8 quantization and a native Rust Trie implementation.
 
-## Open question
+## Open Question (Resolved)
 
-Logit suppression applies only to generative rewriters. If the model classifies
-or redacts, suppression is irrelevant and "no banned word in output" is trivially
-true. Confirm the model's output type before designing masking.
+Logit suppression applies only to generative rewriters. BART is generative. Masking is required to force natural synonyms. Regex is required as a safety net for the 1% masking misses.
 
 ## Design decisions (if pivot happens)
 
@@ -44,6 +42,7 @@ true. Confirm the model's output type before designing masking.
   "Closing this window will shut down the server." No close-confirm modal.
 - Server is a thread in the eframe app, not a daemon.
 - Extension shows "server not running" message. Primary diagnostic.
+- **Filtering Strategy**: Preemptive Trie-based Logit Masking + Regex Fallback.
 
 ## Reuse
 
@@ -53,8 +52,7 @@ carry over.
 
 ## Sequencing
 
-1. Python measurement (prerequisites above). One day.
-2. Decide masking based on argmax-is-masked rate.
-3. Rust parity: beam search in `BartDetoxFilter` (currently greedy — a quality gap
-   today, independent of the pivot).
-4. Then: extension + localhost server.
+1. ~~Python measurement~~ (Done).
+2. Quantize the ONNX model to Int8 to drop base latency from ~500ms to <200ms.
+3. Rust parity: Implement Beam Search + Trie Masking + Regex Fallback in `BartDetoxFilter`. (Python `NoBadWordsLogitsProcessor` is too slow; Rust needs O(1) Trie).
+4. Extension + localhost server.
