@@ -65,7 +65,7 @@ impl BartDetoxFilter {
         
         for _step in 0..self.max_new_tokens {
             let (mut logits, new_cache) = if let Some(past) = cache.take() {
-                self.model.run_decoder_step_with_past(&current_input, &encoder_hidden, &attention_mask, past)?
+                self.model.run_decoder_step_with_past(&current_input, &attention_mask, past)?
             } else {
                 self.model.run_decoder_step_one(&current_input, &encoder_hidden, &attention_mask)?
             };

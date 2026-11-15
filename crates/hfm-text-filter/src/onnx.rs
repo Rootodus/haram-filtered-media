@@ -100,7 +100,6 @@ impl BartOnnxModel {
     pub fn run_decoder_step_with_past(
         &mut self,
         decoder_input_ids: &TokenIds,
-        encoder_hidden: &Value,
         attention_mask: &AttentionMask,
         cache: PopulatedCache,
     ) -> Result<(Vec<f32>, PopulatedCache), ReaderError> {
@@ -112,13 +111,14 @@ impl BartOnnxModel {
         let mask = ndarray::Array2::from_shape_vec((1, enc_seq_len), attention_mask.0.clone())
             .map_err(|e| ReaderError::Internal(format!("Shape error: {}", e)))?;
 
-        // Build base inputs
+        // Build base inputs. Note: `encoder_hidden_states` is NOT an input for
+        // `decoder_with_past_model.onnx` — the encoder's K/V are already in the
+        // past cache, so it would be redundant.
         let input_ids_val = Value::from_array(input_ids).map_err(|e| ReaderError::Onnx(e.to_string()))?;
         let mask_val = Value::from_array(mask).map_err(|e| ReaderError::Onnx(e.to_string()))?;
 
         let mut inputs = ort::inputs![
             "input_ids" => input_ids_val,
-            "encoder_hidden_states" => encoder_hidden,
             "encoder_attention_mask" => mask_val,
         ];
 
