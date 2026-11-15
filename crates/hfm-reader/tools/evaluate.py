@@ -194,7 +194,7 @@ def generate_batch(model, tokenizer, texts, num_beams=NUM_BEAMS, logits_processo
 # ---------- Metrics ----------
 
 def score_bleu(predictions, references):
-    bleu = BLEU()
+    bleu = BLEU(effective_order=True)
     per_row = []
     for pred, refs in zip(predictions, references):
         if not refs:
@@ -351,7 +351,7 @@ def print_latency_table(rows):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=None, help="limit rows per corpus")
+    ap.add_argument("--limit", type=int, default=None, help="limit rows per corpus (applied AFTER derivation)")
     ap.add_argument("--latency", action="store_true", help="run latency matrix")
     args = ap.parse_args()
 
@@ -368,26 +368,30 @@ def main():
     cats = sorted(set(c for _, c in entries))
     print(f"  {len(entries)} entries, {len(cats)} categories: {cats}")
 
-    print("Loading ParaDetox...", flush=True)
-    para_rows = load_paradetox(PARADETOX_TSV)
-    if args.limit:
-        para_rows = para_rows[: args.limit]
-    print(f"  {len(para_rows)} rows")
+    print("Loading ParaDetox (full)...", flush=True)
+    para_rows_full = load_paradetox(PARADETOX_TSV)
+    print(f"  {len(para_rows_full)} rows")
 
     if not STRICT_BANNED.exists():
-        print("Deriving strict_banned.txt...", flush=True)
-        strict_texts = derive_strict_banned(para_rows, entries, STRICT_BANNED)
-        print(f"  {len(strict_texts)} sentences")
+        print("Deriving strict_banned.txt from full ParaDetox...", flush=True)
+        strict_texts_full = derive_strict_banned(para_rows_full, entries, STRICT_BANNED)
+        print(f"  {len(strict_texts_full)} sentences")
     else:
         print("Loading existing strict_banned.txt...", flush=True)
-        strict_texts = [l for l in STRICT_BANNED.read_text(encoding="utf-8").splitlines() if l.strip()]
-    if args.limit:
-        strict_texts = strict_texts[: args.limit]
+        strict_texts_full = [l for l in STRICT_BANNED.read_text(encoding="utf-8").splitlines() if l.strip()]
+        print(f"  {len(strict_texts_full)} sentences")
 
     print("Loading rant blocks...", flush=True)
-    rant_texts = load_rant_blocks(RANT_FILE)
-    if args.limit:
-        rant_texts = rant_texts[: args.limit]
+    rant_texts_full = load_rant_blocks(RANT_FILE)
+
+    # Apply limit AFTER derivation so strict_banned.txt is always built from full corpus.
+    para_rows = para_rows_full[: args.limit] if args.limit else para_rows_full
+    strict_texts = strict_texts_full[: args.limit] if args.limit else strict_texts_full
+    rant_texts = rant_texts_full[: args.limit] if args.limit else rant_texts_full
+
+    print(f"  Evaluated sizes: paradetox={len(para_rows)}, "
+          f"strict_banned={len(strict_texts)}, "
+          f"text_has_profanity={len(rant_texts)}")
 
     print("Loading model (ORT)...", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(str(MODEL_ONNX))
@@ -419,7 +423,7 @@ def main():
 
     if counter.total_count:
         rate = counter.masked_count / counter.total_count * 100
-        print(f"\nArgmax-is-masked rate: {rate:.1f}%  ({counter.masked_count}/{counter.total_count} steps)")
+        print(f"\nArgmax-is-masked rate: {rate:.2f}%  ({counter.masked_count}/{counter.total_count} steps)")
 
     if args.latency:
         print("\n" + "=" * 60)
