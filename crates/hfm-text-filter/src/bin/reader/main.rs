@@ -58,7 +58,6 @@ impl ServerApp {
     fn resolve_paths() -> Result<(PathBuf, Vec<String>), String> {
         hfm_text_filter::paths::resolve_config()
     }
-cargo test -p hfm-text-filter
 
     fn start_server(&mut self) {
         let (status_tx, status_rx) = bounded(16);
