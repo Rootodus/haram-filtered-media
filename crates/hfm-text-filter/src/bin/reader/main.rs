@@ -1,10 +1,10 @@
-//! Minimal GUI for hfm-reader using eframe and egui.
+//! Minimal GUI for hfm-text-filter using eframe and egui.
 
 use std::sync::Arc;
 
 use eframe::egui;
 use eframe::egui::{CentralPanel, Panel, ScrollArea, Ui};
-use hfm_reader::{
+use hfm_text_filter::{
     LocalFileSource, PipelineCommand, PipelineController, PipelineState,
     TextBuffer, TextBufferImpl, UppercaseFilter, Offset,
 };
@@ -87,7 +87,7 @@ impl ReaderApp {
         if self.file_path.is_none() && self.error.is_none() && !self.loading {
             CentralPanel::default().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.heading("hfm-reader");
+                    ui.heading("hfm-text-filter");
                     ui.add_space(20.0);
                     if ui.button("Open Text File").clicked() {
                         if let Some(path) = FileDialog::new()
@@ -188,11 +188,11 @@ fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
-            .with_title("hfm-reader"),
+            .with_title("hfm-text-filter"),
         ..Default::default()
     };
     eframe::run_native(
-        "hfm-reader",
+        "hfm-text-filter",
         options,
         Box::new(|_cc| Ok(Box::new(ReaderApp::new()))),
     )

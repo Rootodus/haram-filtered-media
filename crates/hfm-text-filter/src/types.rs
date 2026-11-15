@@ -105,7 +105,7 @@ impl ChunkState {
     }
 }
 
-/// Unified error type for the hfm-reader crate.
+/// Unified error type for the hfm-text-filter crate.
 #[derive(Debug, thiserror::Error)]
 pub enum ReaderError {
     #[error("I/O error: {0}")]

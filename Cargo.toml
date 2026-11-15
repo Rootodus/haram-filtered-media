@@ -37,6 +37,11 @@ thiserror = "2.0.20"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false }
 tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"] }
+tokio = "1.54.1"
+axum = "0.8.9"
+futures-util = "0.3.34"
+serde = "1.0.229"
+tower-http = "0.7.1"
 # --- Dev and Build Tooling ---
 criterion = "0.8.2"
 dhat = "0.3.3"
