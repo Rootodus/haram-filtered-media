@@ -72,18 +72,23 @@ impl TokenMask {
     }
 
     /// Find the token ID with the highest probability (argmax).
-    pub fn select_next_token(logits: &[f32]) -> i64 {
+    /// Returns an error if the model is in a dead end (all logits are -inf).
+    pub fn select_next_token(logits: &[f32]) -> crate::types::ReaderResult<i64> {
         let mut max_idx = 0;
         let mut max_val = f32::NEG_INFINITY;
-        
+
         for (i, &val) in logits.iter().enumerate() {
             if val > max_val {
                 max_val = val;
                 max_idx = i;
             }
         }
-        
-        max_idx as i64
+
+        if max_val == f32::NEG_INFINITY {
+            return Err(crate::types::ReaderError::Mask("Dead end: all tokens masked".into()));
+        }
+
+        Ok(max_idx as i64)
     }
 }
 
@@ -131,7 +136,14 @@ mod tests {
     fn test_select_next_token() {
         let logits = vec![0.1, 0.5, 0.2, 0.8, 0.0];
         // Highest is at index 3 (value 0.8)
-        assert_eq!(TokenMask::select_next_token(&logits), 3);
+        assert_eq!(TokenMask::select_next_token(&logits).unwrap(), 3);
+    }
+
+    #[test]
+    fn test_select_next_token_dead_end() {
+        let logits = vec![f32::NEG_INFINITY; 10];
+        let result = TokenMask::select_next_token(&logits);
+        assert!(result.is_err());
     }
 
     #[test]
