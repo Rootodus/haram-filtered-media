@@ -8,9 +8,9 @@ use crate::types::{ProcessedChunk, RawChunk, ReaderResult};
 /// A filter that processes raw text chunks.
 pub trait TextFilter: Send + Sync {
     /// Process a raw chunk and produce a processed chunk.
-    fn process(&self, raw: &RawChunk) -> ReaderResult<ProcessedChunk>;
+    /// Takes &mut self because ONNX sessions mutate internal memory during inference.
+    fn process(&mut self, raw: &RawChunk) -> ReaderResult<ProcessedChunk>;
 }
 
-// Re-export filters.
 pub use mock::{UppercaseFilter, NoopFilter};
 pub use detox::BartDetoxFilter;
