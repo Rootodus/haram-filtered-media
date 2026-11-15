@@ -95,3 +95,77 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filter::UppercaseFilter;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::connect_async;
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+    /// Spins up a test server on an ephemeral port with the UppercaseFilter.
+    /// Returns the port to connect to.
+    async fn spawn_test_server() -> u16 {
+        let state = AppState {
+            filter: Arc::new(Mutex::new(Box::new(UppercaseFilter::new()))),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            let _ = run_server(state, listener).await;
+        });
+
+        // Give the listener a moment to start accepting before we connect.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        port
+    }
+
+    #[tokio::test]
+    async fn test_websocket_uppercase() {
+        let port = spawn_test_server().await;
+        let url = format!("ws://127.0.0.1:{}/ws", port);
+        let (mut ws, _) = connect_async(url).await.expect("Failed to connect");
+
+        let req = FilterRequest {
+            text: "hello world".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        ws.send(WsMessage::Text(json.into())).await.unwrap();
+
+        let msg = ws.next().await.unwrap().unwrap();
+        if let WsMessage::Text(text) = msg {
+            let text_str = text.to_string();
+            let resp: FilterResponse = serde_json::from_str(&text_str).unwrap();
+            assert_eq!(resp.clean_text.unwrap(), "HELLO WORLD");
+            assert!(resp.error.is_none());
+        } else {
+            panic!("Expected text message");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_websocket_invalid_json() {
+        let port = spawn_test_server().await;
+        let url = format!("ws://127.0.0.1:{}/ws", port);
+        let (mut ws, _) = connect_async(url).await.expect("Failed to connect");
+
+        ws.send(WsMessage::Text("not json".into())).await.unwrap();
+
+        let msg = ws.next().await.unwrap().unwrap();
+        if let WsMessage::Text(text) = msg {
+            let text_str = text.to_string();
+            let resp: FilterResponse = serde_json::from_str(&text_str).unwrap();
+            assert!(resp.clean_text.is_none());
+            let err = resp.error.unwrap();
+            assert!(
+                err.contains("Invalid JSON"),
+                "Expected error to mention 'Invalid JSON', got: {}",
+                err
+            );
+        } else {
+            panic!("Expected text message");
+        }
+    }
+}
