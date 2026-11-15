@@ -13,7 +13,6 @@ use hfm_text_filter::server::{run_server, AppState};
 
 /// Commands sent from the UI to the background server thread.
 enum ServerCommand {
-    Start,
     Stop,
 }
 
@@ -25,32 +24,38 @@ enum ServerStatus {
     Error(String),
 }
 
+/// The strict state representation for the UI.
+enum UiServerState {
+    Stopped,
+    Loading,
+    Running,
+    Error(String),
+}
+
+/// Groups the active connections to the background thread.
+/// Only exists if the server is running or loading.
+struct ServerConnection {
+    cmd_tx: Sender<ServerCommand>,
+    status_rx: Receiver<ServerStatus>,
+    handle: thread::JoinHandle<()>,
+}
+
 struct ServerApp {
-    is_running: bool,
+    state: UiServerState,
     port: u16,
-    status_message: String,
-    status_rx: Option<Receiver<ServerStatus>>,
-    cmd_tx: Option<Sender<ServerCommand>>,
-    server_thread: Option<thread::JoinHandle<()>>,
+    connection: Option<ServerConnection>,
 }
 
 impl ServerApp {
     fn new() -> Self {
         Self {
-            is_running: false,
+            state: UiServerState::Stopped,
             port: 8377,
-            status_message: "Status: Server is stopped".to_string(),
-            status_rx: None,
-            cmd_tx: None,
-            server_thread: None,
+            connection: None,
         }
     }
 
     fn resolve_paths() -> Result<(PathBuf, Vec<String>), String> {
-        // 1. Check relative to executable (dist)
-        // 2. Check current working directory (dev)
-        // 3. Fallback to crate root (dev)
-        
         let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf()));
         let cwd = std::env::current_dir().ok();
         let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -77,7 +82,6 @@ impl ServerApp {
         let content = std::fs::read_to_string(&banned_path)
             .map_err(|e| format!("Failed to read banned_words.txt: {}", e))?;
             
-        // Parse lines, stripping comments (lines starting with #)
         let words: Vec<String> = content
             .lines()
             .map(|l| l.trim())
@@ -96,10 +100,7 @@ impl ServerApp {
         let (status_tx, status_rx) = bounded(16);
         let (cmd_tx, cmd_rx) = bounded(16);
         
-        self.status_rx = Some(status_rx);
-        self.cmd_tx = Some(cmd_tx);
-        self.is_running = true;
-
+        self.state = UiServerState::Loading;
         let port = self.port;
         
         let handle = thread::Builder::new()
@@ -127,7 +128,6 @@ impl ServerApp {
                     filter: Arc::new(Mutex::new(filter)),
                 };
 
-                // Create Tokio Runtime
                 let rt = match tokio::runtime::Runtime::new() {
                     Ok(rt) => rt,
                     Err(e) => {
@@ -137,18 +137,12 @@ impl ServerApp {
                 };
 
                 rt.block_on(async {
-                    // Start the server task
                     let server_fut = run_server(state, port);
                     
-                    // Wait for the Stop command
-                    let cmd_rx = cmd_rx;
                     let stop_fut = async {
                         loop {
-                            // Poll the channel without blocking the Tokio runtime
-                            if let Ok(cmd) = cmd_rx.try_recv() {
-                                if let ServerCommand::Stop = cmd {
-                                    break;
-                                }
+                            if let Ok(ServerCommand::Stop) = cmd_rx.try_recv() {
+                                break;
                             }
                             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         }
@@ -170,38 +164,41 @@ impl ServerApp {
             })
             .expect("Failed to spawn server manager thread");
 
-        self.server_thread = Some(handle);
+        self.connection = Some(ServerConnection {
+            cmd_tx,
+            status_rx,
+            handle,
+        });
     }
 
     fn stop_server(&mut self) {
-        if let Some(tx) = &self.cmd_tx {
-            let _ = tx.send(ServerCommand::Stop);
+        if let Some(conn) = self.connection.take() {
+            let _ = conn.cmd_tx.send(ServerCommand::Stop);
+            let _ = conn.handle.join();
         }
-        if let Some(handle) = self.server_thread.take() {
-            let _ = handle.join();
-        }
-        self.is_running = false;
-        self.status_message = "Status: Server is stopped".to_string();
+        self.state = UiServerState::Stopped;
     }
 
     fn poll_status(&mut self) {
-        if let Some(rx) = &self.status_rx {
-            while let Ok(status) = rx.try_recv() {
+        if let Some(conn) = &self.connection {
+            // Process incoming status messages
+            while let Ok(status) = conn.status_rx.try_recv() {
                 match status {
-                    ServerStatus::LoadingModel => {
-                        self.status_message = "Status: Loading model... (this may take a few seconds)".to_string();
-                    }
-                    ServerStatus::Running => {
-                        self.status_message = format!("Status: Server is running on port {}", self.port);
-                    }
-                    ServerStatus::Stopped => {
-                        self.is_running = false;
-                        self.status_message = "Status: Server is stopped".to_string();
-                    }
-                    ServerStatus::Error(e) => {
-                        self.is_running = false;
-                        self.status_message = format!("Status: Error: {}", e);
-                    }
+                    ServerStatus::LoadingModel => self.state = UiServerState::Loading,
+                    ServerStatus::Running => self.state = UiServerState::Running,
+                    ServerStatus::Stopped => self.state = UiServerState::Stopped,
+                    ServerStatus::Error(e) => self.state = UiServerState::Error(e),
+                }
+            }
+
+            // If the thread has finished, cleanly join and reset the connection.
+            // This catches cases where the server crashes or exits unexpectedly.
+            if conn.handle.is_finished() {
+                if let Some(conn) = self.connection.take() {
+                    let _ = conn.handle.join();
+                }
+                if !matches!(self.state, UiServerState::Error(_)) {
+                    self.state = UiServerState::Stopped;
                 }
             }
         }
@@ -217,24 +214,33 @@ impl ServerApp {
                 ui.label("Note: Closing this window will shut down the server.");
                 ui.add_space(20.0);
 
-                let color = if self.is_running && self.status_message.contains("running") {
-                    egui::Color32::GREEN
-                } else if self.status_message.contains("Error") {
-                    egui::Color32::RED
-                } else {
-                    egui::Color32::YELLOW
-                };
-                
-                ui.colored_label(color, &self.status_message);
-                ui.add_space(20.0);
-
-                if self.is_running {
-                    if ui.button("Stop Server").clicked() {
-                        self.stop_server();
+                // Strict state matching
+                match &self.state {
+                    UiServerState::Stopped => {
+                        ui.colored_label(egui::Color32::YELLOW, "Status: Server is stopped");
+                        ui.add_space(20.0);
+                        if ui.button("Start Server").clicked() {
+                            self.start_server();
+                        }
                     }
-                } else {
-                    if ui.button("Start Server").clicked() {
-                        self.start_server();
+                    UiServerState::Loading => {
+                        ui.colored_label(egui::Color32::YELLOW, "Status: Loading model... (this may take a few seconds)");
+                        ui.add_space(20.0);
+                        // No button while loading
+                    }
+                    UiServerState::Running => {
+                        ui.colored_label(egui::Color32::GREEN, format!("Status: Server is running on port {}", self.port));
+                        ui.add_space(20.0);
+                        if ui.button("Stop Server").clicked() {
+                            self.stop_server();
+                        }
+                    }
+                    UiServerState::Error(e) => {
+                        ui.colored_label(egui::Color32::RED, format!("Status: Error: {}", e));
+                        ui.add_space(20.0);
+                        if ui.button("Try Again").clicked() {
+                            self.state = UiServerState::Stopped;
+                        }
                     }
                 }
             });
@@ -246,8 +252,8 @@ impl eframe::App for ServerApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.poll_status();
         
-        // If the server thread is running, request frequent repaints to update status
-        if self.is_running {
+        // If the server is active (Loading or Running), request frequent repaints
+        if matches!(self.state, UiServerState::Loading | UiServerState::Running) {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
         }
 
