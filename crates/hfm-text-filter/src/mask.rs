@@ -55,11 +55,10 @@ impl TokenMask {
 
     /// Modify the raw logits slice in-place, setting forbidden tokens to -inf.
     pub fn apply_mask(&self, logits: &mut [f32], recent_tokens: &[i64]) {
-        // We check every possible suffix of the recent tokens.
-        // For example, if history is [10, 20, 30], we check:
-        // [10, 20, 30], [20, 30], [30]
-        // If any suffix matches a prefix in the Trie, we mask the completing token.
-        for start_idx in 0..recent_tokens.len() {
+        // We check every possible suffix of the recent tokens, INCLUDING the empty suffix.
+        // The empty suffix (walking to the root) is what masks single-token banned words.
+        // This matches the behavior of HuggingFace's NoBadWordsLogitsProcessor.
+        for start_idx in 0..=recent_tokens.len() {
             let suffix = &recent_tokens[start_idx..];
             if let Some(node) = self.walk(suffix) {
                 for (token_id, child) in &node.children {
@@ -153,31 +152,36 @@ mod tests {
     fn test_apply_mask_completes_sequence() {
         let mask = build_test_mask();
         let mut logits = vec![0.0; 100];
-        
-        // History is [10] (prefix of "bad").
-        // The next token should be masked if it's 20.
+
+        // History is [10] (prefix of banned word [10, 20]).
+        // Token 30 is a single-token banned word.
         let history = vec![10];
         mask.apply_mask(&mut logits, &history);
-        
+
+        // Token 20 completes the sequence [10, 20], so it's masked.
         assert_eq!(logits[20], f32::NEG_INFINITY);
-        assert_eq!(logits[30], 0.0); // 30 is untouched
+        // Token 30 is a single-token banned word, so it's masked too.
+        assert_eq!(logits[30], f32::NEG_INFINITY);
+        // Token 10 is a prefix of the banned word [10, 20], not a banned word itself.
+        assert_eq!(logits[10], 0.0);
     }
 
     #[test]
     fn test_apply_mask_exact_match() {
         let mask = build_test_mask();
         let mut logits = vec![0.0; 100];
-        
-        // History ends with [30], which is "word".
-        // The next token shouldn't be masked unless it forms a longer ban.
-        // Since [30] is a leaf node, there are no children to mask.
+
+        // History is [10, 30]. Token 30 is a single-token banned word.
         let history = vec![10, 30];
         mask.apply_mask(&mut logits, &history);
-        
-        // Nothing should be -inf.
-        for val in logits {
-            assert_ne!(val, f32::NEG_INFINITY);
-        }
+
+        // Token 30 is a single-token banned word and is masked at every step
+        // (matching HF's NoBadWordsLogitsProcessor behavior).
+        assert_eq!(logits[30], f32::NEG_INFINITY);
+        // Token 10 is not a banned word.
+        assert_ne!(logits[10], f32::NEG_INFINITY);
+        // Token 20 is not masked because history doesn't end in 10.
+        assert_ne!(logits[20], f32::NEG_INFINITY);
     }
 
     #[test]
