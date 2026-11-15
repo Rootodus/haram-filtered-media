@@ -21,6 +21,8 @@ futures-util = "0.3.34"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tower-http = { workspace = true, features = ["cors", "trace"] }
+ort = { workspace = true }
+tokenizers = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
