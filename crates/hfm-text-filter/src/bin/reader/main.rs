@@ -88,7 +88,7 @@ impl ServerApp {
                 };
 
                 let state = AppState {
-                    filter: Arc::new(Mutex::new(filter)),
+                    filter: Arc::new(Mutex::new(Box::new(filter))),
                 };
 
                 let rt = match tokio::runtime::Runtime::new() {

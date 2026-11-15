@@ -14,13 +14,13 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::filter::{BartDetoxFilter, TextFilter}; // Added TextFilter
+use crate::filter::TextFilter;
 use crate::types::RawChunk;
 
 /// Shared state across all WebSocket connections.
 #[derive(Clone)]
 pub struct AppState {
-    pub filter: Arc<Mutex<BartDetoxFilter>>,
+    pub filter: Arc<Mutex<Box<dyn TextFilter>>>,
 }
 
 #[derive(Deserialize)]
@@ -62,7 +62,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(text) = msg {
             // 1. Parse the JSON
-            let req: FilterRequest = match serde_json::from_str(&text) {
+            let req: FilterRequest = match serde_json::from_str(&text.to_string()) {
                 Ok(r) => r,
                 Err(e) => {
                     let resp = FilterResponse { clean_text: None, error: Some(format!("Invalid JSON: {}", e)) };
