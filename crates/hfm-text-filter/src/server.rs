@@ -34,18 +34,14 @@ struct FilterResponse {
     error: Option<String>,
 }
 
-/// Start the Axum server on the given port.
-pub async fn run_server(state: AppState, port: u16) -> Result<(), String> {
+/// Start the Axum server on the given pre-bound listener.
+pub async fn run_server(state: AppState, listener: tokio::net::TcpListener) -> Result<(), String> {
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .route("/health", get(|| async { "OK" }))
         .with_state(state);
 
-    let addr = format!("127.0.0.1:{}", port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|e| format!("Failed to bind to {}: {}", addr, e))?;
-
+    let addr = listener.local_addr().map_err(|e| format!("Invalid listener: {}", e))?;
     println!("[SERVER] Listening on ws://{}/ws", addr);
 
     axum::serve(listener, app)

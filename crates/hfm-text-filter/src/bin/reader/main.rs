@@ -137,8 +137,18 @@ impl ServerApp {
                 };
 
                 rt.block_on(async {
-                    let server_fut = run_server(state, port);
-                    
+                    let addr = format!("127.0.0.1:{}", port);
+                    let listener = match tokio::net::TcpListener::bind(&addr).await {
+                        Ok(l) => l,
+                        Err(e) => {
+                            status_tx.send(ServerStatus::Error(format!("Failed to bind to {}: {}", addr, e))).unwrap();
+                            return;
+                        }
+                    };
+
+                    let _ = status_tx.send(ServerStatus::Running);
+                    let server_fut = run_server(state, listener);
+
                     let stop_fut = async {
                         loop {
                             if let Ok(ServerCommand::Stop) = cmd_rx.try_recv() {
