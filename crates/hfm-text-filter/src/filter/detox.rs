@@ -13,7 +13,8 @@ pub struct BartDetoxFilter {
     model: BartOnnxModel,
     tokenizer: BartTokenizer,
     mask: TokenMask,
-    banned_words: Vec<String>,
+    banned_words: Vec<String>, // Kept for Trie initialization
+    fallback_regexes: Vec<regex::Regex>, // Pre-compiled for the safety net
     max_new_tokens: usize,
     eos_token_id: i64,
     decoder_start_token_id: i64,
@@ -31,11 +32,22 @@ impl BartDetoxFilter {
         let tokenizer = BartTokenizer::new(model_dir)?;
         let mask = TokenMask::new(&banned_words, &tokenizer);
 
+        // Pre-compile regexes for the fallback safety net.
+        // We use case-insensitive matching (?i) and escape the word to handle special chars.
+        let fallback_regexes = banned_words
+            .iter()
+            .map(|word| {
+                regex::Regex::new(&format!("(?i){}", regex::escape(word)))
+                    .expect("Failed to compile fallback regex")
+            })
+            .collect();
+
         Ok(Self {
             model,
             tokenizer,
             mask,
             banned_words,
+            fallback_regexes,
             max_new_tokens,
             eos_token_id,
             decoder_start_token_id,
@@ -45,14 +57,8 @@ impl BartDetoxFilter {
     /// The safety net. Replaces any banned word that slipped past the mask.
     fn apply_fallback_regex(&self, text: &str) -> String {
         let mut result = text.to_string();
-        let lower = result.to_lowercase();
-
-        for word in &self.banned_words {
-            let word_lower = word.to_lowercase();
-            if lower.contains(&word_lower) {
-                let re = regex::Regex::new(&format!("(?i){}", regex::escape(word))).unwrap();
-                result = re.replace_all(&result, "[redacted]").to_string();
-            }
+        for re in &self.fallback_regexes {
+            result = re.replace_all(&result, "[redacted]").to_string();
         }
         result
     }
