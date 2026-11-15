@@ -1,7 +1,6 @@
-# FUTURE: client-server pivot (deferred)
+# hfm-text-filter: Architecture & Implementation
 
-**Status:** not doing now. Finish local reader v0.1 first. Recorded so it is not
-re-litigated.
+**Status:** Pivot accepted. The local-file reader scope was deemed less useful than a web filter. `hfm-reader` is being renamed and morphed into `hfm-text-filter` (client-server architecture).
 
 ## Insight
 
@@ -13,8 +12,7 @@ Browser extension + localhost Rust server beats a local reader for web text.
 - hfm-player must stay native (YouTube needs yt-dlp). Text has no such
   constraint.
 
-Not a redefinition: `hfm-reader` stays the local-file reader. The extension +
-server is a separate product. Candidate name: `hfm-web-filter`.
+The crate is renamed to `hfm-text-filter`. The extension is a separate client project.
 
 ## Python Measurement Findings (Completed)
 
@@ -29,32 +27,32 @@ We tested `bart-base-detox` (ONNX) in Python on ParaDetox, a realistic rant, and
 7. **Greedy Search (Beam=1) is Optimal**: Dropping from Beam=5 to Beam=1 cut latency in half (~790ms to ~446ms) with *zero* loss in BLEU or Cosine. The model does not need beam search to find good detoxifications.
 8. **Python is Too Slow**: Even with Greedy search, Python overhead limits us to ~446ms/segment. The final server must be written in Rust (`ort` crate) to eliminate GIL and PyTorch overhead.
 
-## Open Question (Resolved)
+## Design Decisions
 
-Logit suppression applies only to generative rewriters. BART is generative. Masking is required to force natural synonyms. Regex is required as a safety net. INT8 is abandoned in favor of FP32 + Greedy.
-
-## Design decisions (if pivot happens)
-
-- Transport: localhost HTTP + WebSocket. Not Native Messaging.
-- Bind `127.0.0.1` only.
-- Per-launch auth token in a file the extension reads; required on every request.
-  Non-negotiable (any website can hit localhost).
-- Port: fixed or small range with `/health` check, written to file.
-- GUI window *is* the server. Start/Stop, status label with port, static note
-  "Closing this window will shut down the server." No close-confirm modal.
-- Server is a thread in the eframe app, not a daemon.
-- Extension shows "server not running" message. Primary diagnostic.
+- **Name**: `hfm-text-filter`.
+- **Transport**: localhost HTTP + WebSocket (Axum).
+- **Bind**: `127.0.0.1` only.
+- **Auth**: Per-launch auth token in a file the extension reads; required on every request. (Non-negotiable; any website can hit localhost).
+- **Port**: Fixed or small range with `/health` check, written to file.
+- **GUI**: The eframe window *is* the server control panel. Start/Stop, status label with port, static note "Closing this window will shut down the server." No close-confirm modal.
+- **Server Thread**: The Axum server is spawned on a Tokio runtime inside the eframe app, not a separate daemon.
+- **Extension**: Shows "server not running" message. Primary diagnostic.
 - **Filtering Strategy**: FP32 ONNX (split decoders) + Greedy Search + Preemptive Trie Masking + Regex Fallback.
 - **Rust Implementation**: Use `ort` crate. Implement a custom Trie for masking to avoid Python's 60% masking latency penalty.
 
-## Reuse
+## Reuse (Migration Plan)
 
-`TextSource`, `TextFilter`, `TextBuffer`, `PipelineController` survive on the
-server. `LocalFileSource` becomes one source among many. eframe/egui UI does not
-carry over.
+We are repurposing the existing `hfm-reader` code:
+- **Keep**: `TextBuffer`, `PipelineController`, `types.rs`. The eframe GUI becomes the Server Control Panel.
+- **Delete**: `source/local.rs` and local file UI logic.
+- **Add**: `filter/detox.rs` (Rust ONNX), `server.rs` (Axum WebSocket).
 
 ## Sequencing
 
 1. ~~Python measurement~~ (Done).
-2. Rust parity: Implement `BartDetoxFilter` in Rust using `ort`, split FP32 models, Greedy Search, and a native Trie mask.
-3. Extension + localhost server.
+2. **The Great Rename**: Update `Cargo.toml`, workspace members, and crate name.
+3. **Clean up**: Delete `source` module and local file logic from `main.rs`.
+4. **Rust ONNX**: Implement `BartDetoxFilter` in Rust using `ort`, split FP32 models, Greedy Search, and a native Trie mask.
+5. **The Server**: Integrate Axum, write the WebSocket handler, and wire it to the Pipeline.
+6. **The Control Panel**: Update the eframe UI to start/stop the Axum server and show status.
+7. **The Extension**: Write the TypeScript Chrome extension.
