@@ -1,7 +1,7 @@
 //! Orchestration of the BART model, tying together ONNX, tokenization, and masking.
 
 use crate::cache::PopulatedCache;
-use crate::fallback::FallbackRegex;
+use crate::fallback_regex::FallbackRegex;
 use crate::filter::TextFilter;
 use crate::mask::TokenMask;
 use crate::onnx::BartOnnxModel;
@@ -15,7 +15,7 @@ pub struct BartDetoxFilter {
     tokenizer: BartTokenizer,
     mask: TokenMask,
     banned_words: Vec<String>, // Kept for potential future re-initialization
-    fallback: FallbackRegex,
+    fallback_regex: FallbackRegex,
     max_new_tokens: usize,
     eos_token_id: i64,
     decoder_start_token_id: i64,
@@ -32,14 +32,14 @@ impl BartDetoxFilter {
         let model = BartOnnxModel::new(model_dir)?;
         let tokenizer = BartTokenizer::new(model_dir)?;
         let mask = TokenMask::new(&banned_words, &tokenizer);
-        let fallback = FallbackRegex::new(&banned_words);
+        let fallback_regex = FallbackRegex::new(&banned_words);
 
         Ok(Self {
             model,
             tokenizer,
             mask,
             banned_words,
-            fallback,
+            fallback_regex,
             max_new_tokens,
             eos_token_id,
             decoder_start_token_id,
@@ -48,7 +48,7 @@ impl BartDetoxFilter {
 
     /// The safety net. Replaces any banned word that slipped past the mask.
     fn apply_fallback_regex(&self, text: &str) -> String {
-        self.fallback.apply(text)
+        self.fallback_regex.apply(text)
     }
 
     fn generate(&mut self, input_text: &str) -> ReaderResult<String> {

@@ -2,7 +2,7 @@
 
 pub mod server;
 pub mod cache;
-pub mod fallback;
+pub mod fallback_regex;
 pub mod filter;
 pub mod mask;
 pub mod onnx;
