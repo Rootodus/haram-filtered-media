@@ -97,23 +97,6 @@ impl TokenMask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::tensor::TokenIds;
-
-    // A fake tokenizer for testing without loading the real 500MB model.
-    struct MockTokenizer;
-    
-    impl MockTokenizer {
-        fn new() -> Self { Self }
-        
-        // Simulates encoding: "bad" -> [10, 20], "word" -> [30]
-        fn encode_mock(&self, text: &str) -> TokenIds {
-            match text {
-                "bad" => TokenIds(vec![10, 20]),
-                "word" => TokenIds(vec![30]),
-                _ => TokenIds(vec![99]),
-            }
-        }
-    }
 
     // Helper to build a mask using our mock data
     fn build_test_mask() -> TokenMask {
