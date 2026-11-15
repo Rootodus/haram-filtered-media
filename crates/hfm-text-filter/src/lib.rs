@@ -1,10 +1,11 @@
 #![allow(unused)] // temporary while building
 
+pub mod server;
 pub mod cache;
+pub mod fallback;
 pub mod filter;
 pub mod mask;
 pub mod onnx;
-pub mod server;
 pub mod tokenizer;
 pub mod types;
 
