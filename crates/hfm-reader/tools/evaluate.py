@@ -57,6 +57,7 @@ RANT_FILE = DATA / "text_has_profanity.txt"
 MAX_INPUT = 512
 MAX_OUTPUT = 128
 NUM_BEAMS = 5
+EVAL_BATCH_SIZE = 16  # Keep memory low
 
 
 # ---------- Text utilities ----------
@@ -218,14 +219,29 @@ def score_rouge(predictions, references):
 
 
 def score_cosine(embedder, predictions, references):
+    # Batch encode predictions
+    emb_preds = embedder.encode(predictions, convert_to_tensor=True)
+    
+    # Flatten references and keep track of boundaries
+    flat_refs = []
+    ref_counts = []
+    for refs in references:
+        flat_refs.extend(refs)
+        ref_counts.append(len(refs))
+    
+    emb_refs_all = embedder.encode(flat_refs, convert_to_tensor=True)
+    
     per_row = []
-    for pred, refs in zip(predictions, references):
-        if not refs:
+    ref_idx = 0
+    for i, count in enumerate(ref_counts):
+        if count == 0:
             per_row.append(None)
             continue
-        emb_pred = embedder.encode(pred, convert_to_tensor=True)
-        emb_refs = embedder.encode(refs, convert_to_tensor=True)
-        per_row.append(float(st_util.cos_sim(emb_pred, emb_refs).max()))
+        emb_refs = emb_refs_all[ref_idx:ref_idx+count]
+        sim = float(st_util.cos_sim(emb_preds[i], emb_refs).max())
+        per_row.append(sim)
+        ref_idx += count
+        
     valid = [s for s in per_row if s is not None]
     return sum(valid) / len(valid) if valid else 0.0
 
@@ -234,7 +250,16 @@ def score_cosine(embedder, predictions, references):
 
 def run_corpus(name, texts, model, tokenizer, entries, embedder, counter, references=None):
     print(f"\n=== {name} ({len(texts)} segments) ===", flush=True)
-    outputs, elapsed = generate_batch(model, tokenizer, texts, logits_processor=counter)
+    
+    outputs = []
+    total_elapsed = 0.0
+    for i in range(0, len(texts), EVAL_BATCH_SIZE):
+        chunk = texts[i:i+EVAL_BATCH_SIZE]
+        chunk_out, elapsed = generate_batch(model, tokenizer, chunk, logits_processor=counter)
+        outputs.extend(chunk_out)
+        total_elapsed += elapsed
+        print(f"  Processed {min(i+EVAL_BATCH_SIZE, len(texts))}/{len(texts)}...", flush=True)
+        
     n = len(texts)
     cat_hits = defaultdict(int)
     any_hit = 0
@@ -244,6 +269,7 @@ def run_corpus(name, texts, model, tokenizer, entries, embedder, counter, refere
             any_hit += 1
         for c in cats:
             cat_hits[c] += 1
+            
     all_cats = sorted(set(c for _, c in entries))
     per_cat = {c: cat_hits.get(c, 0) / n for c in all_cats}
     overall = any_hit / n
@@ -252,6 +278,7 @@ def run_corpus(name, texts, model, tokenizer, entries, embedder, counter, refere
         bleu = score_bleu(outputs, references)
         rouge = score_rouge(outputs, references)
         cos = score_cosine(embedder, outputs, references)
+        
     return {
         "name": name,
         "n": n,
@@ -260,7 +287,7 @@ def run_corpus(name, texts, model, tokenizer, entries, embedder, counter, refere
         "bleu": bleu,
         "rouge": rouge,
         "cosine": cos,
-        "total_time": elapsed,
+        "total_time": total_elapsed,
         "outputs": outputs,
     }
 
