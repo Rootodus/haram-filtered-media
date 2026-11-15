@@ -20,3 +20,5 @@ _temp.txt
 .aider*
 !.aider.conf.yml
 .idea/
+/crates/hfm-reader/tools/data/paradetox/
+/crates/hfm-reader/tools/results/
