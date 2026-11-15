@@ -1,16 +1,13 @@
+# profanity
 all hail
-amen
 arse
 ass
 asses
 asshat
 asshole
 assholes
-badass
-balls
 bastard
 batshit
-biblically
 bitch
 bitching
 bullshit
@@ -18,48 +15,32 @@ bullshitting
 bullsht
 bulshit
 butt
-christ
-christus
 cocksucker
 crap
-crucified
 crucifies
 crucify
 cunt
 cunts
-curse
 cursed
-curses
-daddy
-damm
 dammit
-damn
 damned
 damnest
 damnit
-dang
-danm
-darn
 demon
-demonic
 devil
 devilish
-dgaf
 dick
 dicks
 dogshit
 dumbass
 f**k
-f*ck
 f*cked
 fafo
 fag
 faggot
 fags
-fck
 fkin
 fking
-fkn
 fuck
 fuck off
 fuck up
@@ -74,68 +55,24 @@ fuckoding
 fucks
 fuckup
 fucky
-gee
-geez
-geluld
-gezz
-god
-godawful
-goddamm
-goddammit
-goddamn
-goddamnit
-goddang
-goddann
-goddess
-godess
 godforsaken
-godness
-gods
-godsnaam
-godspeed
-goodness
 goonen
 goont
-gosh
-gtfo
-gtfoh
 hail
-heck
-hel
-hell
-helluva
 hels
-holey
-holy
-holy cow
-holy crap
-holy fuck
-holy moly
-holy shit
 jackass
-jeetje
-jeez
 jerk
-jesus
-jesus christ
-jezus
-jfc
 kanker
 klote
 kont
 kut
-lmao
 lmfao
 lmfoa
-lord
-lul
 lulde
 lulden
 lullen
 lult
-mf-er
 mf-ers
-mfer
 mofo
 mofos
 moley
@@ -143,23 +80,15 @@ motherfucker
 motherfuckers
 motherfucking
 nekken
-nigga
 nigger
 niggers
 of shit
-of sht
-omfg
-omg
 ouwehoer
 piss
 pissed
 pita
-pos
 pussies
 pussy
-sh1t
-sheesh
-shit
 shitbag
 shitbags
 shite
@@ -172,11 +101,8 @@ shits
 shitter
 shittier
 shitty
-sht
 slut
-stfu
 tits
-trinity
 twat
 twats
 unfuck
@@ -184,5 +110,84 @@ unfucking
 ungodly
 unholy
 whore
+
+# religious
+amen
+biblically
+christ
+christus
+god
+goddamm
+goddammit
+goddamnit
+goddang
+goddann
+goddess
+godess
+godness
+gods
+godsnaam
+godspeed
+holey
+holy
+holy cow
+holy crap
+holy fuck
+holy moly
+holy shit
+jesus
+jesus christ
+jezus
+lord
+
+# other
+badass
+balls
+crucified
+curse
+curses
+daddy
+damm
+damn
+dang
+danm
+darn
+demonic
+dgaf
+f*ck
+fck
+fkn
+gee
+geez
+geluld
+gezz
+godawful
+goddamn
+goodness
+gosh
+gtfo
+gtfoh
+heck
+hel
+hell
+helluva
+jeetje
+jeez
+jfc
+lmao
+lul
+mf-er
+mfer
+nigga
+of sht
+omfg
+omg
+pos
+sh1t
+sheesh
+shit
+sht
+stfu
+trinity
 wtf
 wth
