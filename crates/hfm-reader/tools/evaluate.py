@@ -21,9 +21,8 @@
 """Evaluate bart-base-detox (ONNX) on three corpora.
 
 Usage:
-    uv run tools/evaluate.py               # quality metrics only
-    uv run tools/evaluate.py --mask        # test preemptive logit masking
-    uv run tools/evaluate.py --latency     # + latency matrix
+    uv run tools/evaluate.py --mask
+    uv run tools/evaluate.py --model-dir models/bart-base-detox/onnx --limit 500
 """
 
 import argparse
@@ -34,21 +33,20 @@ import sys
 import time
 import unicodedata
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import psutil
 import torch
 from optimum.onnxruntime import ORTModelForSeq2SeqLM
 from rouge_score import rouge_scorer
 from sacrebleu.metrics import BLEU
 from sentence_transformers import SentenceTransformer, util as st_util
-from transformers import AutoTokenizer, LogitsProcessor, NoBadWordsLogitsProcessor, LogitsProcessorList
+from transformers import AutoTokenizer, NoBadWordsLogitsProcessor, LogitsProcessorList
 
 TOOLS = Path(__file__).parent
 DATA = TOOLS / "data"
 RESULTS = TOOLS / "results"
-MODEL_ONNX = TOOLS.parent / "models" / "bart-base-detox" / "onnx"
+# Point to the quantized INT8 directory by default
+DEFAULT_MODEL_DIR = TOOLS.parent / "models" / "bart-base-detox" / "onnx_int8"
 PARADETOX_TSV = DATA / "paradetox" / "paradetox.tsv"
 BANNED_WORDS = DATA / "banned_words.txt"
 STRICT_BANNED = DATA / "strict_banned.txt"
@@ -144,37 +142,6 @@ def load_rant_blocks(path: Path) -> list[str]:
 
 # ---------- Masking ----------
 
-class ArgmaxMaskedCounter(LogitsProcessor):
-    def __init__(self, masked_ids: set[int]):
-        self.masked_ids = masked_ids
-        self.masked_count = 0
-        self.total_count = 0
-
-    def __call__(self, input_ids, scores):
-        for a in scores.argmax(dim=-1).tolist():
-            self.total_count += 1
-            if a in self.masked_ids:
-                self.masked_count += 1
-        return scores
-
-
-def build_masked_token_ids(tokenizer, entries) -> set[int]:
-    masked = set()
-    norm_words = [normalize(w) for w, _ in entries]
-    for tid in range(len(tokenizer)):
-        try:
-            decoded = tokenizer.decode([tid], skip_special_tokens=False)
-        except Exception:
-            continue
-        norm = normalize(decoded).strip()
-        if not norm:
-            continue
-        for w in norm_words:
-            if whole_word_match(norm, w):
-                masked.add(tid)
-                break
-    return masked
-
 def build_bad_words_ids(tokenizer, entries) -> list[list[int]]:
     """Generates token sequences for all variations of the banned words."""
     bad_words = []
@@ -188,7 +155,6 @@ def build_bad_words_ids(tokenizer, entries) -> list[list[int]]:
             f" {word.upper()}"
         ]
         for var in variants:
-            # Tokenize without special tokens, just the raw text
             ids = tokenizer.encode(var, add_special_tokens=False)
             if ids and ids not in bad_words:
                 bad_words.append(ids)
@@ -213,7 +179,8 @@ def generate_batch(model, tokenizer, texts, num_beams=NUM_BEAMS, logits_processo
     return tokenizer.batch_decode(outputs, skip_special_tokens=True), elapsed
 
 
-# ---------- Metrics (same as before) ----------
+# ---------- Metrics ----------
+
 def score_bleu(predictions, references):
     bleu = BLEU(effective_order=True)
     per_row = []
@@ -225,6 +192,7 @@ def score_bleu(predictions, references):
     valid = [s for s in per_row if s is not None]
     return sum(valid) / len(valid) if valid else 0.0
 
+
 def score_rouge(predictions, references):
     scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
     per_row = []
@@ -235,6 +203,7 @@ def score_rouge(predictions, references):
         per_row.append(max(scorer.score(r, pred)["rougeL"].fmeasure for r in refs))
     valid = [s for s in per_row if s is not None]
     return sum(valid) / len(valid) if valid else 0.0
+
 
 def score_cosine(embedder, predictions, references):
     emb_preds = embedder.encode(predictions, convert_to_tensor=True)
@@ -300,7 +269,6 @@ def run_corpus(name, texts, model, tokenizer, entries, embedder, logits_proc, re
         "rouge": rouge,
         "cosine": cos,
         "total_time": total_elapsed,
-        "outputs": outputs,
     }
 
 
@@ -329,7 +297,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None, help="limit rows per corpus")
     ap.add_argument("--mask", action="store_true", help="use NoBadWordsLogitsProcessor")
+    ap.add_argument("--model-dir", type=str, default=str(DEFAULT_MODEL_DIR), help="Path to ONNX model directory")
     args = ap.parse_args()
+
+    model_path = Path(args.model_dir)
+    if not model_path.exists():
+        sys.exit(f"Missing model directory {model_path}")
 
     for p in (PARADETOX_TSV, BANNED_WORDS, RANT_FILE):
         if not p.exists():
@@ -354,9 +327,10 @@ def main():
     strict_texts = strict_texts_full[: args.limit] if args.limit else strict_texts_full
     rant_texts = rant_texts_full[: args.limit] if args.limit else rant_texts_full
 
-    print("Loading model (ORT)...", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(str(MODEL_ONNX))
-    model = ORTModelForSeq2SeqLM.from_pretrained(str(MODEL_ONNX))
+    print(f"Loading model (ORT) from {model_path}...", flush=True)
+    tokenizer = AutoTokenizer.from_pretrained(str(model_path))
+    # Force Optimum to use the split quantized decoders (decoder_model_int8.onnx + decoder_with_past_model_int8.onnx)
+    model = ORTModelForSeq2SeqLM.from_pretrained(str(model_path), use_merged=False)
 
     print("Loading sentence embedder...", flush=True)
     embedder = SentenceTransformer("all-MiniLM-L6-v2")
@@ -386,7 +360,8 @@ def main():
     print("=" * 60)
     print_quality_table(reports)
 
-    csv_path = RESULTS / ("summary_masked.csv" if args.mask else "summary_unmasked.csv")
+    suffix = "int8_masked" if args.mask else "int8_unmasked"
+    csv_path = RESULTS / f"summary_{suffix}.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         all_cats = sorted(set(c for r in reports for c in r["per_cat"]))
