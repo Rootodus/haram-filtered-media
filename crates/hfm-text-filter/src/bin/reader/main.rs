@@ -56,57 +56,9 @@ impl ServerApp {
     }
 
     fn resolve_paths() -> Result<(PathBuf, Vec<String>), String> {
-        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf()));
-        let cwd = std::env::current_dir().ok();
-        let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-        let candidates = [exe_dir, cwd, Some(crate_root)].into_iter().flatten();
-
-        let mut model_dir = None;
-        let mut banned_words_path = None;
-
-        for base in candidates {
-            let m_path = base.join("models").join("bart-base-detox").join("onnx");
-
-            // Check both the root and the tools/data directory for banned_words.txt
-            let b_paths = [
-                base.join("banned_words.txt"),
-                base.join("tools").join("data").join("banned_words.txt"),
-            ];
-
-            if m_path.exists() {
-                for b_path in &b_paths {
-                    if b_path.exists() {
-                        model_dir = Some(m_path.clone());
-                        banned_words_path = Some(b_path.clone());
-                        break;
-                    }
-                }
-            }
-            if model_dir.is_some() {
-                break;
-            }
-        }
-
-        let model_dir = model_dir.ok_or_else(|| "Could not find 'models/bart-base-detox/onnx'".to_string())?;
-        let banned_path = banned_words_path.ok_or_else(|| "Could not find 'banned_words.txt'".to_string())?;
-
-        let content = std::fs::read_to_string(&banned_path)
-            .map_err(|e| format!("Failed to read banned_words.txt: {}", e))?;
-            
-        let words: Vec<String> = content
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .map(|l| l.to_string())
-            .collect();
-
-        if words.is_empty() {
-            return Err("banned_words.txt is empty".to_string());
-        }
-
-        Ok((model_dir, words))
+        hfm_text_filter::paths::resolve_config()
     }
+cargo test -p hfm-text-filter
 
     fn start_server(&mut self) {
         let (status_tx, status_rx) = bounded(16);
