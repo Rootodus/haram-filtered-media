@@ -50,7 +50,6 @@ impl BartDetoxFilter {
     fn apply_fallback_regex(&self, text: &str) -> String {
         self.fallback.apply(text)
     }
-cargo test -p hfm-text-filter
 
     fn generate(&mut self, input_text: &str) -> ReaderResult<String> {
         // 1. Preprocessing
