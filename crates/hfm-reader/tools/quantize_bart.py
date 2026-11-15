@@ -6,14 +6,14 @@
 # ]
 # ///
 
-import shutil
 from pathlib import Path
 from onnxruntime.quantization import QuantType, quantize_dynamic
 from onnxruntime.quantization.shape_inference import quant_pre_process
 
 MODEL_DIR = Path(__file__).parent.parent / "models" / "bart-base-detox" / "onnx"
-MODELS_TO_QUANTIZE = ["encoder_model", "decoder_model_merged"]
 
+# Target the standalone decoders instead of the merged one
+MODELS_TO_QUANTIZE = ["encoder_model", "decoder_model", "decoder_with_past_model"]
 
 def quantize_model(model_name: str):
     fp32_path = MODEL_DIR / f"{model_name}.onnx"
@@ -26,7 +26,6 @@ def quantize_model(model_name: str):
 
     print(f"\nQuantizing {model_name}...")
 
-    # 1. Optional but recommended: pre-process to improve quantization compatibility
     try:
         quant_pre_process(
             str(fp32_path),
@@ -41,7 +40,6 @@ def quantize_model(model_name: str):
         print(f"  Pre-processing skipped ({e}). Using original file.")
         source_path = fp32_path
 
-    # 2. Perform dynamic INT8 quantization
     quantize_dynamic(
         str(source_path),
         str(int8_path),
@@ -49,7 +47,6 @@ def quantize_model(model_name: str):
         extra_options={"MatMulConstBOnly": True},
     )
 
-    # 3. Clean up temporary pre-processing files
     if pre_processed_path.exists():
         pre_processed_path.unlink()
     external_data = MODEL_DIR / f"_{model_name}.pre.onnx_data"
@@ -57,7 +54,6 @@ def quantize_model(model_name: str):
         external_data.unlink()
 
     print(f"  Created: {int8_path.name} ({int8_path.stat().st_size / 1_048_576:.1f} MB)")
-
 
 if __name__ == "__main__":
     for model in MODELS_TO_QUANTIZE:
