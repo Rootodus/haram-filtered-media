@@ -67,11 +67,23 @@ impl ServerApp {
 
         for base in candidates {
             let m_path = base.join("models").join("bart-base-detox").join("onnx");
-            let b_path = base.join("banned_words.txt");
 
-            if m_path.exists() && b_path.exists() {
-                model_dir = Some(m_path);
-                banned_words_path = Some(b_path);
+            // Check both the root and the tools/data directory for banned_words.txt
+            let b_paths = [
+                base.join("banned_words.txt"),
+                base.join("tools").join("data").join("banned_words.txt"),
+            ];
+
+            if m_path.exists() {
+                for b_path in &b_paths {
+                    if b_path.exists() {
+                        model_dir = Some(m_path.clone());
+                        banned_words_path = Some(b_path.clone());
+                        break;
+                    }
+                }
+            }
+            if model_dir.is_some() {
                 break;
             }
         }
