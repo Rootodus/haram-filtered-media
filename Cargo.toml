@@ -41,6 +41,7 @@ tokio = "1.54.1"
 axum = "0.8.9"
 futures-util = "0.3.34"
 serde = "1.0.229"
+regex = "1.13.1"
 tower-http = "0.7.1"
 # --- Dev and Build Tooling ---
 criterion = "0.8.2"
