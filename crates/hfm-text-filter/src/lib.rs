@@ -1,5 +1,3 @@
-#![allow(unused)] // temporary while building
-
 pub mod server;
 pub mod cache;
 pub mod fallback_regex;
