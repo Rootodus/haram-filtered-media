@@ -120,8 +120,8 @@ impl BartOnnxModel {
         // Build inputs manually so all entries (owned base + borrowed cache)
         // share a single lifetime, letting `cache` be consumed after `run()`.
         let mut inputs: Vec<(Cow<'_, str>, SessionInputValue<'_>)> = Vec::with_capacity(26);
-        inputs.push((Cow::Borrowed("input_ids"), SessionInputValue::Owned(input_ids_val)));
-        inputs.push((Cow::Borrowed("encoder_attention_mask"), SessionInputValue::Owned(mask_val)));
+        inputs.push((Cow::Borrowed("input_ids"), SessionInputValue::Owned(input_ids_val.into())));
+        inputs.push((Cow::Borrowed("encoder_attention_mask"), SessionInputValue::Owned(mask_val.into())));
         inputs.extend(cache.build_inputs());
 
         let mut outputs = self.decoder_with_past.run(inputs)

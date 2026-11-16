@@ -126,7 +126,7 @@ impl PopulatedCache {
             .map(|(name, tensor)| {
                 (
                     std::borrow::Cow::Borrowed(name),
-                    ort::session::SessionInputValue::Borrowed(tensor),
+                    ort::session::SessionInputValue::View(tensor.view()),
                 )
             })
             .collect()
