@@ -115,12 +115,20 @@ impl PopulatedCache {
         Ok(Self { tensors })
     }
 
-    /// Format the cached tensors into a named list for the ONNX inputs! macro.
-    /// Consumes `self` because `Value` cannot be cloned.
-    pub fn build_inputs(self) -> Vec<(&'static str, Value)> {
+    /// Format the cached tensors into a named list for the ONNX inputs.
+    /// Borrows `self` so the encoder tensors remain accessible after `run()`
+    /// returns (they are needed again for `update_from_past_outputs`).
+    pub fn build_inputs(&self) -> Vec<(std::borrow::Cow<'static, str>, ort::session::SessionInputValue<'_>)> {
         INPUT_NAMES
-            .into_iter()
-            .zip(self.tensors)
+            .iter()
+            .copied()
+            .zip(self.tensors.iter())
+            .map(|(name, tensor)| {
+                (
+                    std::borrow::Cow::Borrowed(name),
+                    ort::session::SessionInputValue::Borrowed(tensor),
+                )
+            })
             .collect()
     }
 }

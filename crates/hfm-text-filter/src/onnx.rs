@@ -117,15 +117,12 @@ impl BartOnnxModel {
         let input_ids_val = Value::from_array(input_ids).map_err(|e| ReaderError::Onnx(e.to_string()))?;
         let mask_val = Value::from_array(mask).map_err(|e| ReaderError::Onnx(e.to_string()))?;
 
-        let mut inputs = ort::inputs![
-            "input_ids" => input_ids_val,
-            "encoder_attention_mask" => mask_val,
-        ];
-
-        // Append the 24 cache tensors
-        for (name, tensor) in cache.build_inputs() {
-            inputs.push((Cow::Borrowed(name), SessionInputValue::Owned(tensor)));
-        }
+        // Build inputs manually so all entries (owned base + borrowed cache)
+        // share a single lifetime, letting `cache` be consumed after `run()`.
+        let mut inputs: Vec<(Cow<'_, str>, SessionInputValue<'_>)> = Vec::with_capacity(26);
+        inputs.push((Cow::Borrowed("input_ids"), SessionInputValue::Owned(input_ids_val)));
+        inputs.push((Cow::Borrowed("encoder_attention_mask"), SessionInputValue::Owned(mask_val)));
+        inputs.extend(cache.build_inputs());
 
         let mut outputs = self.decoder_with_past.run(inputs)
             .map_err(|e| ReaderError::Onnx(format!("Decoder with past failed: {}", e)))?;
