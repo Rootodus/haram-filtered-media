@@ -24,3 +24,4 @@ _temp.txt
 .idea/
 /crates/hfm-text-filter/tools/data/paradetox/
 /crates/hfm-text-filter/tools/results/
+!extensions/hfm-text-filter/public/icon/*.png
