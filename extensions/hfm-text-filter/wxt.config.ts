@@ -1,4 +1,21 @@
 import { defineConfig } from 'wxt';
 
-// See https://wxt.dev/api/reference/wxt/interfaces/inlineconfig.html
-export default defineConfig({});
+export default defineConfig({
+  manifest: ({ browser }) => ({
+    name: 'HFM Text Filter',
+    description: 'Filters profane and toxic text using a local AI server.',
+    permissions: ['activeTab', 'scripting', 'storage'],
+    host_permissions: ['ws://127.0.0.1:8377/*'],
+
+    ...(browser === 'firefox' && {
+      browser_specific_settings: {
+        gecko: {
+          id: 'hfm-text-filter@rootodus.com',
+          data_collection_permissions: {
+            required: ['none'],
+          },
+        },
+      },
+    }),
+  }),
+});
