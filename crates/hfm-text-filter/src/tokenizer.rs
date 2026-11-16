@@ -1,7 +1,7 @@
 //! Wrapper around the HuggingFace tokenizer to isolate it from ONNX logic.
 
 use crate::types::tensor::TokenIds;
-use crate::types::{ReaderError, ReaderResult};
+use crate::types::{FilterError, FilterResult};
 use std::path::Path;
 use tokenizers::Tokenizer;
 
@@ -12,19 +12,19 @@ pub struct BartTokenizer {
 }
 
 impl BartTokenizer {
-    pub fn new(model_dir: &Path) -> Result<Self, ReaderError> {
+    pub fn new(model_dir: &Path) -> Result<Self, FilterError> {
         let path = model_dir.join("tokenizer.json");
         let inner = Tokenizer::from_file(&path).map_err(|e| {
-            ReaderError::Tokenizer(format!("Failed to load tokenizer from {:?}: {}", path, e))
+            FilterError::Tokenizer(format!("Failed to load tokenizer from {:?}: {}", path, e))
         })?;
         Ok(Self { inner })
     }
 
     /// Encode a string into token IDs.
     /// Adds BOS/EOS tokens and truncates to MAX_TOKENS to prevent ONNX shape panics.
-    pub fn encode(&self, text: &str) -> ReaderResult<TokenIds> {
+    pub fn encode(&self, text: &str) -> FilterResult<TokenIds> {
         let mut encoding = self.inner.encode(text, true).map_err(|e| {
-            ReaderError::Tokenizer(format!("Failed to encode text: {}", e))
+            FilterError::Tokenizer(format!("Failed to encode text: {}", e))
         })?;
 
         // Ensure the sequence doesn't exceed BART's maximum length.
@@ -35,9 +35,9 @@ impl BartTokenizer {
     }
 
     /// Encode a string WITHOUT special tokens (used for building the Trie).
-    pub fn encode_no_special(&self, text: &str) -> ReaderResult<TokenIds> {
+    pub fn encode_no_special(&self, text: &str) -> FilterResult<TokenIds> {
         let encoding = self.inner.encode(text, false).map_err(|e| {
-            ReaderError::Tokenizer(format!("Failed to encode text (no special): {}", e))
+            FilterError::Tokenizer(format!("Failed to encode text (no special): {}", e))
         })?;
 
         let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
@@ -46,11 +46,11 @@ impl BartTokenizer {
 
     /// Decode token IDs back to a string.
     /// Skips special tokens during decoding.
-    pub fn decode(&self, ids: &TokenIds) -> ReaderResult<String> {
+    pub fn decode(&self, ids: &TokenIds) -> FilterResult<String> {
         let u32_ids: Vec<u32> = ids.0.iter().map(|&x| x as u32).collect();
         self.inner
             .decode(&u32_ids, true)
-            .map_err(|e| ReaderError::Tokenizer(format!("Failed to decode tokens: {}", e)))
+            .map_err(|e| FilterError::Tokenizer(format!("Failed to decode tokens: {}", e)))
     }
 
     /// Returns the size of the vocabulary.

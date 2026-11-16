@@ -1,7 +1,7 @@
 //! Mock text filters for testing and development.
 
 use crate::filter::TextFilter;
-use crate::types::{ProcessedChunk, RawChunk, ReaderResult};
+use crate::types::{ProcessedChunk, RawChunk, FilterResult};
 
 /// A filter that converts the raw text to uppercase.
 /// This is useful for testing the pipeline logic without ONNX.
@@ -15,7 +15,7 @@ impl UppercaseFilter {
 }
 
 impl TextFilter for UppercaseFilter {
-    fn process(&mut self, raw: &RawChunk) -> ReaderResult<ProcessedChunk> {
+    fn process(&mut self, raw: &RawChunk) -> FilterResult<ProcessedChunk> {
         let transformed = raw.data.to_uppercase();
         Ok(ProcessedChunk::new(transformed))
     }
@@ -33,7 +33,7 @@ impl NoopFilter {
 }
 
 impl TextFilter for NoopFilter {
-    fn process(&mut self, raw: &RawChunk) -> ReaderResult<ProcessedChunk> {
+    fn process(&mut self, raw: &RawChunk) -> FilterResult<ProcessedChunk> {
         Ok(ProcessedChunk::new(raw.data.clone()))
     }
 }

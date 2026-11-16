@@ -1,6 +1,6 @@
 //! Decoder KV cache management using the Typestate pattern.
 
-use crate::types::ReaderError;
+use crate::types::FilterError;
 use ort::session::SessionOutputs;
 use ort::value::Value;
 
@@ -47,19 +47,19 @@ const INPUT_NAMES: [&str; 24] = [
 impl PopulatedCache {
     /// Extract the 24 present tensors from the ONNX output.
     /// Consumes the SessionOutputs because `Value` is not cloneable.
-    pub fn update_from_outputs(mut outputs: SessionOutputs) -> Result<Self, ReaderError> {
+    pub fn update_from_outputs(mut outputs: SessionOutputs) -> Result<Self, FilterError> {
         let mut tensor_vec = Vec::with_capacity(24);
 
         for &name in &OUTPUT_NAMES {
             let tensor = outputs
                 .remove(name)
-                .ok_or_else(|| ReaderError::Onnx(format!("Missing cache output: {}", name)))?;
+                .ok_or_else(|| FilterError::Onnx(format!("Missing cache output: {}", name)))?;
 
             tensor_vec.push(tensor);
         }
 
         let tensors: [Value; 24] = tensor_vec.try_into().map_err(|_| {
-            ReaderError::Internal("Cache array size mismatch".to_string())
+            FilterError::Internal("Cache array size mismatch".to_string())
         })?;
 
         Ok(Self { tensors })
@@ -75,7 +75,7 @@ impl PopulatedCache {
     pub fn update_from_past_outputs(
         self,
         mut outputs: SessionOutputs,
-    ) -> Result<Self, ReaderError> {
+    ) -> Result<Self, FilterError> {
         // Consume the old array into an iterator so we can move the encoder
         // tensors out of it one at a time.
         let mut old_iter = self.tensors.into_iter();
@@ -93,12 +93,12 @@ impl PopulatedCache {
             let dkey_name = format!("present.{}.decoder.key", layer);
             let dkey = outputs
                 .remove(&dkey_name)
-                .ok_or_else(|| ReaderError::Onnx(format!("Missing {}", dkey_name)))?;
+                .ok_or_else(|| FilterError::Onnx(format!("Missing {}", dkey_name)))?;
 
             let dval_name = format!("present.{}.decoder.value", layer);
             let dval = outputs
                 .remove(&dval_name)
-                .ok_or_else(|| ReaderError::Onnx(format!("Missing {}", dval_name)))?;
+                .ok_or_else(|| FilterError::Onnx(format!("Missing {}", dval_name)))?;
 
             // Reassemble in the array layout expected by INPUT_NAMES:
             // [dkey, dval, ekey, eval] per layer.
@@ -110,7 +110,7 @@ impl PopulatedCache {
 
         let tensors: [Value; 24] = new_tensors
             .try_into()
-            .map_err(|_| ReaderError::Internal("Cache array size mismatch".to_string()))?;
+            .map_err(|_| FilterError::Internal("Cache array size mismatch".to_string()))?;
 
         Ok(Self { tensors })
     }

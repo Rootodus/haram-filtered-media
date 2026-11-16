@@ -75,7 +75,7 @@ impl TokenMask {
 
     /// Find the token ID with the highest probability (argmax).
     /// Returns an error if the model is in a dead end (all logits are -inf).
-    pub fn select_next_token(logits: &[f32]) -> crate::types::ReaderResult<i64> {
+    pub fn select_next_token(logits: &[f32]) -> crate::types::FilterResult<i64> {
         let mut max_idx = 0;
         let mut max_val = f32::NEG_INFINITY;
 
@@ -87,7 +87,7 @@ impl TokenMask {
         }
 
         if max_val == f32::NEG_INFINITY {
-            return Err(crate::types::ReaderError::Mask("Dead end: all tokens masked".into()));
+            return Err(crate::types::FilterError::Mask("Dead end: all tokens masked".into()));
         }
 
         Ok(max_idx as i64)

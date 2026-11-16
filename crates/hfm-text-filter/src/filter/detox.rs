@@ -1,20 +1,20 @@
 //! Orchestration of the BART model, tying together ONNX, tokenization, and masking.
 
-use crate::cache::PopulatedCache;
-use crate::fallback_regex::FallbackRegex;
+use crate::kv_cache::PopulatedCache;
+use crate::regex_fallback::RegexFallback;
 use crate::filter::TextFilter;
-use crate::mask::TokenMask;
-use crate::onnx::BartOnnxModel;
+use crate::token_mask::TokenMask;
+use crate::bart_onnx::BartOnnxModel;
 use crate::tokenizer::BartTokenizer;
 use crate::types::tensor::{AttentionMask, TokenIds};
-use crate::types::{ProcessedChunk, RawChunk, ReaderError, ReaderResult};
+use crate::types::{ProcessedChunk, RawChunk, FilterError, FilterResult};
 use std::path::Path;
 
 pub struct BartDetoxFilter {
     model: BartOnnxModel,
     tokenizer: BartTokenizer,
     mask: TokenMask,
-    fallback_regex: FallbackRegex,
+    regex_fallback: RegexFallback,
     max_new_tokens: usize,
     eos_token_id: i64,
     decoder_start_token_id: i64,
@@ -27,17 +27,17 @@ impl BartDetoxFilter {
         max_new_tokens: usize,
         eos_token_id: i64,
         decoder_start_token_id: i64,
-    ) -> Result<Self, ReaderError> {
+    ) -> Result<Self, FilterError> {
         let model = BartOnnxModel::new(model_dir)?;
         let tokenizer = BartTokenizer::new(model_dir)?;
         let mask = TokenMask::new(&banned_words, &tokenizer);
-        let fallback_regex = FallbackRegex::new(&banned_words);
+        let regex_fallback = RegexFallback::new(&banned_words);
 
         Ok(Self {
             model,
             tokenizer,
             mask,
-            fallback_regex,
+            regex_fallback,
             max_new_tokens,
             eos_token_id,
             decoder_start_token_id,
@@ -45,11 +45,11 @@ impl BartDetoxFilter {
     }
 
     /// The safety net. Replaces any banned word that slipped past the mask.
-    fn apply_fallback_regex(&self, text: &str) -> String {
-        self.fallback_regex.apply(text)
+    fn apply_regex_fallback(&self, text: &str) -> String {
+        self.regex_fallback.apply(text)
     }
 
-    fn generate(&mut self, input_text: &str) -> ReaderResult<String> {
+    fn generate(&mut self, input_text: &str) -> FilterResult<String> {
         // 1. Preprocessing
         let input_ids = self.tokenizer.encode(input_text)?;
         let seq_len = input_ids.0.len();
@@ -92,14 +92,14 @@ impl BartDetoxFilter {
         let decoded = self.tokenizer.decode(&output_tokens)?;
 
         // 5. Fallback
-        let cleaned = self.apply_fallback_regex(&decoded);
+        let cleaned = self.apply_regex_fallback(&decoded);
 
         Ok(cleaned)
     }
 }
 
 impl TextFilter for BartDetoxFilter {
-    fn process(&mut self, raw: &RawChunk) -> ReaderResult<ProcessedChunk> {
+    fn process(&mut self, raw: &RawChunk) -> FilterResult<ProcessedChunk> {
         let output_text = self.generate(&raw.data)?;
         Ok(ProcessedChunk::new(output_text))
     }

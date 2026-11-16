@@ -28,7 +28,7 @@ impl ProcessedChunk {
 
 /// Unified error type for the hfm-text-filter crate.
 #[derive(Debug, thiserror::Error)]
-pub enum ReaderError {
+pub enum FilterError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -45,5 +45,5 @@ pub enum ReaderError {
     Internal(String),
 }
 
-/// Result type using `ReaderError`.
-pub type ReaderResult<T> = Result<T, ReaderError>;
+/// Result type using `FilterError`.
+pub type FilterResult<T> = Result<T, FilterError>;

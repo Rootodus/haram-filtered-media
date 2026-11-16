@@ -56,7 +56,7 @@ impl ServerApp {
     }
 
     fn resolve_paths() -> Result<(PathBuf, Vec<String>), String> {
-        hfm_text_filter::paths::resolve_config()
+        hfm_text_filter::setup::resolve_config()
     }
 
     fn start_server(&mut self) {

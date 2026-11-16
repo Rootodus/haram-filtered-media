@@ -8,11 +8,11 @@
 //! by a banned root ("shit") unless explicitly added to the list. Add the
 //! inflected forms to `banned_words.txt` if needed.
 
-pub struct FallbackRegex {
+pub struct RegexFallback {
     patterns: Vec<regex::Regex>,
 }
 
-impl FallbackRegex {
+impl RegexFallback {
     pub fn new(banned_words: &[String]) -> Self {
         let patterns = banned_words
             .iter()
@@ -39,9 +39,9 @@ impl FallbackRegex {
 mod tests {
     use super::*;
 
-    fn make(words: &[&str]) -> FallbackRegex {
+    fn make(words: &[&str]) -> RegexFallback {
         let owned: Vec<String> = words.iter().map(|s| s.to_string()).collect();
-        FallbackRegex::new(&owned)
+        RegexFallback::new(&owned)
     }
 
     #[test]
