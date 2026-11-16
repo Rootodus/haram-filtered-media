@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HFM Text Filter</title>
+    <meta name="manifest.type" content="browser_action" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>HFM Text Filter</h1>
+        <div id="server-status" class="status-badge offline">
+          <span class="dot"></span>
+          <span id="status-text">Checking server...</span>
+        </div>
+      </header>
+
+      <main>
+        <div class="setting-group">
+          <div class="setting-row">
+            <label for="global-toggle">Enable Extension</label>
+            <label class="switch">
+              <input type="checkbox" id="global-toggle" />
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <hr />
+
+        <div class="setting-group">
+          <div class="setting-row">
+            <div class="site-info">
+              <label for="site-toggle">Enable on this site</label>
+              <span id="current-domain" class="domain-name">loading...</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="site-toggle" />
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
