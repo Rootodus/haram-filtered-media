@@ -13,6 +13,7 @@ use futures_util::{sink::SinkExt, stream::StreamExt};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::filter::TextFilter;
 use crate::types::RawChunk;
@@ -36,9 +37,16 @@ struct FilterResponse {
 
 /// Start the Axum server on the given pre-bound listener.
 pub async fn run_server(state: AppState, listener: tokio::net::TcpListener) -> Result<(), String> {
+    // Allow requests from the browser extension
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .route("/health", get(|| async { "OK" }))
+        .layer(cors)
         .with_state(state);
 
     let addr = listener.local_addr().map_err(|e| format!("Invalid listener: {}", e))?;
