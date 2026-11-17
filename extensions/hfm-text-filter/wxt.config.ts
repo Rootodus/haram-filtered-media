@@ -1,6 +1,7 @@
 import { defineConfig } from 'wxt';
 
 export default defineConfig({
+  manifestVersion: 3,
   manifest: ({ browser }) => ({
     name: 'HFM Text Filter',
     description: 'Filters profane and toxic text using a local AI server.',
