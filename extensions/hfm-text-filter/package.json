@@ -1,6 +1,6 @@
 {
   "name": "hfm-text-filter",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Filters profane and toxic text using a local AI server.",
   "type": "module",
