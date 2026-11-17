@@ -13,7 +13,7 @@ export default defineConfig({
     ...(browser === 'firefox' && {
       browser_specific_settings: {
         gecko: {
-          id: 'hfm-text-filter@rootodus.com',
+          id: 'hfm-text-filter@rootodus',
           data_collection_permissions: {
             required: ['none'],
           },
