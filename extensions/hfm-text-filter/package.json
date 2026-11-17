@@ -2,7 +2,7 @@
   "name": "wxt-starter",
   "version": "0.0.0",
   "private": true,
-  "description": "manifest.json description",
+  "description": "Filters profane and toxic text using a local AI server.",
   "type": "module",
   "scripts": {
     "dev": "wxt",
