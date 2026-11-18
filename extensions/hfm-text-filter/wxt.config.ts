@@ -6,8 +6,7 @@ export default defineConfig({
     name: 'HFM Text Filter',
     permissions: ['activeTab', 'scripting', 'storage'],
     host_permissions: [
-      'http://127.0.0.1:8377/*',
-      'ws://127.0.0.1:8377/*'
+      'http://127.0.0.1:8377/*'
     ],
 
     ...(browser === 'firefox' && {
