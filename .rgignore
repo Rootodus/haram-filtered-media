@@ -1,4 +1,4 @@
-crates/hfm-text-filter/models/
+**/models/
 Cargo.lock
 package-lock.json
 **/tools/
