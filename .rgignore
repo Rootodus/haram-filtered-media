@@ -1,0 +1,6 @@
+crates/hfm-text-filter/models/
+Cargo.lock
+package-lock.json
+**/tools/
+*.png
+*.ico
