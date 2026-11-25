@@ -1,8 +1,6 @@
-WIP
-
-When fixing compile or test errors, run cargo check / tsc first, use rg -n to locate definitions/callers, and read only 40–80 line slices around the reported file:line locations instead of full files.
-
 ## Local Context & Tool Discipline
-- Never read entire large files at once. Always use `grep` first to locate exact symbols/line numbers, then `read` only the relevant 80–150 line window (`offset` + `limit`).
-- Make small, surgical `edit` changes and verify immediately with targeted checks (`cargo check`, `npm test`, `pytest`).
-- Keep active context concise so prompt prefill stays fast and cached.
+- Skip redundant checks: If `cargo check`, `cargo test`, or `tsc` output with `file:line` paths is already in the prompt, do **not** re-run the check first—jump straight to `read`.
+- Batch tool calls: When an error spans multiple files or needs both a caller and a type definition, emit all `read` / `grep` calls together in one turn, and emit all `edit` calls together in one turn.
+- Read smart slices: For files > 200 lines, use `grep` (`rg -n`) if needed and `read` a 100–180 line window (`offset` + `limit`) around the error/symbol (plus top imports if missing). For modular files <= 200 lines, read the whole file in one shot.
+- **Never** weaken or edit tests: Fix compiler and test failures strictly in `src/`. Never modify `tests/`, `*_test.rs`, `*.test.ts`, or `*.spec.ts` unless explicitly instructed.
+- Surgical edits & targeted checks: Make minimal `edit` diffs and verify with targeted commands (`cargo check`, `cargo test <name>`, `tsc --noEmit`). Keep context compact to preserve prefix cache.
