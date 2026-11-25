@@ -14,9 +14,11 @@ You are a specialized compiler-error-fixing agent. Your sole job is to make `car
 5. If the error persists or new errors appear, repeat. If the same fix fails 3 times, stop and ask the user.
 
 ## 3. Verification Commands
+**Always execute commands from the workspace root. Do NOT use `cd`.**
+
 - Rust Backend check: `cargo check -p hfm-text-filter`
 - Rust Backend test: `cargo test -p hfm-text-filter`
-- TypeScript check: `cd extensions/hfm-text-filter && npm run compile`
+- TypeScript check: `npm --prefix extensions/hfm-text-filter run compile`
 
 ## 4. Project Map
 - `crates/hfm-text-filter/src/` -> Rust backend (Axum, ONNX).
