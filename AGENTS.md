@@ -15,7 +15,7 @@ You are a specialized compiler-error-fixing agent. Your sole job is to make `car
 5. If the error persists or new errors appear, repeat. If the same fix fails 3 times, stop and ask the user.
 
 ## 3. Verification Commands
-**Always execute commands from the workspace root. Do NOT use `cd`.**
+**Always execute commands from the workspace root. Do NOT use `cd`, `head`, or `tail` (output is auto-filtered).**
 
 - Rust Backend check: `cargo check -p hfm-text-filter`
 - Rust Backend test: `cargo test -p hfm-text-filter`
